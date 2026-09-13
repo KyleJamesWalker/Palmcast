@@ -180,3 +180,32 @@ export function navIntent(key, target) {
       return null;
   }
 }
+
+/// Hands a link to the operating system, the clipboard, or neither.
+///
+/// Both the share sheet and the clipboard need a secure context. A laptop
+/// serving a venue on plain http has neither, which is the setup the README
+/// recommends, so "it failed" is the wrong thing to tell that presenter.
+/// Dismissing the share sheet is also not a failure.
+export async function shareLink(url, nav = globalThis.navigator) {
+  if (nav?.share) {
+    try {
+      await nav.share({ title: 'Palmcast', url });
+      return 'shared';
+    } catch (error) {
+      if (error?.name === 'AbortError') return 'cancelled';
+      // Fall through: the sheet is not the only way to hand over a link.
+    }
+  }
+
+  if (nav?.clipboard?.writeText) {
+    try {
+      await nav.clipboard.writeText(url);
+      return 'copied';
+    } catch {
+      return 'unavailable';
+    }
+  }
+
+  return 'unavailable';
+}

@@ -1,4 +1,4 @@
-import { clamp, connect, navIntent, sessionId, tokenFor } from '/shared.js';
+import { clamp, connect, navIntent, sessionId, shareLink, tokenFor } from '/shared.js';
 import { renderOptions } from '/quiz.js';
 import { burst } from '/reactions.js';
 import { renderQuestions } from '/questions.js';
@@ -188,12 +188,10 @@ els.shareToggle.addEventListener('click', () => {
 
 els.handoff.addEventListener('click', async () => {
   const label = els.handoff.textContent;
-  try {
-    await navigator.clipboard.writeText(presenterUrl);
-    els.handoff.textContent = 'Presenter link copied';
-  } catch {
-    els.handoff.textContent = 'Copy failed';
-  }
+  const outcome = await shareLink(presenterUrl);
+  if (outcome === 'cancelled') return;
+  els.handoff.textContent =
+    outcome === 'unavailable' ? 'No clipboard here' : 'Presenter link copied';
   setTimeout(() => {
     els.handoff.textContent = label;
   }, 2000);
@@ -201,21 +199,28 @@ els.handoff.addEventListener('click', async () => {
 
 els.copy.addEventListener('click', async () => {
   const label = els.copy.textContent;
-  try {
-    if (navigator.share) {
-      await navigator.share({ title: 'Palmcast', url: audienceUrl });
-      return;
-    }
-    await navigator.clipboard.writeText(audienceUrl);
+  const outcome = await shareLink(audienceUrl);
+  if (outcome === 'shared' || outcome === 'cancelled') return;
+  if (outcome === 'copied') {
     els.copy.textContent = 'Copied';
-  } catch {
-    els.copy.textContent = 'Copy failed';
+  } else {
+    // No clipboard, so put the link where a thumb can reach it instead of
+    // reporting a failure the presenter can do nothing about.
+    els.copy.textContent = 'Select the link below';
+    selectText(els.shareUrl);
   }
   setTimeout(() => {
     els.copy.textContent = label;
-  }, 1500);
+  }, 2000);
 });
 
+function selectText(node) {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
 async function openEditor() {
   els.deckStatus.textContent = 'Loading\u2026';
   els.editor.hidden = false;

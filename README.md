@@ -37,6 +37,11 @@ cargo run -- --port 8080
 Open `http://localhost:8080`, write a deck, and press **Start presenting**. The
 presenter console shows a QR code under **Share**. Point a phone at it to join.
 
+**Share** hands the link to the phone's share sheet where there is one, and to
+the clipboard otherwise. A laptop serving plain http has neither, because both
+need a secure context, so there the link is selected on screen for the presenter
+to copy or read out.
+
 The QR code is the one thing a whole room scans without reading it, so the
 address behind it matters. On a laptop at a venue the server reads the Host and
 picks `http`, which is what a phone on the same network can open. Behind a proxy
