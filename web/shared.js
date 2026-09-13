@@ -81,3 +81,13 @@ export function connect(id, token, handlers) {
 export function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
 }
+
+/// Mirrors the server's split rule so the author sees the count before starting.
+export function slideCount(text) {
+  const lines = text.split('\n');
+  return lines.reduce((n, line, i) => {
+    const fence = line.trimEnd() === '---' || line.trimEnd() === '----';
+    const standalone = i === 0 || lines[i - 1].trim() === '';
+    return fence && standalone ? n + 1 : n;
+  }, 1);
+}

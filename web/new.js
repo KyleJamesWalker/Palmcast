@@ -1,4 +1,4 @@
-import { rememberToken } from '/shared.js';
+import { rememberToken, slideCount } from '/shared.js';
 
 const SAMPLE = `# Why Rust
 
@@ -39,16 +39,6 @@ try {
   editor.value = localStorage.getItem(DRAFT) || SAMPLE;
 } catch {
   editor.value = SAMPLE;
-}
-
-function slideCount(text) {
-  return text
-    .split('\n')
-    .reduce((n, line, i, all) => {
-      const fence = line.trimEnd() === '---';
-      const standalone = i === 0 || all[i - 1].trim() === '';
-      return fence && standalone ? n + 1 : n;
-    }, 1);
 }
 
 function refresh() {
