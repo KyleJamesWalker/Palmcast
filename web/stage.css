@@ -1,5 +1,7 @@
-/* The room's big screen. No chrome, no controls, nothing to tap. */
+/* The room's big screen. Nothing to tap once it is running, so the only
+   control fades out and comes back when the pointer moves. */
 body { cursor: none; }
+body.awake { cursor: default; }
 
 .stage {
   display: flex;
@@ -51,3 +53,20 @@ body { cursor: none; }
   font-size: clamp(30px, 3.4vw, 66px);
   bottom: 10vmin;
 }
+
+.fullscreen {
+  position: fixed;
+  top: 2vmin;
+  right: 2vmin;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity .2s ease;
+  pointer-events: none;
+}
+body.awake .fullscreen { opacity: .7; pointer-events: auto; }
+body.awake .fullscreen:hover { opacity: 1; }
+:fullscreen .fullscreen { display: none; }

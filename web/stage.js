@@ -54,3 +54,30 @@ connect(id, null, {
     renderScores(board, msg.items.slice(0, 10));
   },
 });
+
+// The control hides itself again so the room is not looking at a button all
+// night.
+const fullscreen = document.getElementById('fullscreen');
+let sleepTimer;
+
+function wake() {
+  document.body.classList.add('awake');
+  clearTimeout(sleepTimer);
+  sleepTimer = setTimeout(() => document.body.classList.remove('awake'), 2500);
+}
+
+document.addEventListener('pointermove', wake);
+document.addEventListener('pointerdown', wake);
+
+fullscreen.addEventListener('click', async () => {
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else {
+      await document.documentElement.requestFullscreen();
+    }
+  } catch {
+    // A browser that refuses fullscreen still shows the slides, which is the
+    // part that matters.
+  }
+});
