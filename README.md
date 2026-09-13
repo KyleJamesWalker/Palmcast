@@ -161,6 +161,9 @@ that learns the room is gone says "This session has ended" instead of
 reconnecting at a blank screen forever. An unreachable server is not a missing room, so a failed check keeps
 retrying.
 
+The board shows the top 50. A player below that is told so rather than left
+wondering why their name is missing.
+
 A room carries its age through a restart, so one that had already run out is
 swept rather than handed a fresh life.
 

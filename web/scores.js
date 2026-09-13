@@ -49,4 +49,13 @@ export function renderScores(root, items, opts = {}) {
     row.append(rank, name, points);
     root.append(row);
   });
+
+  // The board is capped, so a player further down would otherwise just not be
+  // there, with nothing to say why.
+  if (opts.me && !placed.some((item) => item.name === opts.me)) {
+    const note = document.createElement('p');
+    note.className = 'dim score-empty';
+    note.textContent = `You are playing, but not in the top ${placed.length}.`;
+    root.append(note);
+  }
 }

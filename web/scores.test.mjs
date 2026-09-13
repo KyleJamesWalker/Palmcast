@@ -38,3 +38,40 @@ test('the original rows are not mutated', () => {
   assert.equal(out[0].place, 1);
   assert.equal(out[0].name, 'Ada');
 });
+
+test('a player below the cap is told, not silently dropped', async () => {
+  const { renderScores } = await import('./scores.js');
+  // A minimal element stand-in, enough for the renderer's dom calls.
+  const made = [];
+  globalThis.document = {
+    createElement(tag) {
+      const el = {
+        tag, className: '', textContent: '', children: [],
+        classList: { add() {} },
+        append(...kids) { this.children.push(...kids); },
+      };
+      made.push(el);
+      return el;
+    },
+  };
+  const root = { innerHTML: '', children: [], append(...k) { this.children.push(...k); } };
+  renderScores(root, [{ name: 'Ada', score: 3 }, { name: 'Bo', score: 1 }], { me: 'Zoe' });
+  const note = root.children.find((c) => c.textContent.startsWith('You are playing'));
+  assert.ok(note, 'a player off the board was told nothing');
+  assert.match(note.textContent, /not in the top 2/);
+  delete globalThis.document;
+});
+
+test('a player on the board gets no such note', async () => {
+  const { renderScores } = await import('./scores.js');
+  globalThis.document = {
+    createElement(tag) {
+      return { tag, className: '', textContent: '', children: [],
+        classList: { add() {} }, append(...k) { this.children.push(...k); } };
+    },
+  };
+  const root = { innerHTML: '', children: [], append(...k) { this.children.push(...k); } };
+  renderScores(root, [{ name: 'Ada', score: 3 }], { me: 'Ada' });
+  assert.ok(!root.children.some((c) => String(c.textContent).startsWith('You are playing')));
+  delete globalThis.document;
+});
