@@ -3,7 +3,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::session::Registry;
-use crate::wire::{ClientMsg, ServerMsg};
+use crate::wire::{ClientMsg, Frame, ServerMsg};
 
 pub struct Join {
     pub id: String,
@@ -50,8 +50,8 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
         tokio::select! {
             outgoing = rx.recv() => {
                 match outgoing {
-                    Ok(msg) => {
-                        if send(&mut sink, &msg, is_owner).await.is_err() {
+                    Ok(frame) => {
+                        if send_frame(&mut sink, &frame, is_owner).await.is_err() {
                             break;
                         }
                     }
@@ -157,6 +157,21 @@ where
     Ok(())
 }
 
+/// A broadcast arrives already serialized, so this only picks the copy that
+/// belongs to this socket.
+async fn send_frame<S>(sink: &mut S, frame: &Frame, is_owner: bool) -> Result<(), ()>
+where
+    S: SinkExt<Message> + Unpin,
+{
+    let Some(text) = frame.for_socket(is_owner) else {
+        return Ok(());
+    };
+    sink.send(Message::Text(text.to_string().into()))
+        .await
+        .map_err(|_| ())
+}
+
+/// The opening messages go to one socket, so they are built for it directly.
 async fn send<S>(sink: &mut S, msg: &ServerMsg, is_owner: bool) -> Result<(), ()>
 where
     S: SinkExt<Message> + Unpin,

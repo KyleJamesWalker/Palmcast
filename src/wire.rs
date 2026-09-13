@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 use crate::deck::{Question, Slide};
@@ -119,4 +121,89 @@ pub enum ClientMsg {
     Upvote { question: u64 },
     Answered { question: u64 },
     SetName { name: String },
+}
+
+/// One broadcast, serialized once for each audience it can reach.
+///
+/// Every socket used to clone the message, redact its own copy and serialize
+/// it, so one deck edit in a full room did that work once per viewer. The deck
+/// is the largest message and the room is the moment it is sent.
+#[derive(Debug)]
+pub struct Frame {
+    pub owner: String,
+    /// `None` when the message is for the presenter alone.
+    pub audience: Option<String>,
+}
+
+impl Frame {
+    pub fn new(msg: &ServerMsg) -> Arc<Frame> {
+        let owner = serde_json::to_string(msg).unwrap_or_default();
+        let audience = match msg.redacted() {
+            // Identical payloads are the common case, so do not serialize twice.
+            Some(redacted) if matches!(msg, ServerMsg::Deck { .. }) => {
+                Some(serde_json::to_string(&redacted).unwrap_or_default())
+            }
+            Some(_) => Some(owner.clone()),
+            None => None,
+        };
+        Arc::new(Frame { owner, audience })
+    }
+
+    pub fn for_socket(&self, is_owner: bool) -> Option<&str> {
+        if is_owner {
+            Some(&self.owner)
+        } else {
+            self.audience.as_deref()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::deck::Slide;
+
+    fn deck_msg() -> ServerMsg {
+        ServerMsg::Deck {
+            rev: 1,
+            current: 0,
+            slides: vec![Slide {
+                html: "<h1>Hi</h1>".into(),
+                notes: "the secret note".into(),
+                question: Some(Question {
+                    options: vec!["a".into(), "b".into()],
+                    correct: vec![1],
+                }),
+            }],
+        }
+    }
+
+    #[test]
+    fn a_deck_frame_holds_a_separate_redacted_copy() {
+        let frame = Frame::new(&deck_msg());
+        let owner = frame.for_socket(true).unwrap();
+        let audience = frame.for_socket(false).unwrap();
+
+        assert!(owner.contains("the secret note"));
+        assert!(!audience.contains("the secret note"));
+        assert!(audience.contains("\"correct\":[]"), "{audience}");
+        assert!(owner.contains("\"correct\":[1]"), "{owner}");
+    }
+
+    #[test]
+    fn an_identical_message_is_not_serialized_twice() {
+        let frame = Frame::new(&ServerMsg::Move { current: 2 });
+        assert_eq!(frame.for_socket(true), frame.for_socket(false));
+    }
+
+    #[test]
+    fn a_presenter_only_message_has_no_audience_copy() {
+        let frame = Frame::new(&ServerMsg::Tally {
+            slide: 0,
+            counts: vec![1, 2],
+            total: 3,
+        });
+        assert!(frame.for_socket(true).is_some());
+        assert_eq!(frame.for_socket(false), None, "the tally leaked");
+    }
 }

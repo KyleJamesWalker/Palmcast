@@ -8,7 +8,7 @@ use tokio::sync::broadcast;
 
 use crate::deck::{self, Slide};
 use crate::persist::{PersistedQuestion, PersistedSession};
-use crate::wire::{AudienceQuestion, Reaction, ScoreRow, ServerMsg};
+use crate::wire::{AudienceQuestion, Frame, Reaction, ScoreRow, ServerMsg};
 
 /// No vowels, so an id cannot spell a word, and no glyphs that look alike when
 /// read off a phone screen in a dark room.
@@ -43,7 +43,7 @@ pub struct Session {
     pub current: usize,
     pub viewers: usize,
     pub touched: Instant,
-    pub tx: broadcast::Sender<ServerMsg>,
+    pub tx: broadcast::Sender<Arc<Frame>>,
     /// slide index -> voter id -> chosen option. One vote each, last one wins.
     pub votes: HashMap<usize, HashMap<String, usize>>,
     pub revealed: HashSet<usize>,
@@ -231,7 +231,7 @@ impl Registry {
         self.lock().get(id).map(|s| s.markdown.clone())
     }
 
-    pub fn subscribe(&self, id: &str) -> Option<broadcast::Receiver<ServerMsg>> {
+    pub fn subscribe(&self, id: &str) -> Option<broadcast::Receiver<Arc<Frame>>> {
         self.lock().get(id).map(|s| s.tx.subscribe())
     }
 
@@ -321,9 +321,11 @@ impl Registry {
         })
     }
 
+    /// Serializes once for the whole room rather than once per socket.
     pub fn broadcast(&self, id: &str, msg: ServerMsg) {
+        let frame = Frame::new(&msg);
         if let Some(session) = self.lock().get(id) {
-            let _ = session.tx.send(msg);
+            let _ = session.tx.send(frame);
         }
     }
 
