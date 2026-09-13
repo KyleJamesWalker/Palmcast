@@ -24,9 +24,24 @@ The server holds sessions in memory. There is no database, no Node toolchain and
 no internet dependency, so a laptop on a venue network works as well as a hosted
 instance.
 
-## Requirements
+## Install
 
-Rust 1.94 or later to build from source. Docker to run the released image.
+Download a binary for your machine from [the releases
+page](https://github.com/KyleJamesWalker/Palmcast/releases). Linux, macOS and
+Windows are built for both x86_64 and arm64, and `SHA256SUMS` covers every
+asset.
+
+Or run the image, which carries the same binary:
+
+```bash
+docker run -p 8080:8080 ghcr.io/kylejameswalker/palmcast:latest
+```
+
+Add `-v palmcast:/data -e PALMCAST_STATE_FILE=/data/state.json` to keep rooms
+across a restart. `:edge` tracks main, and a pull request publishes `:pr-<n>`
+for as long as it is open.
+
+To build instead, Rust 1.94 or later.
 
 ## Usage
 
@@ -47,12 +62,10 @@ address behind it matters. On a laptop at a venue the server reads the Host and
 picks `http`, which is what a phone on the same network can open. Behind a proxy
 set `--public-url`, because a Host header is something a caller chooses.
 
-To run the release image:
-
-```bash
-docker build -f Dockerfile.release -t palmcast .
-docker run -p 8080:8080 palmcast
-```
+`Dockerfile.release` expects a binary the build already produced, in
+`dist/palmcast-amd64` or `dist/palmcast-arm64`, rather than compiling one. The
+release pipeline cross-compiles each architecture once and reuses it, which is
+far quicker than building Rust twice under emulation.
 
 ## Write a deck
 

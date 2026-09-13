@@ -1,13 +1,23 @@
-FROM rust:1.94-bookworm AS build
-WORKDIR /src
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-COPY web ./web
-RUN cargo build --release --locked
+# Takes a binary the build matrix already produced. Compiling Rust for two
+# architectures under emulation costs far more than cross-compiling once.
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata
 
-FROM gcr.io/distroless/cc-debian12:nonroot
-COPY --from=build /src/target/release/palmcast /palmcast
+RUN addgroup -S palmcast && adduser -S -G palmcast palmcast
+
+# The state file holds a token for every live room, so it lives on a volume the
+# service owns rather than in the image.
+RUN mkdir -p /data && chown -R palmcast:palmcast /data
+WORKDIR /data
+
+ARG TARGETARCH
+COPY dist/palmcast-${TARGETARCH} /usr/local/bin/palmcast
+RUN chmod +x /usr/local/bin/palmcast
+
+USER palmcast
 EXPOSE 8080
-USER nonroot
-ENTRYPOINT ["/palmcast"]
-CMD ["--port", "8080", "--bind", "0.0.0.0"]
+
+ENV PALMCAST_PORT=8080 \
+    PALMCAST_BIND=0.0.0.0
+
+ENTRYPOINT ["/usr/local/bin/palmcast"]
