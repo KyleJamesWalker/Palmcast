@@ -272,10 +272,6 @@ impl Registry {
         self.lock().get(id).map(|s| s.tx.subscribe())
     }
 
-    pub fn owns(&self, id: &str, token: &str) -> bool {
-        self.role(id, token).drives()
-    }
-
     /// Constant time both ways, so a wrong token cannot be narrowed by timing.
     pub fn role(&self, id: &str, token: &str) -> Role {
         let map = self.lock();
