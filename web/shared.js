@@ -181,6 +181,21 @@ export function navIntent(key, target) {
   }
 }
 
+/// Puts text on the clipboard, and nothing else.
+///
+/// A share sheet takes a link. Handing it a block of prose as a `url` is not
+/// what it is for, and the destination for something you are about to paste
+/// into an assistant is the clipboard anyway.
+export async function copyText(text, nav = globalThis.navigator) {
+  if (!nav?.clipboard?.writeText) return 'unavailable';
+  try {
+    await nav.clipboard.writeText(text);
+    return 'copied';
+  } catch {
+    return 'unavailable';
+  }
+}
+
 /// Hands a link to the operating system, the clipboard, or neither.
 ///
 /// Both the share sheet and the clipboard need a secure context. A laptop

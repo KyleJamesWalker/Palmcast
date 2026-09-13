@@ -1,4 +1,4 @@
-import { clamp, connect, navIntent, sessionId, shareLink, tokenFor } from '/shared.js';
+import { clamp, connect, copyText, navIntent, sessionId, shareLink, tokenFor } from '/shared.js';
 import { renderOptions } from '/quiz.js';
 import { agentPrompt, pruneBySlide, survivingSlides } from '/deckstate.js';
 import { burst } from '/reactions.js';
@@ -324,10 +324,16 @@ els.position.addEventListener('click', () => {
 
 els.deckPrompt.addEventListener('click', async () => {
   const label = els.deckPrompt.textContent;
-  const outcome = await shareLink(agentPrompt(els.deckText.value, latestQuestions));
-  if (outcome === 'cancelled') return;
-  els.deckPrompt.textContent =
-    outcome === 'unavailable' ? 'No clipboard here' : 'Prompt copied';
+  const prompt = agentPrompt(els.deckText.value, latestQuestions);
+  const outcome = await copyText(prompt);
+  if (outcome === 'unavailable') {
+    // Same fallback as the share link: show it so it can be taken by hand.
+    els.deckText.value = prompt;
+    els.deckText.select();
+    els.deckPrompt.textContent = 'No clipboard \u2014 prompt is in the box, copy it';
+  } else {
+    els.deckPrompt.textContent = 'Prompt copied';
+  }
   setTimeout(() => {
     els.deckPrompt.textContent = label;
   }, 2000);

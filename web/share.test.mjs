@@ -54,3 +54,23 @@ test('a clipboard that rejects reports unavailable', async () => {
 test('a missing navigator does not throw', async () => {
   assert.equal(await shareLink(URL, undefined), 'unavailable');
 });
+
+test('copyText never reaches for the share sheet', async () => {
+  const { copyText } = await import('./shared.js');
+  let shared = false;
+  let copied;
+  const nav = {
+    share: async () => { shared = true; },
+    clipboard: { writeText: async (t) => { copied = t; } },
+  };
+  const prompt = 'line one\nline two\nline three';
+  assert.equal(await copyText(prompt, nav), 'copied');
+  assert.equal(shared, false, 'a block of prose went to the share sheet');
+  assert.equal(copied, prompt);
+});
+
+test('copyText reports unavailable without a clipboard', async () => {
+  const { copyText } = await import('./shared.js');
+  assert.equal(await copyText('x', {}), 'unavailable');
+  assert.equal(await copyText('x', { share: async () => {} }), 'unavailable');
+});
