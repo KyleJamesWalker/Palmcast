@@ -76,7 +76,7 @@ start.addEventListener('click', async () => {
     if (!res.ok) throw new Error(`server said ${res.status}`);
     const { id, token } = await res.json();
     rememberToken(id, token);
-    location.href = `/s/${id}/present`;
+    location.href = `/s/${id}/present#t=${encodeURIComponent(token)}`;
   } catch (e) {
     error.textContent = `Could not start: ${e.message}`;
     error.hidden = false;

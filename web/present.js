@@ -20,9 +20,11 @@ const els = {
   stageLink: document.getElementById('stage-link'),
   denied: document.getElementById('denied'),
   watchLink: document.getElementById('watch-link'),
+  handoff: document.getElementById('handoff'),
 };
 
 const audienceUrl = `${location.origin}/s/${id}`;
+const presenterUrl = `${location.origin}/s/${id}/present#t=${encodeURIComponent(token ?? '')}`;
 els.qr.src = `/s/${id}/qr.svg`;
 els.shareUrl.textContent = audienceUrl;
 els.stageLink.href = `/s/${id}/stage`;
@@ -92,6 +94,19 @@ document.addEventListener('keydown', (event) => {
 
 els.shareToggle.addEventListener('click', () => {
   els.share.hidden = !els.share.hidden;
+});
+
+els.handoff.addEventListener('click', async () => {
+  const label = els.handoff.textContent;
+  try {
+    await navigator.clipboard.writeText(presenterUrl);
+    els.handoff.textContent = 'Presenter link copied';
+  } catch {
+    els.handoff.textContent = 'Copy failed';
+  }
+  setTimeout(() => {
+    els.handoff.textContent = label;
+  }, 2000);
 });
 
 els.copy.addEventListener('click', async () => {

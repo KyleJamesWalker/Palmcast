@@ -3,7 +3,15 @@ export function sessionId() {
   return match ? match[1] : null;
 }
 
+/// The fragment is never sent to the server, so a presenter can carry control
+/// to another device by copying their own URL without it reaching a log.
 export function tokenFor(id) {
+  const fragment = new URLSearchParams(location.hash.slice(1)).get('t');
+  if (fragment) {
+    rememberToken(id, fragment);
+    history.replaceState(null, '', location.pathname);
+    return fragment;
+  }
   try {
     return localStorage.getItem(`palmcast:${id}`);
   } catch {
