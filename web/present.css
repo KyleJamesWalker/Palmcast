@@ -116,3 +116,5 @@ button.ghost {
 /* The presenter reads the tally at a glance, so it stays compact. */
 .console .options { margin-top: 12px; }
 .console .option { min-height: 44px; font-size: clamp(15px, 3.4vw, 18px); padding: 8px 12px; }
+
+.board .score { min-height: 38px; padding: 6px 10px; font-size: clamp(14px, 3.2vw, 17px); }

@@ -2,6 +2,7 @@ import { connect, sessionId } from '/shared.js';
 import { renderOptions } from '/quiz.js';
 import { burst, reactionBar } from '/reactions.js';
 import { renderQuestions } from '/questions.js';
+import { renderScores } from '/scores.js';
 
 const id = sessionId();
 const slide = document.getElementById('slide');
@@ -56,6 +57,12 @@ const socket = connect(id, null, {
     questions = msg.items;
     paintQuestions();
   },
+  scores(msg) {
+    renderScores(document.getElementById('scores'), msg.items, {
+      me: myName,
+      emptyText: 'Set a name above to join the game.',
+    });
+  },
   status(state) {
     status.dataset.state = state;
     status.textContent = state;
@@ -81,9 +88,7 @@ let questions = [];
 const voted = new Set();
 
 function paintQuestions() {
-  qaToggle.textContent = questions.length
-    ? `Questions \u00b7 ${questions.length}`
-    : 'Questions';
+  qaToggle.textContent = questions.length ? `Room \u00b7 ${questions.length}` : 'Room';
   renderQuestions(questionList, questions, {
     voted,
     emptyText: 'No questions yet. Ask the first one.',
@@ -109,3 +114,28 @@ askForm.addEventListener('submit', (event) => {
 });
 
 paintQuestions();
+
+const nameForm = document.getElementById('name-form');
+const nameText = document.getElementById('name-text');
+
+let myName = '';
+try {
+  myName = localStorage.getItem('palmcast:name') || '';
+} catch {
+  /* a private window just asks for the name again */
+}
+nameText.value = myName;
+
+nameForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const name = nameText.value.trim();
+  if (!name) return;
+  myName = name;
+  try {
+    localStorage.setItem('palmcast:name', name);
+  } catch {
+    /* the name still reaches the server, it just is not remembered */
+  }
+  socket.send({ type: 'set_name', name });
+  nameText.blur();
+});

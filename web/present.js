@@ -2,6 +2,7 @@ import { clamp, connect, sessionId, tokenFor } from '/shared.js';
 import { renderOptions } from '/quiz.js';
 import { burst } from '/reactions.js';
 import { renderQuestions } from '/questions.js';
+import { renderScores } from '/scores.js';
 
 const id = sessionId();
 const token = tokenFor(id);
@@ -27,6 +28,7 @@ const els = {
   options: document.getElementById('options'),
   reveal: document.getElementById('reveal'),
   questions: document.getElementById('questions'),
+  scores: document.getElementById('scores'),
 };
 
 const audienceUrl = `${location.origin}/s/${id}`;
@@ -96,6 +98,11 @@ const socket = connect(id, token, {
   },
   react(msg) {
     burst(msg.kind);
+  },
+  scores(msg) {
+    renderScores(els.scores, msg.items, {
+      emptyText: 'Nobody has joined the game yet.',
+    });
   },
   questions(msg) {
     renderQuestions(els.questions, msg.items, {

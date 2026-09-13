@@ -267,3 +267,51 @@ a { color: var(--accent); }
 }
 .ask-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ask-form button { flex: 0 0 auto; }
+
+/* Leaderboard */
+.score-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.score {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  font-size: clamp(15px, 3.6vw, 18px);
+}
+.score-rank {
+  flex: 0 0 1.6em;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  font-size: .85em;
+}
+.score-name { flex: 1; overflow-wrap: anywhere; }
+.score-points {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+.score.leading { border-color: var(--accent); }
+.score.leading .score-points { color: var(--accent); }
+.score.me { background: #1d1a12; }
+.score-empty { margin: 0; font-size: 14px; }
+
+.name-form { display: flex; gap: 8px; margin-bottom: 10px; }
+.name-form input {
+  flex: 1;
+  min-height: 48px;
+  padding: 0 14px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+}
+.name-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }

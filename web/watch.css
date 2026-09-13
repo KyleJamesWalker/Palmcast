@@ -33,3 +33,6 @@ body { display: flex; flex-direction: column; min-height: 100dvh; }
   font-size: 13px;
   border-radius: 9px;
 }
+
+.qa .label { margin: 0 0 8px; }
+.qa .label-spaced { margin-top: 18px; }

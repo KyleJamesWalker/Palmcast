@@ -1,6 +1,7 @@
 import { connect, sessionId } from '/shared.js';
 import { renderOptions } from '/quiz.js';
 import { burst } from '/reactions.js';
+import { renderScores } from '/scores.js';
 
 const id = sessionId();
 const slide = document.getElementById('slide');
@@ -41,5 +42,12 @@ connect(id, null, {
   },
   react(msg) {
     burst(msg.kind);
+  },
+  scores(msg) {
+    const board = document.getElementById('scores');
+    // The room only wants the board between questions, not over a slide it is
+    // still reading.
+    board.hidden = msg.items.length === 0;
+    renderScores(board, msg.items.slice(0, 10));
   },
 });

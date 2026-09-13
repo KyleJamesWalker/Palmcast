@@ -97,9 +97,14 @@ One vote per browser. A second tap replaces the first rather than adding one.
 The audience gets five reactions in a bar under the slide. A tap floats the
 glyph up every screen in the room, the stage view included.
 
-**Questions** opens the floor. Anyone asks, anyone upvotes, and the list ranks
-by votes. The presenter marks a question answered, which sinks it rather than
-deleting it. Someone who joins late gets the questions already asked.
+**Room** holds the leaderboard and the floor. Someone joins the game by setting
+a name, and the server scores only the people who did. A right answer is worth one point, and
+it counts when the presenter reveals it rather than when the vote lands.
+
+Anyone asks a question, anyone upvotes. Anyone asks, anyone upvotes, and the list ranks
+by votes. The presenter marks a question answered, which sinks
+it rather than deleting it. Someone who joins late gets the questions already
+asked and the board as it stands.
 
 ## Configuration
 

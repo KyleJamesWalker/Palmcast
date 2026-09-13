@@ -17,6 +17,14 @@
   </div>
 </main>
 <section id="qa" class="qa" hidden>
+  <h2 class="label">Leaderboard</h2>
+  <form id="name-form" class="name-form">
+    <input id="name-text" type="text" maxlength="24" placeholder="Your name, to join the game"
+      autocomplete="off" aria-label="Your name">
+    <button type="submit">Join</button>
+  </form>
+  <ul id="scores" class="score-list"></ul>
+  <h2 class="label label-spaced">Questions</h2>
   <form id="ask-form" class="ask-form">
     <input id="ask-text" type="text" maxlength="280" placeholder="Ask a question"
       autocomplete="off" aria-label="Ask a question">
@@ -27,7 +35,7 @@
 <div id="reactions" class="reaction-bar"></div>
 <footer class="bar">
   <span id="position" class="dim">—</span>
-  <button id="qa-toggle" class="ghost-small">Questions</button>
+  <button id="qa-toggle" class="ghost-small">Room</button>
 </footer>
 <script type="module" src="/watch.js"></script>
 </body>

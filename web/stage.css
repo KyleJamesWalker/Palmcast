@@ -28,3 +28,6 @@ body { cursor: none; }
 .waiting { color: var(--ink-dim); }
 
 .pane { width: 100%; }
+
+.stage .score-list { margin-top: 4vmin; }
+.stage .score { font-size: clamp(18px, 2.4vw, 34px); padding: 1.2vmin 2vmin; }
