@@ -1,4 +1,5 @@
 import { clamp, connect, sessionId, tokenFor } from '/shared.js';
+import { renderOptions } from '/quiz.js';
 
 const id = sessionId();
 const token = tokenFor(id);
@@ -21,6 +22,8 @@ const els = {
   denied: document.getElementById('denied'),
   watchLink: document.getElementById('watch-link'),
   handoff: document.getElementById('handoff'),
+  options: document.getElementById('options'),
+  reveal: document.getElementById('reveal'),
 };
 
 const audienceUrl = `${location.origin}/s/${id}`;
@@ -36,6 +39,8 @@ if (!token) {
 
 let slides = [];
 let current = 0;
+const tallies = new Map();
+const revealed = new Map();
 
 function paint() {
   const now = slides[current];
@@ -46,6 +51,25 @@ function paint() {
   els.position.textContent = slides.length ? `${current + 1} / ${slides.length}` : '—';
   els.prev.disabled = current === 0;
   els.nextBtn.disabled = current >= slides.length - 1;
+
+  const question = now?.question;
+  const answer = revealed.get(current);
+  const live = tallies.get(current);
+  const counts = answer?.counts ?? live?.counts;
+  const total = answer?.total ?? live?.total ?? 0;
+
+  renderOptions(els.options, question, {
+    interactive: false,
+    correct: answer ? answer.correct : question?.correct,
+    counts: counts ?? (question ? question.options.map(() => 0) : null),
+    total,
+  });
+
+  els.reveal.hidden = !question;
+  els.reveal.disabled = Boolean(answer);
+  els.reveal.textContent = answer
+    ? `Revealed · ${total} voted`
+    : `Reveal the answer${total ? ` · ${total} voted` : ''}`;
 }
 
 const socket = connect(id, token, {
@@ -56,6 +80,14 @@ const socket = connect(id, token, {
   },
   move(msg) {
     current = msg.current;
+    paint();
+  },
+  tally(msg) {
+    tallies.set(msg.slide, msg);
+    paint();
+  },
+  reveal(msg) {
+    revealed.set(msg.slide, msg);
     paint();
   },
   viewers(msg) {
@@ -73,6 +105,10 @@ function go(index) {
   if (target === current) return;
   socket.send({ type: 'goto', index: target });
 }
+
+els.reveal.addEventListener('click', () => {
+  socket.send({ type: 'reveal', slide: current });
+});
 
 els.prev.addEventListener('click', () => go(current - 1));
 els.nextBtn.addEventListener('click', () => go(current + 1));

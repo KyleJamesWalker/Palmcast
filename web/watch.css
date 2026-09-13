@@ -18,3 +18,5 @@ body { display: flex; flex-direction: column; min-height: 100dvh; }
 }
 
 .waiting { color: var(--ink-dim); font-size: 18px; }
+
+.pane { width: 100%; }

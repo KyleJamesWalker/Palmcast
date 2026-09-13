@@ -26,3 +26,5 @@ body { cursor: none; }
 }
 
 .waiting { color: var(--ink-dim); }
+
+.pane { width: 100%; }

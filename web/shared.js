@@ -27,6 +27,21 @@ export function rememberToken(id, token) {
   }
 }
 
+/// Anonymous and per browser. It keeps one person from filling the tally and is
+/// not an identity.
+export function viewerId() {
+  try {
+    let id = localStorage.getItem('palmcast:who');
+    if (!id) {
+      id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem('palmcast:who', id);
+    }
+    return id;
+  } catch {
+    return Math.random().toString(36).slice(2);
+  }
+}
+
 /// Reconnects on its own, because a phone that locks drops the socket.
 export function connect(id, token, handlers) {
   let socket = null;
@@ -35,8 +50,9 @@ export function connect(id, token, handlers) {
 
   const url = () => {
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-    const query = token ? `?token=${encodeURIComponent(token)}` : '';
-    return `${scheme}://${location.host}/s/${id}/ws${query}`;
+    const query = new URLSearchParams({ who: viewerId() });
+    if (token) query.set('token', token);
+    return `${scheme}://${location.host}/s/${id}/ws?${query}`;
   };
 
   const open = () => {
