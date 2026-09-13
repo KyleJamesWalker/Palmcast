@@ -13,8 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      # No toolchain input: rustup reads rust-toolchain.toml, so CI and a
+      # developer machine run the same clippy.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.94.0
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check

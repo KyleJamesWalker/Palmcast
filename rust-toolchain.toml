@@ -1,0 +1,5 @@
+# Pinned so a clippy pass locally means the same thing as a clippy pass in CI.
+# Matches Dockerfile.release.
+[toolchain]
+channel = "1.94.0"
+components = ["clippy", "rustfmt"]
