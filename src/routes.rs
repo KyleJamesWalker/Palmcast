@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::assets::{self, Web};
 use crate::origin;
-use crate::session::Registry;
+use crate::session::{EditError, Registry};
 use crate::ws::{self, Join};
 
 const MAX_DECK_BYTES: usize = 256 * 1024;
@@ -77,6 +77,8 @@ pub fn router_with(app: App) -> Router {
             get(session_exists).put(update_session),
         )
         .route("/api/sessions/{id}/markdown", get(get_markdown))
+        .route("/api/sessions/{id}/cohost", get(cohost_link))
+        .route("/api/sessions/{id}/role", get(whoami))
         .route("/s/{id}", get(|| async { page("watch.html") }))
         .route("/s/{id}/stage", get(|| async { page("stage.html") }))
         .route("/s/{id}/present", get(|| async { page("present.html") }))
@@ -143,17 +145,57 @@ async fn update_session(
         return (StatusCode::PAYLOAD_TOO_LARGE, "deck too large").into_response();
     }
     let token = params.get("token").map(String::as_str).unwrap_or_default();
-    match registry.replace_deck(&id, token, &body.markdown) {
-        Some(snapshot) => {
+    let base_rev = params.get("rev").and_then(|r| r.parse::<u64>().ok());
+
+    match registry.replace_deck(&id, registry.role(&id, token), base_rev, &body.markdown) {
+        Ok(snapshot) => {
             registry.broadcast(&id, snapshot);
             StatusCode::NO_CONTENT.into_response()
         }
+        Err(EditError::Forbidden) => StatusCode::FORBIDDEN.into_response(),
+        Err(EditError::Gone) => StatusCode::NOT_FOUND.into_response(),
+        // The other editor got there first. The revision to rebase on comes
+        // back so the client can say so rather than silently losing the work.
+        Err(EditError::Stale { current }) => (
+            StatusCode::CONFLICT,
+            [(header::ETAG, format!("\"{current}\""))],
+            "the deck changed while you were editing",
+        )
+            .into_response(),
+    }
+}
+
+/// Lets a console show the controls its token actually works.
+async fn whoami(
+    State(registry): State<Registry>,
+    Path(id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    let role = registry.role(&id, token);
+    let name = if role.drives() {
+        "mc"
+    } else if role.edits() {
+        "cohost"
+    } else {
+        "viewer"
+    };
+    name.into_response()
+}
+
+/// Hands the MC a token that edits but does not drive.
+async fn cohost_link(
+    State(registry): State<Registry>,
+    Path(id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    match registry.cohost_token(&id, token) {
+        Some(cohost) => cohost.into_response(),
         None => StatusCode::FORBIDDEN.into_response(),
     }
 }
 
-/// Lets a view tell "the server is unreachable" from "this room is gone", which
-/// are the same blank screen otherwise.
 async fn session_exists(State(registry): State<Registry>, Path(id): Path<String>) -> Response {
     if registry.exists(&id) {
         StatusCode::NO_CONTENT.into_response()
@@ -168,7 +210,7 @@ async fn get_markdown(
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let token = params.get("token").map(String::as_str).unwrap_or_default();
-    if !registry.owns(&id, token) {
+    if !registry.role(&id, token).edits() {
         return StatusCode::FORBIDDEN.into_response();
     }
     match registry.markdown(&id) {

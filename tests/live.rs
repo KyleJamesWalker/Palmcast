@@ -1315,3 +1315,141 @@ async fn an_unrevealed_question_is_still_withheld_from_an_arriving_viewer() {
         }
     }
 }
+
+async fn cohost_token(host: &str, id: &str, mc: &str) -> String {
+    let res = reqwest::get(format!("http://{host}/api/sessions/{id}/cohost?token={mc}"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    res.text().await.unwrap()
+}
+
+#[tokio::test]
+async fn only_the_mc_can_mint_a_cohost_link() {
+    let host = spawn().await;
+    let (id, token) = create(&host, EDIT_DECK).await;
+
+    let cohost = cohost_token(&host, &id, &token).await;
+    assert!(!cohost.is_empty());
+    assert_ne!(cohost, token, "the cohost link is just the mc token again");
+
+    for wrong in ["", "not-a-token", cohost.as_str()] {
+        let res = reqwest::get(format!(
+            "http://{host}/api/sessions/{id}/cohost?token={wrong}"
+        ))
+        .await
+        .unwrap();
+        assert_eq!(res.status(), 403, "a cohost link was handed to {wrong:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_cohost_can_edit_the_deck() {
+    let host = spawn().await;
+    let (id, token) = create(&host, EDIT_DECK).await;
+    let cohost = cohost_token(&host, &id, &token).await;
+
+    let status = put_deck(&host, &id, &cohost, "# Written by the cohost").await;
+    assert_eq!(status, 204);
+}
+
+#[tokio::test]
+async fn a_cohost_cannot_drive_the_room() {
+    let host = spawn().await;
+    let (id, token) = create(&host, EDIT_DECK).await;
+    let cohost = cohost_token(&host, &id, &token).await;
+
+    let mut second = open_as(&host, &id, Some(&cohost), "cohost").await;
+    let _ = next_json(&mut second).await;
+    second
+        .send(Message::Text(r#"{"type":"goto","index":1}"#.into()))
+        .await
+        .unwrap();
+    second
+        .send(Message::Text(r#"{"type":"reveal","slide":1}"#.into()))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let mut mc = open_as(&host, &id, Some(&token), "mc").await;
+    let opening = next_json(&mut mc).await;
+    assert_eq!(opening["current"], 0, "a cohost moved the room");
+    for slide in opening["slides"].as_array().unwrap() {
+        // A reveal would have gone out to everyone, so none may have happened.
+        assert!(slide["question"].is_null() || slide["question"]["correct"].is_array());
+    }
+}
+
+#[tokio::test]
+async fn a_cohost_sees_the_speaker_notes() {
+    let host = spawn().await;
+    let (id, token) = create(&host, DECK).await;
+    let cohost = cohost_token(&host, &id, &token).await;
+
+    let mut second = open_as(&host, &id, Some(&cohost), "cohost").await;
+    let opening = next_json(&mut second).await;
+    assert_eq!(opening["slides"][0]["notes"], "the secret note");
+}
+
+#[tokio::test]
+async fn a_viewer_still_cannot_edit_or_read_the_source() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, EDIT_DECK).await;
+
+    assert_eq!(put_deck(&host, &id, "guessed", "# Hijacked").await, 403);
+    let res = reqwest::get(format!(
+        "http://{host}/api/sessions/{id}/markdown?token=guessed"
+    ))
+    .await
+    .unwrap();
+    assert_eq!(res.status(), 403);
+}
+
+#[tokio::test]
+async fn the_second_editor_to_save_is_told_rather_than_overwriting() {
+    let host = spawn().await;
+    let (id, token) = create(&host, EDIT_DECK).await;
+    let cohost = cohost_token(&host, &id, &token).await;
+    let client = reqwest::Client::new();
+
+    // Both opened the deck at revision 1.
+    let first = client
+        .put(format!(
+            "http://{host}/api/sessions/{id}?token={token}&rev=1"
+        ))
+        .json(&serde_json::json!({ "markdown": "# The mc got there first" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(first.status(), 204);
+
+    let second = client
+        .put(format!(
+            "http://{host}/api/sessions/{id}?token={cohost}&rev=1"
+        ))
+        .json(&serde_json::json!({ "markdown": "# The cohost would have clobbered it" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(second.status(), 409, "the second save overwrote the first");
+
+    let kept = reqwest::get(format!(
+        "http://{host}/api/sessions/{id}/markdown?token={token}"
+    ))
+    .await
+    .unwrap()
+    .text()
+    .await
+    .unwrap();
+    assert!(kept.contains("mc got there first"), "kept: {kept}");
+}
+
+#[tokio::test]
+async fn a_save_without_a_revision_still_works() {
+    let host = spawn().await;
+    let (id, token) = create(&host, EDIT_DECK).await;
+    assert_eq!(
+        put_deck(&host, &id, &token, "# No revision given").await,
+        204
+    );
+}

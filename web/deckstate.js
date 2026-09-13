@@ -23,3 +23,38 @@ export function pruneBySlide(map, keep) {
     if (!keep.has(key)) map.delete(key);
   }
 }
+
+/// A prompt to hand an agent, carrying the deck and what the floor is asking.
+///
+/// The format rules travel with it, because an agent that does not know them
+/// writes markdown this application will not parse the way the author meant.
+export function agentPrompt(markdown, questions = []) {
+  const open = questions.filter((q) => !q.answered);
+  const asked = open.length
+    ? open
+        .map((q) => `- (${q.votes} ${q.votes === 1 ? 'vote' : 'votes'}) ${q.text}`)
+        .join('\n')
+    : '- none yet';
+
+  return [
+    'I am running a live slide deck and need help writing the next slides.',
+    '',
+    'The deck is Markdown with three rules:',
+    '- `---` alone on a line starts a new slide.',
+    '- `???` starts speaker notes, which only the presenter sees.',
+    '- A list of two or more `- [ ]` items makes the slide a question, and',
+    '  `- [x]` marks a correct answer. A question may have several.',
+    'Neither `---` nor `???` applies inside a fenced code block.',
+    '',
+    'Questions from the audience, still open:',
+    asked,
+    '',
+    'The deck so far:',
+    '',
+    '```markdown',
+    markdown.trimEnd(),
+    '```',
+    '',
+    'Reply with the complete deck, in that Markdown, and nothing else.',
+  ].join('\n');
+}

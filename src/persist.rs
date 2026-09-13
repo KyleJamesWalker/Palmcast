@@ -12,6 +12,11 @@ use serde::{Deserialize, Serialize};
 pub struct PersistedSession {
     pub id: String,
     pub owner_token: String,
+    /// Absent in a file written before co-hosts existed. A session restored
+    /// without one is given a fresh token rather than an empty one, which would
+    /// otherwise let a blank token edit the deck.
+    #[serde(default)]
+    pub cohost_token: String,
     pub markdown: String,
     pub current: usize,
     pub rev: u64,
@@ -98,6 +103,7 @@ mod tests {
         PersistedSession {
             id: id.to_string(),
             owner_token: "tok".into(),
+            cohost_token: "co".into(),
             markdown: "# One\n\n---\n\n# Two".into(),
             current: 1,
             rev: 3,

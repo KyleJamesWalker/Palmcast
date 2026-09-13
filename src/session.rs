@@ -35,8 +35,33 @@ const MAX_NAME_CHARS: usize = 24;
 const MAX_SCORE_ROWS: usize = 50;
 const TOKEN_LEN: usize = 32;
 
+/// What a socket or a request is allowed to do.
+///
+/// One person drives, so the room never watches two people fight over the
+/// slide. A co-host works on the deck while that happens, which is the point:
+/// writing the next question from the floor without taking the room with you.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    Viewer,
+    CoHost,
+    Mc,
+}
+
+impl Role {
+    pub fn drives(self) -> bool {
+        self == Role::Mc
+    }
+
+    pub fn edits(self) -> bool {
+        matches!(self, Role::Mc | Role::CoHost)
+    }
+}
+
 pub struct Session {
     pub owner_token: String,
+    /// Minted with the session so it is never absent, and only useful to
+    /// somebody the presenter hands it to.
+    pub cohost_token: String,
     pub markdown: String,
     pub slides: Vec<Slide>,
     pub rev: u64,
@@ -162,6 +187,16 @@ impl Session {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum EditError {
+    Forbidden,
+    Gone,
+    /// Somebody else saved first. `current` is the revision to rebase on.
+    Stale {
+        current: u64,
+    },
+}
+
 #[derive(Clone)]
 pub struct Registry {
     inner: Arc<Mutex<HashMap<String, Session>>>,
@@ -194,11 +229,13 @@ impl Registry {
             }
         };
         let token = random_string(TOKEN_LEN);
+        let cohost = random_string(TOKEN_LEN);
         let (tx, _) = broadcast::channel(64);
         map.insert(
             id.clone(),
             Session {
                 owner_token: token.clone(),
+                cohost_token: cohost.clone(),
                 markdown: markdown.to_string(),
                 slides: deck::parse(markdown),
                 rev: 1,
@@ -236,9 +273,41 @@ impl Registry {
     }
 
     pub fn owns(&self, id: &str, token: &str) -> bool {
-        self.lock()
-            .get(id)
-            .is_some_and(|s| s.owner_token.as_bytes().ct_eq(token.as_bytes()).into())
+        self.role(id, token).drives()
+    }
+
+    /// Constant time both ways, so a wrong token cannot be narrowed by timing.
+    pub fn role(&self, id: &str, token: &str) -> Role {
+        let map = self.lock();
+        let Some(session) = map.get(id) else {
+            return Role::Viewer;
+        };
+        let mc: bool = session
+            .owner_token
+            .as_bytes()
+            .ct_eq(token.as_bytes())
+            .into();
+        let cohost: bool = session
+            .cohost_token
+            .as_bytes()
+            .ct_eq(token.as_bytes())
+            .into();
+        match (mc, cohost) {
+            (true, _) => Role::Mc,
+            (_, true) => Role::CoHost,
+            _ => Role::Viewer,
+        }
+    }
+
+    pub fn cohost_token(&self, id: &str, token: &str) -> Option<String> {
+        let map = self.lock();
+        let session = map.get(id)?;
+        let mc: bool = session
+            .owner_token
+            .as_bytes()
+            .ct_eq(token.as_bytes())
+            .into();
+        mc.then(|| session.cohost_token.clone())
     }
 
     /// Returns the message to broadcast, or None when the caller is not the
@@ -259,16 +328,26 @@ impl Registry {
         Some(ServerMsg::Move { current: index })
     }
 
-    pub fn replace_deck(&self, id: &str, token: &str, markdown: &str) -> Option<ServerMsg> {
+    pub fn replace_deck(
+        &self,
+        id: &str,
+        role: Role,
+        base_rev: Option<u64>,
+        markdown: &str,
+    ) -> Result<ServerMsg, EditError> {
+        if !role.edits() {
+            return Err(EditError::Forbidden);
+        }
         let mut map = self.lock();
-        let session = map.get_mut(id)?;
-        let owns: bool = session
-            .owner_token
-            .as_bytes()
-            .ct_eq(token.as_bytes())
-            .into();
-        if !owns {
-            return None;
+        let session = map.get_mut(id).ok_or(EditError::Gone)?;
+        // Two people can be editing at once. Whoever saves second is told,
+        // rather than quietly writing over the first.
+        if let Some(base) = base_rev
+            && base != session.rev
+        {
+            return Err(EditError::Stale {
+                current: session.rev,
+            });
         }
         session.markdown = markdown.to_string();
         let rebuilt = deck::parse(markdown);
@@ -294,7 +373,7 @@ impl Registry {
         session.rev += 1;
         session.current = session.current.min(session.slides.len() - 1);
         session.touched = Instant::now();
-        Some(session.snapshot())
+        Ok(session.snapshot())
     }
 
     /// `None` when the room is full, which the caller turns into a closed
@@ -429,17 +508,12 @@ impl Registry {
         Some(session.question_list())
     }
 
-    pub fn mark_answered(&self, id: &str, token: &str, question: u64) -> Option<ServerMsg> {
-        let mut map = self.lock();
-        let session = map.get_mut(id)?;
-        let owns: bool = session
-            .owner_token
-            .as_bytes()
-            .ct_eq(token.as_bytes())
-            .into();
-        if !owns {
+    pub fn mark_answered(&self, id: &str, role: Role, question: u64) -> Option<ServerMsg> {
+        if !role.edits() {
             return None;
         }
+        let mut map = self.lock();
+        let session = map.get_mut(id)?;
         let found = session.questions.iter_mut().find(|q| q.id == question)?;
         found.answered = true;
         session.touched = Instant::now();
@@ -579,6 +653,7 @@ impl Registry {
             .map(|(id, s)| PersistedSession {
                 id: id.clone(),
                 owner_token: s.owner_token.clone(),
+                cohost_token: s.cohost_token.clone(),
                 markdown: s.markdown.clone(),
                 current: s.current,
                 rev: s.rev,
@@ -621,6 +696,13 @@ impl Registry {
                 item.id,
                 Session {
                     owner_token: item.owner_token,
+                    // An old file has none, and an empty token must never be a
+                    // key that works.
+                    cohost_token: if item.cohost_token.is_empty() {
+                        random_string(TOKEN_LEN)
+                    } else {
+                        item.cohost_token
+                    },
                     markdown: item.markdown,
                     slides,
                     rev: item.rev,
@@ -711,6 +793,7 @@ mod tests {
         let saved = vec![crate::persist::PersistedSession {
             id: "abc123".into(),
             owner_token: "tok".into(),
+            cohost_token: "co".into(),
             // Two slides, but the saved position points past them.
             markdown: "# One\n\n---\n\n# Two".into(),
             current: 9,

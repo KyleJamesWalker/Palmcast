@@ -86,6 +86,15 @@ bound for an audience or stage view.
 Tapping the slide counter opens a grid of every slide, marking the questions, so
 an MC can reach round four without stepping through the talk.
 
+**Co-host link** hands a second person a token that edits but does not drive.
+They get the deck, the speaker notes and the questions, and their console has no
+slide controls, so one person runs the room while another writes the next round
+from what the floor is asking. Two people editing at once is handled: whoever
+saves second is told the deck moved rather than writing over the first.
+
+**Copy prompt for an agent** puts the deck, the open questions and the format
+rules on the clipboard, ready to paste into whatever assistant you use.
+
 **Edit** in the presenter console opens the deck mid-talk. Save it and the new
 deck reaches every phone at once, so a typo spotted from the floor does not need
 a new session.

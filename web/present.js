@@ -1,6 +1,6 @@
 import { clamp, connect, navIntent, sessionId, shareLink, tokenFor } from '/shared.js';
 import { renderOptions } from '/quiz.js';
-import { pruneBySlide, survivingSlides } from '/deckstate.js';
+import { agentPrompt, pruneBySlide, survivingSlides } from '/deckstate.js';
 import { burst } from '/reactions.js';
 import { renderQuestions } from '/questions.js';
 import { renderScores } from '/scores.js';
@@ -32,6 +32,9 @@ const els = {
   deckSave: document.getElementById('deck-save'),
   deckCancel: document.getElementById('deck-cancel'),
   deckStatus: document.getElementById('deck-status'),
+  deckPrompt: document.getElementById('deck-prompt'),
+  cohost: document.getElementById('cohost'),
+  roleBadge: document.getElementById('role-badge'),
   options: document.getElementById('options'),
   reveal: document.getElementById('reveal'),
   questions: document.getElementById('questions'),
@@ -53,6 +56,8 @@ if (!token) {
 let slides = [];
 let current = 0;
 let rev = 0;
+let latestQuestions = [];
+let editingRev = null;
 const voted = new Set();
 const tallies = new Map();
 const revealed = new Map();
@@ -125,6 +130,7 @@ const socket = connect(id, token, {
     });
   },
   questions(msg) {
+    latestQuestions = msg.items;
     renderQuestions(els.questions, msg.items, {
       canClose: true,
       voted,
@@ -237,6 +243,8 @@ async function openEditor() {
     const res = await fetch(`/api/sessions/${id}/markdown?token=${encodeURIComponent(token)}`);
     if (!res.ok) throw new Error(`server said ${res.status}`);
     els.deckText.value = await res.text();
+    // The revision this edit is based on, so a save can tell if it is stale.
+    editingRev = rev;
     els.deckStatus.textContent = '';
     els.deckText.focus();
   } catch (error) {
@@ -261,11 +269,16 @@ els.deckSave.addEventListener('click', async () => {
   els.deckSave.disabled = true;
   els.deckStatus.textContent = 'Saving\u2026';
   try {
-    const res = await fetch(`/api/sessions/${id}?token=${encodeURIComponent(token)}`, {
+    const query = editingRev === null ? '' : `&rev=${editingRev}`;
+    const res = await fetch(`/api/sessions/${id}?token=${encodeURIComponent(token)}${query}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ markdown: els.deckText.value }),
     });
+    if (res.status === 409) {
+      els.deckStatus.textContent = 'Someone else saved first. Reopen to get their version.';
+      return;
+    }
     if (!res.ok) throw new Error(`server said ${res.status}`);
     // The new deck arrives over the socket, so there is nothing to apply here.
     els.editor.hidden = true;
@@ -281,3 +294,51 @@ els.position.addEventListener('click', () => {
   els.jump.hidden = !els.jump.hidden;
   paintJump();
 });
+
+els.deckPrompt.addEventListener('click', async () => {
+  const label = els.deckPrompt.textContent;
+  const outcome = await shareLink(agentPrompt(els.deckText.value, latestQuestions));
+  if (outcome === 'cancelled') return;
+  els.deckPrompt.textContent =
+    outcome === 'unavailable' ? 'No clipboard here' : 'Prompt copied';
+  setTimeout(() => {
+    els.deckPrompt.textContent = label;
+  }, 2000);
+});
+
+els.cohost.addEventListener('click', async () => {
+  const label = els.cohost.textContent;
+  try {
+    const res = await fetch(`/api/sessions/${id}/cohost?token=${encodeURIComponent(token)}`);
+    if (!res.ok) throw new Error(`server said ${res.status}`);
+    const cohost = await res.text();
+    const link = `${location.origin}/s/${id}/present#t=${encodeURIComponent(cohost)}`;
+    const outcome = await shareLink(link);
+    if (outcome === 'cancelled') return;
+    els.cohost.textContent =
+      outcome === 'unavailable' ? 'No clipboard here' : 'Co-host link copied';
+  } catch (error) {
+    els.cohost.textContent = `Could not get a link: ${error.message}`;
+  }
+  setTimeout(() => {
+    els.cohost.textContent = label;
+  }, 2500);
+});
+
+// A co-host edits but does not drive, so the driving controls go away rather
+// than sitting there doing nothing when pressed.
+(async () => {
+  try {
+    const res = await fetch(`/api/sessions/${id}/role?token=${encodeURIComponent(token ?? '')}`);
+    if (!res.ok) return;
+    const role = (await res.text()).trim();
+    document.body.dataset.role = role;
+    if (role === 'cohost') {
+      els.roleBadge.hidden = false;
+      els.cohost.hidden = true;
+      document.title = 'Palmcast \u2014 co-host';
+    }
+  } catch {
+    // Without an answer the console stays as it is, which is the mc layout.
+  }
+})();

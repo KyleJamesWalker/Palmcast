@@ -2,7 +2,7 @@ use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::session::Registry;
+use crate::session::{Registry, Role};
 use crate::wire::{ClientMsg, Frame, ServerMsg};
 
 pub struct Join {
@@ -16,7 +16,13 @@ pub struct Join {
 
 pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
     let Join { id, token, who } = join;
-    let is_owner = token.as_deref().is_some_and(|t| registry.owns(&id, t));
+    let role = token
+        .as_deref()
+        .map(|t| registry.role(&id, t))
+        .unwrap_or(Role::Viewer);
+    // Notes, tallies and the deck source follow the ability to edit, so a
+    // co-host sees what they need to write the next question.
+    let is_owner = role.edits();
     let Some(mut rx) = registry.subscribe(&id) else {
         return;
     };
@@ -87,7 +93,7 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
                 let Ok(msg) = serde_json::from_str::<ClientMsg>(&text) else {
                     continue;
                 };
-                handle(&registry, &id, token.as_deref(), &who, msg);
+                handle(&registry, &id, token.as_deref(), role, &who, msg);
             }
         }
     }
@@ -99,7 +105,14 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
 
 /// Every branch re-checks the token inside the registry, so a forged frame from
 /// a viewer changes nothing.
-fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: ClientMsg) {
+fn handle(
+    registry: &Registry,
+    id: &str,
+    token: Option<&str>,
+    role: Role,
+    who: &str,
+    msg: ClientMsg,
+) {
     match msg {
         ClientMsg::Goto { index } => {
             if let Some(token) = token
@@ -141,9 +154,7 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
             }
         }
         ClientMsg::Answered { question } => {
-            if let Some(token) = token
-                && let Some(list) = registry.mark_answered(id, token, question)
-            {
+            if let Some(list) = registry.mark_answered(id, role, question) {
                 registry.broadcast(id, list);
             }
         }

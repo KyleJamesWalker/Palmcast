@@ -14,6 +14,7 @@
 <h1 class="visually-hidden">Palmcast presenter console</h1>
 <main class="console">
   <div class="topline">
+    <span id="role-badge" class="role-badge" hidden>co-host</span>
     <button id="position" class="position" aria-label="Jump to a slide">—</button>
     <span id="viewers" class="dim viewers">0 watching</span>
     <button id="edit-toggle" class="ghost">Edit</button>
@@ -26,6 +27,7 @@
       <button id="copy" class="ghost">Copy audience link</button>
       <a id="stage-link" href="#" target="_blank" rel="noopener">Open stage view</a>
       <button id="handoff" class="ghost">Copy my presenter link</button>
+      <button id="cohost" class="ghost">Copy co-host link</button>
       <p id="share-url" class="dim url"></p>
     </div>
   </section>
@@ -37,6 +39,7 @@
     <textarea id="deck-text" spellcheck="false"></textarea>
     <div class="editor-actions">
       <button id="deck-save" class="primary">Save</button>
+      <button id="deck-prompt" class="ghost">Copy prompt for an agent</button>
       <button id="deck-cancel" class="ghost">Cancel</button>
       <span id="deck-status" class="dim"></span>
     </div>
