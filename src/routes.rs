@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::assets::Web;
 use crate::session::Registry;
-use crate::ws;
+use crate::ws::{self, Join};
 
 const MAX_DECK_BYTES: usize = 256 * 1024;
 
@@ -95,8 +95,12 @@ async fn socket(
     if !registry.exists(&id) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let token = params.get("token").cloned();
-    upgrade.on_upgrade(move |sock| ws::serve(sock, registry, id, token))
+    let join = Join {
+        id,
+        token: params.get("token").cloned(),
+        who: params.get("who").cloned().unwrap_or_default(),
+    };
+    upgrade.on_upgrade(move |sock| ws::serve(sock, registry, join))
 }
 
 async fn qr(

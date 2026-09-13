@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -24,9 +24,32 @@ pub struct Session {
     pub viewers: usize,
     pub touched: Instant,
     pub tx: broadcast::Sender<ServerMsg>,
+    /// slide index -> voter id -> chosen option. One vote each, last one wins.
+    pub votes: HashMap<usize, HashMap<String, usize>>,
+    pub revealed: HashSet<usize>,
 }
 
 impl Session {
+    fn counts(&self, slide: usize) -> (Vec<usize>, usize) {
+        let width = self
+            .slides
+            .get(slide)
+            .and_then(|s| s.question.as_ref())
+            .map(|q| q.options.len())
+            .unwrap_or(0);
+        let mut counts = vec![0usize; width];
+        let cast = self.votes.get(&slide);
+        let total = cast.map(HashMap::len).unwrap_or(0);
+        if let Some(cast) = cast {
+            for option in cast.values() {
+                if let Some(slot) = counts.get_mut(*option) {
+                    *slot += 1;
+                }
+            }
+        }
+        (counts, total)
+    }
+
     fn snapshot(&self) -> ServerMsg {
         ServerMsg::Deck {
             rev: self.rev,
@@ -71,6 +94,8 @@ impl Registry {
                 viewers: 0,
                 touched: Instant::now(),
                 tx,
+                votes: HashMap::new(),
+                revealed: HashSet::new(),
             },
         );
         (id, token)
@@ -129,6 +154,10 @@ impl Registry {
         }
         session.markdown = markdown.to_string();
         session.slides = deck::parse(markdown);
+        // The options may have changed under them, so old votes no longer mean
+        // anything.
+        session.votes.clear();
+        session.revealed.clear();
         session.rev += 1;
         session.current = session.current.min(session.slides.len() - 1);
         session.touched = Instant::now();
@@ -158,6 +187,63 @@ impl Registry {
         if let Some(session) = self.lock().get(id) {
             let _ = session.tx.send(msg);
         }
+    }
+
+    /// Records one vote and returns the tally for the presenter. A voter who
+    /// answers twice replaces their own vote rather than adding one.
+    pub fn answer(&self, id: &str, slide: usize, who: &str, option: usize) -> Option<ServerMsg> {
+        let mut map = self.lock();
+        let session = map.get_mut(id)?;
+        if session.revealed.contains(&slide) {
+            return None;
+        }
+        let width = session
+            .slides
+            .get(slide)
+            .and_then(|s| s.question.as_ref())
+            .map(|q| q.options.len())?;
+        if option >= width {
+            return None;
+        }
+        session
+            .votes
+            .entry(slide)
+            .or_default()
+            .insert(who.to_string(), option);
+        session.touched = Instant::now();
+        let (counts, total) = session.counts(slide);
+        Some(ServerMsg::Tally {
+            slide,
+            counts,
+            total,
+        })
+    }
+
+    pub fn reveal(&self, id: &str, token: &str, slide: usize) -> Option<ServerMsg> {
+        let mut map = self.lock();
+        let session = map.get_mut(id)?;
+        let owns: bool = session
+            .owner_token
+            .as_bytes()
+            .ct_eq(token.as_bytes())
+            .into();
+        if !owns {
+            return None;
+        }
+        let correct = session
+            .slides
+            .get(slide)
+            .and_then(|s| s.question.as_ref())
+            .map(|q| q.correct.clone())?;
+        session.revealed.insert(slide);
+        session.touched = Instant::now();
+        let (counts, total) = session.counts(slide);
+        Some(ServerMsg::Reveal {
+            slide,
+            correct,
+            counts,
+            total,
+        })
     }
 
     /// Drops sessions nobody has touched inside the TTL. Returns how many went.

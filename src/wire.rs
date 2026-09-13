@@ -16,17 +16,32 @@ pub enum ServerMsg {
     Viewers {
         count: usize,
     },
+    /// Live vote counts while a question is open. Presenter only, because the
+    /// room seeing the split as it forms changes how the room votes.
+    Tally {
+        slide: usize,
+        counts: Vec<usize>,
+        total: usize,
+    },
+    /// The presenter opening the answer to everyone.
+    Reveal {
+        slide: usize,
+        correct: Vec<usize>,
+        counts: Vec<usize>,
+        total: usize,
+    },
 }
 
 impl ServerMsg {
-    /// Speaker notes never leave the presenter's socket.
-    pub fn redacted(&self) -> ServerMsg {
+    /// What a socket that is not the presenter may see. `None` means the
+    /// message is not theirs at all.
+    pub fn redacted(&self) -> Option<ServerMsg> {
         match self {
             ServerMsg::Deck {
                 rev,
                 current,
                 slides,
-            } => ServerMsg::Deck {
+            } => Some(ServerMsg::Deck {
                 rev: *rev,
                 current: *current,
                 slides: slides
@@ -34,16 +49,15 @@ impl ServerMsg {
                     .map(|s| Slide {
                         html: s.html.clone(),
                         notes: String::new(),
-                        // The answer is the whole game, so it stays server side
-                        // until the presenter reveals it.
                         question: s.question.as_ref().map(|q| Question {
                             options: q.options.clone(),
                             correct: Vec::new(),
                         }),
                     })
                     .collect(),
-            },
-            other => other.clone(),
+            }),
+            ServerMsg::Tally { .. } => None,
+            other => Some(other.clone()),
         }
     }
 }
@@ -52,4 +66,6 @@ impl ServerMsg {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
     Goto { index: usize },
+    Answer { slide: usize, option: usize },
+    Reveal { slide: usize },
 }

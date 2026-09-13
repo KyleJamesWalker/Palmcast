@@ -40,7 +40,14 @@ async fn create(host: &str, markdown: &str) -> (String, String) {
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 async fn open(host: &str, id: &str, token: Option<&str>) -> Socket {
-    let query = token.map(|t| format!("?token={t}")).unwrap_or_default();
+    open_as(host, id, token, "anon").await
+}
+
+async fn open_as(host: &str, id: &str, token: Option<&str>, who: &str) -> Socket {
+    let query = match token {
+        Some(t) => format!("?who={who}&token={t}"),
+        None => format!("?who={who}"),
+    };
     let (socket, _) = connect_async(format!("ws://{host}/s/{id}/ws{query}"))
         .await
         .unwrap();
@@ -195,4 +202,183 @@ async fn the_presenter_does_receive_the_right_answer() {
     let opening = next_json(&mut presenter).await;
 
     assert_eq!(opening["slides"][0]["question"]["correct"][0], 1);
+}
+
+#[tokio::test]
+async fn a_vote_reaches_the_presenter_as_a_tally() {
+    let host = spawn().await;
+    let (id, token) = create(&host, QUIZ).await;
+
+    let mut presenter = open_as(&host, &id, Some(&token), "mc").await;
+    let _ = next_json(&mut presenter).await;
+
+    let mut voter = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut voter).await;
+    voter
+        .send(Message::Text(
+            r#"{"type":"answer","slide":0,"option":1}"#.into(),
+        ))
+        .await
+        .unwrap();
+
+    loop {
+        let msg = next_json(&mut presenter).await;
+        if msg["type"] == "tally" {
+            assert_eq!(msg["counts"][1], 1);
+            assert_eq!(msg["total"], 1);
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_audience_never_sees_the_running_tally() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, QUIZ).await;
+
+    let mut watcher = open_as(&host, &id, None, "watcher").await;
+    let _ = next_json(&mut watcher).await;
+
+    let mut voter = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut voter).await;
+    voter
+        .send(Message::Text(
+            r#"{"type":"answer","slide":0,"option":1}"#.into(),
+        ))
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    // Anything queued for the watcher must not be a tally.
+    let pending = tokio::time::timeout(Duration::from_millis(250), watcher.next()).await;
+    if let Ok(Some(Ok(Message::Text(text)))) = pending {
+        let msg: Value = serde_json::from_str(&text).unwrap();
+        assert_ne!(msg["type"], "tally", "the tally leaked to the audience");
+    }
+}
+
+#[tokio::test]
+async fn one_voter_cannot_stuff_the_tally() {
+    let host = spawn().await;
+    let (id, token) = create(&host, QUIZ).await;
+
+    let mut presenter = open_as(&host, &id, Some(&token), "mc").await;
+    let _ = next_json(&mut presenter).await;
+
+    let mut voter = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut voter).await;
+    for option in [0, 1, 2, 1] {
+        voter
+            .send(Message::Text(
+                format!(r#"{{"type":"answer","slide":0,"option":{option}}}"#).into(),
+            ))
+            .await
+            .unwrap();
+    }
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    let mut last = None;
+    while let Ok(Some(Ok(Message::Text(text)))) =
+        tokio::time::timeout(Duration::from_millis(250), presenter.next()).await
+    {
+        let msg: Value = serde_json::from_str(&text).unwrap();
+        if msg["type"] == "tally" {
+            last = Some(msg);
+        }
+    }
+    let tally = last.expect("expected at least one tally");
+    assert_eq!(tally["total"], 1, "one voter produced more than one vote");
+    assert_eq!(tally["counts"][1], 1);
+}
+
+#[tokio::test]
+async fn reveal_sends_the_answer_to_the_whole_room() {
+    let host = spawn().await;
+    let (id, token) = create(&host, QUIZ).await;
+
+    let mut audience = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut audience).await;
+
+    let mut presenter = open_as(&host, &id, Some(&token), "mc").await;
+    let _ = next_json(&mut presenter).await;
+    presenter
+        .send(Message::Text(r#"{"type":"reveal","slide":0}"#.into()))
+        .await
+        .unwrap();
+
+    loop {
+        let msg = next_json(&mut audience).await;
+        if msg["type"] == "reveal" {
+            assert_eq!(msg["correct"][0], 1);
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_viewer_cannot_reveal_the_answer() {
+    let host = spawn().await;
+    let (id, token) = create(&host, QUIZ).await;
+
+    let mut heckler = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut heckler).await;
+    heckler
+        .send(Message::Text(r#"{"type":"reveal","slide":0}"#.into()))
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    // A vote still lands, which it could not do if the slide had been revealed.
+    let mut presenter = open_as(&host, &id, Some(&token), "mc").await;
+    let _ = next_json(&mut presenter).await;
+    heckler
+        .send(Message::Text(
+            r#"{"type":"answer","slide":0,"option":0}"#.into(),
+        ))
+        .await
+        .unwrap();
+
+    loop {
+        let msg = next_json(&mut presenter).await;
+        if msg["type"] == "tally" {
+            assert_eq!(msg["total"], 1);
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_vote_after_the_reveal_is_refused() {
+    let host = spawn().await;
+    let (id, token) = create(&host, QUIZ).await;
+
+    let mut presenter = open_as(&host, &id, Some(&token), "mc").await;
+    let _ = next_json(&mut presenter).await;
+    presenter
+        .send(Message::Text(r#"{"type":"reveal","slide":0}"#.into()))
+        .await
+        .unwrap();
+    loop {
+        if next_json(&mut presenter).await["type"] == "reveal" {
+            break;
+        }
+    }
+
+    let mut latecomer = open_as(&host, &id, None, "late").await;
+    let _ = next_json(&mut latecomer).await;
+    latecomer
+        .send(Message::Text(
+            r#"{"type":"answer","slide":0,"option":0}"#.into(),
+        ))
+        .await
+        .unwrap();
+
+    let pending = tokio::time::timeout(Duration::from_millis(400), presenter.next()).await;
+    if let Ok(Some(Ok(Message::Text(text)))) = pending {
+        let msg: Value = serde_json::from_str(&text).unwrap();
+        assert_ne!(msg["type"], "tally", "a vote landed after the reveal");
+    }
 }
