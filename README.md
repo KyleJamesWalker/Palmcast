@@ -39,8 +39,8 @@ presenter console shows a QR code under **Share**. Point a phone at it to join.
 
 **Share** hands the link to the phone's share sheet where there is one, and to
 the clipboard otherwise. A laptop serving plain http has neither, because both
-need a secure context, so there the link is selected on screen for the presenter
-to copy or read out.
+need a secure context. There the page selects the link on screen, so the
+presenter can copy it or read it out.
 
 The QR code is the one thing a whole room scans without reading it, so the
 address behind it matters. On a laptop at a venue the server reads the Host and
