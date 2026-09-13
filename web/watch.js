@@ -1,5 +1,6 @@
 import { connect, sessionId } from '/shared.js';
 import { renderOptions } from '/quiz.js';
+import { pruneBySlide, survivingSlides } from '/deckstate.js';
 import { burst, reactionBar } from '/reactions.js';
 import { renderQuestions } from '/questions.js';
 import { renderScores } from '/scores.js';
@@ -12,6 +13,7 @@ const status = document.getElementById('status');
 
 let slides = [];
 let current = 0;
+let rev = 0;
 const chosen = new Map();
 const revealed = new Map();
 
@@ -41,6 +43,13 @@ const socket = connect(id, null, {
     document.getElementById('ended').hidden = false;
   },
   deck(msg) {
+    if (msg.rev !== rev) {
+      // Keep what the server kept, and drop what it dropped.
+      const keep = survivingSlides(slides, msg.slides);
+      pruneBySlide(chosen, keep);
+      pruneBySlide(revealed, keep);
+      rev = msg.rev;
+    }
     slides = msg.slides;
     current = msg.current;
     paint();

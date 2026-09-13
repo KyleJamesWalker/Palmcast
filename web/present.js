@@ -1,5 +1,6 @@
 import { clamp, connect, navIntent, sessionId, shareLink, tokenFor } from '/shared.js';
 import { renderOptions } from '/quiz.js';
+import { pruneBySlide, survivingSlides } from '/deckstate.js';
 import { burst } from '/reactions.js';
 import { renderQuestions } from '/questions.js';
 import { renderScores } from '/scores.js';
@@ -51,6 +52,7 @@ if (!token) {
 
 let slides = [];
 let current = 0;
+let rev = 0;
 const voted = new Set();
 const tallies = new Map();
 const revealed = new Map();
@@ -91,6 +93,13 @@ const socket = connect(id, token, {
     document.getElementById('ended').hidden = false;
   },
   deck(msg) {
+    if (msg.rev !== rev) {
+      // Keep what the server kept, and drop what it dropped.
+      const keep = survivingSlides(slides, msg.slides);
+      pruneBySlide(tallies, keep);
+      pruneBySlide(revealed, keep);
+      rev = msg.rev;
+    }
     slides = msg.slides;
     current = msg.current;
     paint();
