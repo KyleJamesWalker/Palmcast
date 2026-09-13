@@ -1,6 +1,10 @@
+import { holdFocus, returnFocus } from '/focus.js';
+
 /// Draws a question as a row of buttons. The three views differ only in whether
 /// a tap does anything and whether counts are on show.
 export function renderOptions(root, question, state) {
+  // A reveal redraws these while a reader may be sitting on one of them.
+  const held = holdFocus(root, 'data-index');
   root.innerHTML = '';
   if (!question) {
     root.hidden = true;
@@ -37,10 +41,18 @@ export function renderOptions(root, question, state) {
     }
 
     if (state.interactive) {
-      item.disabled = Boolean(state.locked);
-      item.addEventListener('click', () => state.onPick?.(index));
+      // Not `disabled`: a revealed answer is the thing the room most wants to
+      // read, and a disabled control leaves the tab order and is skipped by
+      // some screen readers. It stops accepting taps instead.
+      if (state.locked) item.setAttribute('aria-disabled', 'true');
+      item.addEventListener('click', () => {
+        if (state.locked) return;
+        state.onPick?.(index);
+      });
     }
 
     root.append(item);
   });
+
+  returnFocus(root, 'data-index', held);
 }

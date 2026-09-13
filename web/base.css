@@ -157,7 +157,8 @@ a { color: var(--accent); }
 
 /* A locked option is still the result the room wants to read, so it keeps full
    contrast instead of taking the usual disabled dimming. */
-.option[disabled] { opacity: 1; cursor: default; }
+.option[disabled],
+.option[aria-disabled="true"] { opacity: 1; cursor: default; }
 
 .option.chosen { border-color: var(--accent); }
 .option.correct {
