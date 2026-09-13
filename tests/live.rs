@@ -774,3 +774,153 @@ async fn health_reports_counts_and_nothing_else() {
     let raw = body.to_string();
     assert!(!raw.contains(&id), "health leaked a session id: {raw}");
 }
+
+const TWO_QUIZ: &str = "# One?\n\n- [ ] a\n- [x] b\n\n---\n\n# Two?\n\n- [x] c\n- [ ] d";
+
+async fn next_scores(socket: &mut Socket) -> Value {
+    loop {
+        let msg = next_json(socket).await;
+        if msg["type"] == "scores" {
+            return msg;
+        }
+    }
+}
+
+#[tokio::test]
+async fn only_named_people_reach_the_board() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, TWO_QUIZ).await;
+
+    let mut anon = open_as(&host, &id, None, "anon").await;
+    let _ = next_json(&mut anon).await;
+
+    let mut named = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut named).await;
+    // A socket is sent the board on connect, so skip that one and read the
+    // board the naming produces.
+    let opening = next_scores(&mut named).await;
+    assert_eq!(
+        opening["items"].as_array().unwrap().len(),
+        0,
+        "an unnamed viewer was already on the board"
+    );
+
+    named
+        .send(Message::Text(r#"{"type":"set_name","name":"Sam"}"#.into()))
+        .await
+        .unwrap();
+
+    let board = next_scores(&mut named).await;
+    let items = board["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "expected only the named viewer: {board}");
+    assert_eq!(items[0]["name"], "Sam");
+    assert_eq!(items[0]["score"], 0);
+}
+
+#[tokio::test]
+async fn a_right_answer_scores_when_the_presenter_reveals() {
+    let host = spawn().await;
+    let (id, token) = create(&host, TWO_QUIZ).await;
+
+    let mut player = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut player).await;
+    player
+        .send(Message::Text(r#"{"type":"set_name","name":"Sam"}"#.into()))
+        .await
+        .unwrap();
+    let _ = next_scores(&mut player).await;
+
+    // Right on slide 0, wrong on slide 1.
+    player
+        .send(Message::Text(
+            r#"{"type":"answer","slide":0,"option":1}"#.into(),
+        ))
+        .await
+        .unwrap();
+    player
+        .send(Message::Text(
+            r#"{"type":"answer","slide":1,"option":1}"#.into(),
+        ))
+        .await
+        .unwrap();
+
+    let mut mc = open_as(&host, &id, Some(&token), "mc").await;
+    let _ = next_json(&mut mc).await;
+    mc.send(Message::Text(r#"{"type":"reveal","slide":0}"#.into()))
+        .await
+        .unwrap();
+
+    loop {
+        let board = next_scores(&mut player).await;
+        if board["items"][0]["score"] == 1 {
+            break;
+        }
+    }
+
+    mc.send(Message::Text(r#"{"type":"reveal","slide":1}"#.into()))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let mut checker = open_as(&host, &id, None, "check").await;
+    let _ = next_json(&mut checker).await;
+    let board = next_scores(&mut checker).await;
+    assert_eq!(
+        board["items"][0]["score"], 1,
+        "a wrong answer scored: {board}"
+    );
+}
+
+#[tokio::test]
+async fn an_unrevealed_question_scores_nobody() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, TWO_QUIZ).await;
+
+    let mut player = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut player).await;
+    player
+        .send(Message::Text(r#"{"type":"set_name","name":"Sam"}"#.into()))
+        .await
+        .unwrap();
+    let _ = next_scores(&mut player).await;
+    player
+        .send(Message::Text(
+            r#"{"type":"answer","slide":0,"option":1}"#.into(),
+        ))
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let mut checker = open_as(&host, &id, None, "check").await;
+    let _ = next_json(&mut checker).await;
+    let board = next_scores(&mut checker).await;
+    assert_eq!(
+        board["items"][0]["score"], 0,
+        "scoring leaked before the reveal: {board}"
+    );
+}
+
+#[tokio::test]
+async fn an_over_long_name_is_refused() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, TWO_QUIZ).await;
+
+    let mut player = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut player).await;
+    let _ = next_scores(&mut player).await;
+    player
+        .send(Message::Text(
+            serde_json::json!({"type": "set_name", "name": "n".repeat(25)})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+
+    let pending = tokio::time::timeout(Duration::from_millis(400), player.next()).await;
+    if let Ok(Some(Ok(Message::Text(text)))) = pending {
+        let msg: Value = serde_json::from_str(&text).unwrap();
+        assert_ne!(msg["type"], "scores", "an over long name landed");
+    }
+}

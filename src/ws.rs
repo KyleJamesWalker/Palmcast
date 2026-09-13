@@ -34,6 +34,11 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
     {
         return;
     }
+    if let Some(scores) = registry.scores(&id)
+        && send(&mut sink, &scores, is_owner).await.is_err()
+    {
+        return;
+    }
     // A full room closes the socket. A viewer who silently saw nothing would
     // look like a broken app rather than a full one.
     let Some(count) = registry.join(&id) else {
@@ -92,6 +97,16 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
                 && let Some(revealed) = registry.reveal(id, token, slide)
             {
                 registry.broadcast(id, revealed);
+                // The board only changes when an answer opens, so it rides
+                // along with the reveal rather than on a timer.
+                if let Some(scores) = registry.scores(id) {
+                    registry.broadcast(id, scores);
+                }
+            }
+        }
+        ClientMsg::SetName { name } => {
+            if let Some(scores) = registry.set_name(id, who, &name) {
+                registry.broadcast(id, scores);
             }
         }
         ClientMsg::React { kind } => {
@@ -135,6 +150,9 @@ where
     }
     if let Some(questions) = registry.questions(id) {
         send(sink, &questions, is_owner).await?;
+    }
+    if let Some(scores) = registry.scores(id) {
+        send(sink, &scores, is_owner).await?;
     }
     Ok(())
 }

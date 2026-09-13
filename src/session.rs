@@ -7,7 +7,7 @@ use subtle::ConstantTimeEq;
 use tokio::sync::broadcast;
 
 use crate::deck::{self, Slide};
-use crate::wire::{AudienceQuestion, Reaction, ServerMsg};
+use crate::wire::{AudienceQuestion, Reaction, ScoreRow, ServerMsg};
 
 /// No vowels, so an id cannot spell a word, and no glyphs that look alike when
 /// read off a phone screen in a dark room.
@@ -28,6 +28,10 @@ const MAX_SESSIONS: usize = 2000;
 /// A room bigger than this is not a bar, and every socket costs a broadcast
 /// receiver.
 const MAX_VIEWERS: usize = 400;
+/// A name is a label on a leaderboard, not a field for prose.
+const MAX_NAME_CHARS: usize = 24;
+/// Bounds one broadcast. Nobody reads past the top of a leaderboard anyway.
+const MAX_SCORE_ROWS: usize = 50;
 const TOKEN_LEN: usize = 32;
 
 pub struct Session {
@@ -47,6 +51,8 @@ pub struct Session {
     pub last_ask: HashMap<String, Instant>,
     pub next_question_id: u64,
     pub participants: HashSet<String>,
+    /// participant id -> the name they chose.
+    pub names: HashMap<String, String>,
 }
 
 pub struct StoredQuestion {
@@ -68,6 +74,40 @@ impl Session {
         }
         self.participants.insert(who.to_string());
         true
+    }
+
+    /// One point for each revealed question this person got right. Scores are
+    /// derived from the votes rather than counted as they arrive, so a late
+    /// reveal or a correction cannot leave a stale total behind.
+    fn score_table(&self) -> ServerMsg {
+        let mut items: Vec<ScoreRow> = self
+            .names
+            .iter()
+            .map(|(who, name)| {
+                let score = self
+                    .revealed
+                    .iter()
+                    .filter(|slide| {
+                        let Some(question) =
+                            self.slides.get(**slide).and_then(|s| s.question.as_ref())
+                        else {
+                            return false;
+                        };
+                        self.votes
+                            .get(*slide)
+                            .and_then(|cast| cast.get(who))
+                            .is_some_and(|option| question.correct.contains(option))
+                    })
+                    .count();
+                ScoreRow {
+                    name: name.clone(),
+                    score,
+                }
+            })
+            .collect();
+        items.sort_by(|a, b| b.score.cmp(&a.score).then(a.name.cmp(&b.name)));
+        items.truncate(MAX_SCORE_ROWS);
+        ServerMsg::Scores { items }
     }
 
     /// Most wanted first, with anything the presenter has marked answered sunk
@@ -172,6 +212,7 @@ impl Registry {
                 last_ask: HashMap::new(),
                 next_question_id: 1,
                 participants: HashSet::new(),
+                names: HashMap::new(),
             },
         );
         Some((id, token))
@@ -385,6 +426,25 @@ impl Registry {
         found.answered = true;
         session.touched = Instant::now();
         Some(session.question_list())
+    }
+
+    pub fn set_name(&self, id: &str, who: &str, name: &str) -> Option<ServerMsg> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > MAX_NAME_CHARS {
+            return None;
+        }
+        let mut map = self.lock();
+        let session = map.get_mut(id)?;
+        if !session.admit(who) {
+            return None;
+        }
+        session.names.insert(who.to_string(), name.to_string());
+        session.touched = Instant::now();
+        Some(session.score_table())
+    }
+
+    pub fn scores(&self, id: &str) -> Option<ServerMsg> {
+        self.lock().get(id).map(Session::score_table)
     }
 
     pub fn questions(&self, id: &str) -> Option<ServerMsg> {

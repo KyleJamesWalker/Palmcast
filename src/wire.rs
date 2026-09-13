@@ -24,6 +24,14 @@ pub struct AudienceQuestion {
     pub answered: bool,
 }
 
+/// One line of the leaderboard. `name` is whatever a viewer typed, so every
+/// view puts it on screen as text and never as markup.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ScoreRow {
+    pub name: String,
+    pub score: usize,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg {
@@ -44,6 +52,11 @@ pub enum ServerMsg {
         slide: usize,
         counts: Vec<usize>,
         total: usize,
+    },
+    /// The leaderboard, best first. Only people who set a name appear, so
+    /// naming yourself is how you opt into being scored.
+    Scores {
+        items: Vec<ScoreRow>,
     },
     /// The whole question list, most wanted first. Sent whole rather than as a
     /// delta: the list is small and a resync beats a merge bug on a phone that
@@ -105,4 +118,5 @@ pub enum ClientMsg {
     Ask { text: String },
     Upvote { question: u64 },
     Answered { question: u64 },
+    SetName { name: String },
 }
