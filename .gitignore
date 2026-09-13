@@ -25,3 +25,8 @@ target
 
 # Claude Code
 .claude/
+
+# Palmcast state files hold presenter tokens
+state.json
+*.state.json
+palmcast-state*.json
