@@ -14,6 +14,16 @@ pub enum Reaction {
     Wow,
 }
 
+/// A question from the floor. `text` is whatever a viewer typed, so every view
+/// puts it on screen as text and never as markup.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct AudienceQuestion {
+    pub id: u64,
+    pub text: String,
+    pub votes: usize,
+    pub answered: bool,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg {
@@ -34,6 +44,12 @@ pub enum ServerMsg {
         slide: usize,
         counts: Vec<usize>,
         total: usize,
+    },
+    /// The whole question list, most wanted first. Sent whole rather than as a
+    /// delta: the list is small and a resync beats a merge bug on a phone that
+    /// slept through three updates.
+    Questions {
+        items: Vec<AudienceQuestion>,
     },
     /// Someone in the room reacting. Everyone sees it, because a room that can
     /// see itself react is the point.
@@ -86,4 +102,7 @@ pub enum ClientMsg {
     Answer { slide: usize, option: usize },
     Reveal { slide: usize },
     React { kind: Reaction },
+    Ask { text: String },
+    Upvote { question: u64 },
+    Answered { question: u64 },
 }

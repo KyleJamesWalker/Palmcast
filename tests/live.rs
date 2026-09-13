@@ -466,3 +466,209 @@ async fn an_unknown_reaction_is_dropped() {
         assert_ne!(msg["type"], "react", "an unknown reaction was broadcast");
     }
 }
+
+async fn next_questions(socket: &mut Socket) -> Value {
+    loop {
+        let msg = next_json(socket).await;
+        if msg["type"] == "questions" {
+            return msg;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_question_reaches_the_room_with_the_asker_s_own_vote() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, DECK).await;
+
+    let mut watcher = open_as(&host, &id, None, "watcher").await;
+    let _ = next_json(&mut watcher).await;
+    let _ = next_questions(&mut watcher).await;
+
+    let mut asker = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut asker).await;
+    asker
+        .send(Message::Text(
+            r#"{"type":"ask","text":"Why not Go?"}"#.into(),
+        ))
+        .await
+        .unwrap();
+
+    let list = next_questions(&mut watcher).await;
+    assert_eq!(list["items"][0]["text"], "Why not Go?");
+    assert_eq!(list["items"][0]["votes"], 1);
+    assert_eq!(list["items"][0]["answered"], false);
+}
+
+#[tokio::test]
+async fn one_viewer_cannot_upvote_the_same_question_twice() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, DECK).await;
+
+    let mut asker = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut asker).await;
+    let _ = next_questions(&mut asker).await;
+    asker
+        .send(Message::Text(
+            r#"{"type":"ask","text":"Question one"}"#.into(),
+        ))
+        .await
+        .unwrap();
+    let list = next_questions(&mut asker).await;
+    let question = list["items"][0]["id"].as_u64().unwrap();
+
+    let mut voter = open_as(&host, &id, None, "alex").await;
+    let _ = next_json(&mut voter).await;
+    let _ = next_questions(&mut voter).await;
+    for _ in 0..5 {
+        voter
+            .send(Message::Text(
+                format!(r#"{{"type":"upvote","question":{question}}}"#).into(),
+            ))
+            .await
+            .unwrap();
+    }
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let mut latest = None;
+    while let Ok(Some(Ok(Message::Text(text)))) =
+        tokio::time::timeout(Duration::from_millis(250), asker.next()).await
+    {
+        let msg: Value = serde_json::from_str(&text).unwrap();
+        if msg["type"] == "questions" {
+            latest = Some(msg);
+        }
+    }
+    let list = latest.expect("expected a question list");
+    assert_eq!(list["items"][0]["votes"], 2, "a repeat tap counted twice");
+}
+
+#[tokio::test]
+async fn an_over_long_question_is_refused() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, DECK).await;
+
+    let mut asker = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut asker).await;
+    let _ = next_questions(&mut asker).await;
+
+    let essay = "x".repeat(281);
+    asker
+        .send(Message::Text(
+            serde_json::json!({"type": "ask", "text": essay})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+
+    let pending = tokio::time::timeout(Duration::from_millis(400), asker.next()).await;
+    if let Ok(Some(Ok(Message::Text(text)))) = pending {
+        let msg: Value = serde_json::from_str(&text).unwrap();
+        assert_ne!(msg["type"], "questions", "an over long question landed");
+    }
+}
+
+#[tokio::test]
+async fn asking_is_rate_limited_per_viewer() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, DECK).await;
+
+    let mut asker = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut asker).await;
+    let _ = next_questions(&mut asker).await;
+    for n in 0..5 {
+        asker
+            .send(Message::Text(
+                serde_json::json!({"type": "ask", "text": format!("question {n}")})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+    }
+
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let mut latest = None;
+    while let Ok(Some(Ok(Message::Text(text)))) =
+        tokio::time::timeout(Duration::from_millis(250), asker.next()).await
+    {
+        let msg: Value = serde_json::from_str(&text).unwrap();
+        if msg["type"] == "questions" {
+            latest = Some(msg);
+        }
+    }
+    let list = latest.expect("expected a question list");
+    assert_eq!(
+        list["items"].as_array().unwrap().len(),
+        1,
+        "five rapid asks were not throttled to one"
+    );
+}
+
+#[tokio::test]
+async fn a_viewer_cannot_mark_a_question_answered() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, DECK).await;
+
+    let mut asker = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut asker).await;
+    let _ = next_questions(&mut asker).await;
+    asker
+        .send(Message::Text(r#"{"type":"ask","text":"Answer me"}"#.into()))
+        .await
+        .unwrap();
+    let list = next_questions(&mut asker).await;
+    let question = list["items"][0]["id"].as_u64().unwrap();
+
+    asker
+        .send(Message::Text(
+            format!(r#"{{"type":"answered","question":{question}}}"#).into(),
+        ))
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let mut checker = open_as(&host, &id, None, "check").await;
+    let _ = next_json(&mut checker).await;
+    let list = next_questions(&mut checker).await;
+    assert_eq!(
+        list["items"][0]["answered"], false,
+        "a viewer closed a question"
+    );
+}
+
+#[tokio::test]
+async fn the_presenter_can_mark_a_question_answered() {
+    let host = spawn().await;
+    let (id, token) = create(&host, DECK).await;
+
+    let mut asker = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut asker).await;
+    let _ = next_questions(&mut asker).await;
+    asker
+        .send(Message::Text(r#"{"type":"ask","text":"Answer me"}"#.into()))
+        .await
+        .unwrap();
+    let list = next_questions(&mut asker).await;
+    let question = list["items"][0]["id"].as_u64().unwrap();
+
+    let mut presenter = open_as(&host, &id, Some(&token), "mc").await;
+    let _ = next_json(&mut presenter).await;
+    presenter
+        .send(Message::Text(
+            format!(r#"{{"type":"answered","question":{question}}}"#).into(),
+        ))
+        .await
+        .unwrap();
+
+    loop {
+        let list = next_questions(&mut asker).await;
+        if list["items"][0]["answered"] == true {
+            break;
+        }
+    }
+}

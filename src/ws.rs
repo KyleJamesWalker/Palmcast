@@ -26,6 +26,13 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
     {
         return;
     }
+    // A joiner needs the questions already on the floor, not just the ones
+    // asked after they arrived.
+    if let Some(questions) = registry.questions(&id)
+        && send(&mut sink, &questions, is_owner).await.is_err()
+    {
+        return;
+    }
     if let Some(count) = registry.join(&id) {
         registry.broadcast(&id, count);
     }
@@ -75,6 +82,23 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
         ClientMsg::React { kind } => {
             if let Some(react) = registry.react(id, who, kind) {
                 registry.broadcast(id, react);
+            }
+        }
+        ClientMsg::Ask { text } => {
+            if let Some(list) = registry.ask(id, who, &text) {
+                registry.broadcast(id, list);
+            }
+        }
+        ClientMsg::Upvote { question } => {
+            if let Some(list) = registry.upvote(id, who, question) {
+                registry.broadcast(id, list);
+            }
+        }
+        ClientMsg::Answered { question } => {
+            if let Some(token) = token
+                && let Some(list) = registry.mark_answered(id, token, question)
+            {
+                registry.broadcast(id, list);
             }
         }
         // Anyone in the room may vote, the presenter included.

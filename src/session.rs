@@ -7,13 +7,18 @@ use subtle::ConstantTimeEq;
 use tokio::sync::broadcast;
 
 use crate::deck::{self, Slide};
-use crate::wire::{Reaction, ServerMsg};
+use crate::wire::{AudienceQuestion, Reaction, ServerMsg};
 
 /// No vowels, so an id cannot spell a word, and no glyphs that look alike when
 /// read off a phone screen in a dark room.
 const ALPHABET: &[u8] = b"23456789bcdfghjkmnpqrstvwxz";
 const ID_LEN: usize = 6;
 const REACTION_GAP: Duration = Duration::from_millis(400);
+const ASK_GAP: Duration = Duration::from_secs(3);
+/// Long enough for a real question, short enough that nobody pastes a speech.
+const MAX_QUESTION_CHARS: usize = 280;
+/// Bounds the memory one session can take from a public instance.
+const MAX_QUESTIONS: usize = 200;
 const TOKEN_LEN: usize = 32;
 
 pub struct Session {
@@ -29,9 +34,41 @@ pub struct Session {
     pub votes: HashMap<usize, HashMap<String, usize>>,
     pub revealed: HashSet<usize>,
     pub last_reaction: HashMap<String, Instant>,
+    pub questions: Vec<StoredQuestion>,
+    pub last_ask: HashMap<String, Instant>,
+    pub next_question_id: u64,
+}
+
+pub struct StoredQuestion {
+    pub id: u64,
+    pub text: String,
+    pub answered: bool,
+    pub voters: HashSet<String>,
 }
 
 impl Session {
+    /// Most wanted first, with anything the presenter has marked answered sunk
+    /// to the bottom rather than deleted.
+    fn question_list(&self) -> ServerMsg {
+        let mut items: Vec<AudienceQuestion> = self
+            .questions
+            .iter()
+            .map(|q| AudienceQuestion {
+                id: q.id,
+                text: q.text.clone(),
+                votes: q.voters.len(),
+                answered: q.answered,
+            })
+            .collect();
+        items.sort_by(|a, b| {
+            a.answered
+                .cmp(&b.answered)
+                .then(b.votes.cmp(&a.votes))
+                .then(a.id.cmp(&b.id))
+        });
+        ServerMsg::Questions { items }
+    }
+
     fn counts(&self, slide: usize) -> (Vec<usize>, usize) {
         let width = self
             .slides
@@ -99,6 +136,9 @@ impl Registry {
                 votes: HashMap::new(),
                 revealed: HashSet::new(),
                 last_reaction: HashMap::new(),
+                questions: Vec::new(),
+                last_ask: HashMap::new(),
+                next_question_id: 1,
             },
         );
         (id, token)
@@ -237,6 +277,71 @@ impl Registry {
         session.last_reaction.insert(who.to_string(), now);
         session.touched = now;
         Some(ServerMsg::React { kind })
+    }
+
+    pub fn ask(&self, id: &str, who: &str, text: &str) -> Option<ServerMsg> {
+        let text = text.trim();
+        if text.is_empty() || text.chars().count() > MAX_QUESTION_CHARS {
+            return None;
+        }
+        let mut map = self.lock();
+        let session = map.get_mut(id)?;
+        if session.questions.len() >= MAX_QUESTIONS {
+            return None;
+        }
+        let now = Instant::now();
+        if let Some(last) = session.last_ask.get(who)
+            && now.duration_since(*last) < ASK_GAP
+        {
+            return None;
+        }
+        session.last_ask.insert(who.to_string(), now);
+
+        let question_id = session.next_question_id;
+        session.next_question_id += 1;
+        // The asker's own vote, so a question starts at one rather than zero.
+        let voters = HashSet::from([who.to_string()]);
+        session.questions.push(StoredQuestion {
+            id: question_id,
+            text: text.to_string(),
+            answered: false,
+            voters,
+        });
+        session.touched = now;
+        Some(session.question_list())
+    }
+
+    pub fn upvote(&self, id: &str, who: &str, question: u64) -> Option<ServerMsg> {
+        let mut map = self.lock();
+        let session = map.get_mut(id)?;
+        let found = session.questions.iter_mut().find(|q| q.id == question)?;
+        // A set, so a second tap from the same browser is not a second vote.
+        if !found.voters.insert(who.to_string()) {
+            return None;
+        }
+        session.touched = Instant::now();
+        Some(session.question_list())
+    }
+
+    pub fn mark_answered(&self, id: &str, token: &str, question: u64) -> Option<ServerMsg> {
+        let mut map = self.lock();
+        let session = map.get_mut(id)?;
+        let owns: bool = session
+            .owner_token
+            .as_bytes()
+            .ct_eq(token.as_bytes())
+            .into();
+        if !owns {
+            return None;
+        }
+        let found = session.questions.iter_mut().find(|q| q.id == question)?;
+        found.answered = true;
+        session.touched = Instant::now();
+        Some(session.question_list())
+    }
+
+    pub fn questions(&self, id: &str) -> Option<ServerMsg> {
+        self.lock().get(id).map(Session::question_list)
     }
 
     pub fn reveal(&self, id: &str, token: &str, slide: usize) -> Option<ServerMsg> {
