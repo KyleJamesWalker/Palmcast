@@ -25,6 +25,9 @@ const MAX_QUESTIONS: usize = 200;
 const MAX_PARTICIPANTS: usize = 500;
 /// Bounds what one public instance can be made to hold.
 const MAX_SESSIONS: usize = 2000;
+/// A room bigger than this is not a bar, and every socket costs a broadcast
+/// receiver.
+const MAX_VIEWERS: usize = 400;
 const TOKEN_LEN: usize = 32;
 
 pub struct Session {
@@ -237,9 +240,14 @@ impl Registry {
         Some(session.snapshot())
     }
 
+    /// `None` when the room is full, which the caller turns into a closed
+    /// socket rather than a silent viewer who sees nothing.
     pub fn join(&self, id: &str) -> Option<ServerMsg> {
         let mut map = self.lock();
         let session = map.get_mut(id)?;
+        if session.viewers >= MAX_VIEWERS {
+            return None;
+        }
         session.viewers += 1;
         session.touched = Instant::now();
         Some(ServerMsg::Viewers {
@@ -421,6 +429,10 @@ impl Registry {
 
     pub fn len(&self) -> usize {
         self.lock().len()
+    }
+
+    pub fn viewers(&self) -> usize {
+        self.lock().values().map(|s| s.viewers).sum()
     }
 
     pub fn is_empty(&self) -> bool {

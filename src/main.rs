@@ -42,6 +42,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind((args.bind.as_str(), args.port)).await?;
     tracing::info!("palmcast listening on http://{}", listener.local_addr()?);
-    axum::serve(listener, routes::router(registry)).await?;
+    axum::serve(listener, routes::router(registry))
+        .with_graceful_shutdown(shutdown())
+        .await?;
     Ok(())
+}
+
+/// Docker stops a container with SIGTERM, so without this every live room dies
+/// mid-slide on an ordinary redeploy.
+async fn shutdown() {
+    let interrupt = async {
+        tokio::signal::ctrl_c().await.ok();
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                term.recv().await;
+            }
+            Err(error) => tracing::warn!(%error, "no SIGTERM handler"),
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = interrupt => {}
+        _ = terminate => {}
+    }
+    tracing::info!("shutting down");
 }

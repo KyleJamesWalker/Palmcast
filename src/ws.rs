@@ -34,9 +34,12 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
     {
         return;
     }
-    if let Some(count) = registry.join(&id) {
-        registry.broadcast(&id, count);
-    }
+    // A full room closes the socket. A viewer who silently saw nothing would
+    // look like a broken app rather than a full one.
+    let Some(count) = registry.join(&id) else {
+        return;
+    };
+    registry.broadcast(&id, count);
 
     loop {
         tokio::select! {

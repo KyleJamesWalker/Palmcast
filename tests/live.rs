@@ -751,3 +751,26 @@ async fn a_lagging_socket_is_resynced_not_dropped() {
         "a lagging socket was dropped instead of resynced"
     );
 }
+
+#[tokio::test]
+async fn health_reports_counts_and_nothing_else() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, DECK).await;
+    let mut viewer = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut viewer).await;
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let res = reqwest::get(format!("http://{host}/healthz"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let body: Value = res.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+    assert_eq!(body["sessions"], 1);
+    assert_eq!(body["viewers"], 1);
+
+    // Nothing identifying a room may appear in a probe response.
+    let raw = body.to_string();
+    assert!(!raw.contains(&id), "health leaked a session id: {raw}");
+}

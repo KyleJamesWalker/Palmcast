@@ -48,6 +48,7 @@ async fn security_headers(request: Request, next: Next) -> Response {
 pub fn router(registry: Registry) -> Router {
     Router::new()
         .route("/", get(|| async { page("new.html") }))
+        .route("/healthz", get(health))
         .route("/api/sessions", post(create_session))
         .route("/api/sessions/{id}", put(update_session))
         .route("/api/sessions/{id}/markdown", get(get_markdown))
@@ -60,6 +61,23 @@ pub fn router(registry: Registry) -> Router {
         .layer(middleware::from_fn(security_headers))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(registry)
+}
+
+#[derive(Serialize)]
+struct Health {
+    status: &'static str,
+    sessions: usize,
+    viewers: usize,
+}
+
+/// Counts only. A probe has no business knowing what any room holds.
+async fn health(State(registry): State<Registry>) -> Response {
+    axum::Json(Health {
+        status: "ok",
+        sessions: registry.len(),
+        viewers: registry.viewers(),
+    })
+    .into_response()
 }
 
 #[derive(Deserialize)]

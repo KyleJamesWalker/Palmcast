@@ -112,6 +112,19 @@ deleting it. Someone who joins late gets the questions already asked.
 The server drops a session with no viewers after the TTL, and keeps any session
 with viewers. This stops a public instance from collecting dead rooms.
 
+`GET /healthz` returns counts for a load balancer probe:
+
+```json
+{"status": "ok", "sessions": 3, "viewers": 27}
+```
+
+The server stops on SIGTERM, so an ordinary container redeploy does not kill a
+live room mid-slide.
+
+A public instance also caps itself: 2000 sessions, 400 viewers per session, and
+500 participants per room. A participant id comes from the browser, so without
+that last cap a loop of fresh ids would grow memory and inflate a quiz tally.
+
 ## Security model
 
 Palmcast treats a deck as untrusted input. Anyone with a link can write one, and
