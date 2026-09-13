@@ -11,6 +11,7 @@ use qrcode::render::svg;
 use serde::{Deserialize, Serialize};
 
 use crate::assets::{self, Web};
+use crate::origin;
 use crate::session::Registry;
 use crate::ws::{self, Join};
 
@@ -45,7 +46,28 @@ async fn security_headers(request: Request, next: Next) -> Response {
     response
 }
 
+#[derive(Clone)]
+pub struct App {
+    pub registry: Registry,
+    /// Set when the instance knows its own address. Without it the Host header
+    /// decides, which is fine on a laptop and guesswork behind a proxy.
+    pub public_url: Option<String>,
+}
+
+impl axum::extract::FromRef<App> for Registry {
+    fn from_ref(app: &App) -> Registry {
+        app.registry.clone()
+    }
+}
+
 pub fn router(registry: Registry) -> Router {
+    router_with(App {
+        registry,
+        public_url: None,
+    })
+}
+
+pub fn router_with(app: App) -> Router {
     Router::new()
         .route("/", get(|| async { page("new.html") }))
         .route("/healthz", get(health))
@@ -63,7 +85,7 @@ pub fn router(registry: Registry) -> Router {
         .fallback(asset)
         .layer(middleware::from_fn(security_headers))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .with_state(registry)
+        .with_state(app)
 }
 
 #[derive(Serialize)]
@@ -175,24 +197,22 @@ async fn socket(
         .on_upgrade(move |sock| ws::serve(sock, registry, join))
 }
 
-async fn qr(
-    State(registry): State<Registry>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-) -> Response {
-    if !registry.exists(&id) {
+async fn qr(State(app): State<App>, Path(id): Path<String>, headers: HeaderMap) -> Response {
+    if !app.registry.exists(&id) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let host = headers
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost");
-    let scheme = if host.starts_with("localhost") || host.starts_with("127.") {
-        "http"
-    } else {
-        "https"
+    let header_str = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
     };
-    let url = format!("{scheme}://{host}/s/{id}");
+    let url = origin::audience_url(
+        app.public_url.as_deref(),
+        header_str("host").as_deref(),
+        header_str("x-forwarded-proto").as_deref(),
+        &id,
+    );
 
     let Ok(code) = QrCode::new(url.as_bytes()) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();

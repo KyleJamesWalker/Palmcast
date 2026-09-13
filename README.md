@@ -37,6 +37,11 @@ cargo run -- --port 8080
 Open `http://localhost:8080`, write a deck, and press **Start presenting**. The
 presenter console shows a QR code under **Share**. Point a phone at it to join.
 
+The QR code is the one thing a whole room scans without reading it, so the
+address behind it matters. On a laptop at a venue the server reads the Host and
+picks `http`, which is what a phone on the same network can open. Behind a proxy
+set `--public-url`, because a Host header is something a caller chooses.
+
 To run the release image:
 
 ```bash
@@ -126,6 +131,7 @@ asked and the board as it stands.
 | `--bind` | `PALMCAST_BIND` | `0.0.0.0` | Address to bind. |
 | `--ttl-hours` | `PALMCAST_TTL_HOURS` | `6` | Hours a session survives with no viewers. |
 | `--state-file` | `PALMCAST_STATE_FILE` | none | Carry live rooms across a restart. |
+| `--public-url` | `PALMCAST_PUBLIC_URL` | none | The address the audience reaches. |
 
 A link that outlives its room says so. Every view asks the server whether the
 session is still there, once on load and again whenever the socket drops. A view

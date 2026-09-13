@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use palmcast::persist;
-use palmcast::routes;
+use palmcast::routes::{self, App};
 use palmcast::session::Registry;
 use tracing_subscriber::EnvFilter;
 
@@ -20,6 +20,12 @@ struct Args {
     /// Hours a session survives with nobody watching it.
     #[arg(long, env = "PALMCAST_TTL_HOURS", default_value_t = 6)]
     ttl_hours: u64,
+
+    /// The address the audience reaches, such as https://palmcast.example.
+    /// Without it the QR code trusts the Host header, which is right on a
+    /// laptop and a guess behind a proxy.
+    #[arg(long, env = "PALMCAST_PUBLIC_URL")]
+    public_url: Option<String>,
 
     /// Carry live rooms across a restart. Holds presenter tokens, so the file
     /// is written 0600. Leave unset to keep everything in memory.
@@ -77,7 +83,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind((args.bind.as_str(), args.port)).await?;
     tracing::info!("palmcast listening on http://{}", listener.local_addr()?);
-    axum::serve(listener, routes::router(registry.clone()))
+    let app = App {
+        registry: registry.clone(),
+        public_url: args.public_url.clone(),
+    };
+    axum::serve(listener, routes::router_with(app))
         .with_graceful_shutdown(shutdown())
         .await?;
 
