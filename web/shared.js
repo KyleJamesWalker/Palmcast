@@ -56,12 +56,22 @@ export function connect(id, token, handlers) {
   };
 
   const open = () => {
-    socket = new WebSocket(url());
-    socket.onopen = () => {
+    // Every handler below belongs to this socket, not to whichever socket is
+    // current when it fires. A late error on a replaced connection used to
+    // close the live one, which on a flaky network turned one drop into a
+    // reconnect loop.
+    const ws = new WebSocket(url());
+    socket = ws;
+    const live = () => socket === ws && !stopped;
+
+    ws.onopen = () => {
+      if (!live()) return;
       backoff = 500;
       handlers.status?.('live');
     };
-    socket.onmessage = (event) => {
+
+    ws.onmessage = (event) => {
+      if (!live()) return;
       let msg;
       try {
         msg = JSON.parse(event.data);
@@ -70,8 +80,9 @@ export function connect(id, token, handlers) {
       }
       handlers[msg.type]?.(msg);
     };
-    socket.onclose = () => {
-      if (stopped) return;
+
+    ws.onclose = () => {
+      if (!live()) return;
       handlers.status?.('offline');
       // A closed socket means the network went, or the room did. Those look
       // identical on screen, so ask before reconnecting forever. The check runs
@@ -85,11 +96,12 @@ export function connect(id, token, handlers) {
         }
       });
       setTimeout(() => {
-        if (!stopped) open();
+        if (socket === ws && !stopped) open();
       }, backoff);
       backoff = Math.min(backoff * 2, 10000);
     };
-    socket.onerror = () => socket.close();
+
+    ws.onerror = () => ws.close();
   };
 
   // A link outliving its room is the common case, so check once on load rather
