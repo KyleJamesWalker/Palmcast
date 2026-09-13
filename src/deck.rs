@@ -1,4 +1,4 @@
-use pulldown_cmark::{Options, Parser, html};
+use pulldown_cmark::{CowStr, Event, Options, Parser, Tag, html};
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -69,7 +69,107 @@ fn render(body: &str) -> String {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
+
+    let events = Parser::new_ext(body, options).map(|event| match event {
+        // Anyone with the link can write a deck, so raw HTML is shown as text.
+        Event::Html(raw) | Event::InlineHtml(raw) => Event::Text(raw),
+        Event::Start(Tag::Link {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Event::Start(Tag::Link {
+            link_type,
+            dest_url: if is_safe_url(&dest_url) {
+                dest_url
+            } else {
+                CowStr::Borrowed("")
+            },
+            title,
+            id,
+        }),
+        other => other,
+    });
+
     let mut out = String::new();
-    html::push_html(&mut out, Parser::new_ext(body, options));
+    html::push_html(&mut out, events);
     out
+}
+
+/// Blocks `javascript:` and `data:` hrefs, which would otherwise run when a
+/// viewer taps a link in someone else's deck.
+fn is_safe_url(url: &str) -> bool {
+    let trimmed: String = url
+        .chars()
+        .filter(|c| !c.is_whitespace() && !c.is_control())
+        .collect();
+    let lowered = trimmed.to_ascii_lowercase();
+    !(lowered.starts_with("javascript:")
+        || lowered.starts_with("data:")
+        || lowered.starts_with("vbscript:"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn splits_on_a_separator_line() {
+        let slides = parse("# One\n\n---\n\n# Two");
+        assert_eq!(slides.len(), 2);
+        assert!(slides[0].html.contains("One"));
+        assert!(slides[1].html.contains("Two"));
+    }
+
+    #[test]
+    fn keeps_a_setext_heading_whole() {
+        let slides = parse("Heading\n---\n\nbody text");
+        assert_eq!(slides.len(), 1);
+        assert!(slides[0].html.contains("<h2>"));
+    }
+
+    #[test]
+    fn pulls_speaker_notes_off_the_slide() {
+        let slides = parse("# Title\n\n???\nremember the punchline");
+        assert_eq!(slides.len(), 1);
+        assert_eq!(slides[0].notes, "remember the punchline");
+        assert!(!slides[0].html.contains("punchline"));
+    }
+
+    #[test]
+    fn an_empty_deck_still_has_one_slide() {
+        assert_eq!(parse("").len(), 1);
+    }
+
+    #[test]
+    fn raw_html_is_shown_not_executed() {
+        let slides = parse("<script>alert(1)</script>");
+        assert!(!slides[0].html.contains("<script>"));
+        assert!(slides[0].html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn inline_html_is_shown_not_executed() {
+        let slides = parse("hello <img src=x onerror=alert(1)> there");
+        assert!(!slides[0].html.contains("<img"));
+        assert!(slides[0].html.contains("&lt;img"));
+    }
+
+    #[test]
+    fn javascript_hrefs_are_stripped() {
+        let slides = parse("[tap me](javascript:alert(1))");
+        assert!(!slides[0].html.to_ascii_lowercase().contains("javascript:"));
+    }
+
+    #[test]
+    fn obfuscated_javascript_hrefs_are_stripped() {
+        let slides = parse("[tap me](  JaVa\tScRiPt:alert(1))");
+        assert!(!slides[0].html.to_ascii_lowercase().contains("javascript:"));
+    }
+
+    #[test]
+    fn ordinary_links_survive() {
+        let slides = parse("[docs](https://example.com/x)");
+        assert!(slides[0].html.contains("https://example.com/x"));
+    }
 }
