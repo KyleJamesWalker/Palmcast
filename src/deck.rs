@@ -24,7 +24,7 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
         .iter()
         .map(|raw| {
             let (body, notes) = split_notes(raw);
-            let (prompt, question) = split_question(body);
+            let (prompt, question) = split_question(&body);
             Slide {
                 html: render(&prompt),
                 notes: notes.trim().to_string(),
@@ -44,17 +44,64 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
     slides
 }
 
+/// Tracks fenced code blocks.
+///
+/// A deck about software shows code, and code contains the very characters
+/// this format uses: YAML separates documents with `---`, and `???` turns up in
+/// regexes and stubs. Inside a fence they are content, not markup.
+#[derive(Default)]
+struct Fence {
+    open: Option<(char, usize)>,
+}
+
+impl Fence {
+    /// Feeds one line and returns whether that line sits inside a fence, the
+    /// opening and closing lines included.
+    fn consume(&mut self, line: &str) -> bool {
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+        // Four spaces already means an indented code block, not a fence.
+        if indent >= 4 {
+            return self.open.is_some();
+        }
+        let Some(marker) = trimmed.chars().next().filter(|c| *c == '`' || *c == '~') else {
+            return self.open.is_some();
+        };
+        let run = trimmed.chars().take_while(|c| *c == marker).count();
+        if run < 3 {
+            return self.open.is_some();
+        }
+
+        match self.open {
+            None => {
+                self.open = Some((marker, run));
+                true
+            }
+            // A closing fence matches the opener and carries nothing else.
+            Some((open_marker, open_run))
+                if open_marker == marker && run >= open_run && trimmed[run..].trim().is_empty() =>
+            {
+                self.open = None;
+                true
+            }
+            Some(_) => true,
+        }
+    }
+}
+
 /// A separator is a `---` line at the start or after a blank line, which keeps
 /// a setext `Heading\n---` from splitting the slide in two.
 fn split_slides(markdown: &str) -> Vec<String> {
     let lines: Vec<&str> = markdown.lines().collect();
     let mut out = Vec::new();
     let mut current: Vec<&str> = Vec::new();
+    let mut fence = Fence::default();
 
     for (i, line) in lines.iter().enumerate() {
-        let fence = line.trim_end() == "---" || line.trim_end() == "----";
+        let fenced = fence.consume(line);
+        let separator = line.trim_end() == "---" || line.trim_end() == "----";
         let standalone = i == 0 || lines[i - 1].trim().is_empty();
-        if fence && standalone {
+        if separator && standalone && !fenced {
             out.push(current.join("\n"));
             current.clear();
         } else {
@@ -108,18 +155,31 @@ fn task_item(line: &str) -> Option<(bool, String)> {
     Some((marker, text.trim().to_string()))
 }
 
-fn split_notes(raw: &str) -> (&str, &str) {
-    match raw.find("\n???") {
-        Some(i) => {
-            let rest = &raw[i + 4..];
-            (&raw[..i], rest)
+fn split_notes(raw: &str) -> (String, String) {
+    let mut fence = Fence::default();
+    let lines: Vec<&str> = raw.lines().collect();
+
+    for (index, line) in lines.iter().enumerate() {
+        if fence.consume(line) {
+            continue;
         }
-        None if raw.trim_start().starts_with("???") => {
-            let i = raw.find("???").unwrap();
-            (&raw[..i], &raw[i + 3..])
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("???") {
+            continue;
         }
-        None => (raw, ""),
+        let body = lines[..index].join("\n");
+        let mut note = trimmed.trim_start_matches('?').trim_start().to_string();
+        let rest = lines[index + 1..].join("\n");
+        if !rest.trim().is_empty() {
+            if !note.is_empty() {
+                note.push('\n');
+            }
+            note.push_str(&rest);
+        }
+        return (body, note);
     }
+
+    (raw.to_string(), String::new())
 }
 
 fn render(body: &str) -> String {
@@ -263,5 +323,57 @@ mod tests {
     fn a_single_option_is_not_a_question() {
         let slides = parse("# Nearly\n\n- [x] only one");
         assert!(slides[0].question.is_none());
+    }
+
+    #[test]
+    fn a_yaml_separator_inside_a_fence_is_not_a_slide_break() {
+        let deck =
+            "# Config\n\n```yaml\napiVersion: v1\n\n---\n\nkind: Service\n```\n\nstill one slide";
+        let slides = parse(deck);
+        assert_eq!(slides.len(), 1, "a fenced --- split the deck");
+        assert!(slides[0].html.contains("kind: Service"));
+        assert!(slides[0].html.contains("still one slide"));
+    }
+
+    #[test]
+    fn a_separator_after_a_fence_still_splits() {
+        let deck = "# One\n\n```\ncode\n```\n\n---\n\n# Two";
+        assert_eq!(parse(deck).len(), 2, "a real separator stopped working");
+    }
+
+    #[test]
+    fn question_marks_inside_a_fence_are_not_speaker_notes() {
+        let deck = "# Regex\n\n```python\npattern = r\"a???b\"\n???\nmore code\n```";
+        let slides = parse(deck);
+        assert_eq!(
+            slides[0].notes, "",
+            "code became speaker notes: {:?}",
+            slides[0].notes
+        );
+        assert!(slides[0].html.contains("more code"));
+    }
+
+    #[test]
+    fn notes_after_a_fence_still_work() {
+        let deck = "# Talk\n\n```\ncode\n```\n\n???\nremember this";
+        let slides = parse(deck);
+        assert_eq!(slides[0].notes, "remember this");
+        assert!(slides[0].html.contains("code"));
+    }
+
+    #[test]
+    fn a_tilde_fence_counts_too() {
+        let deck = "# T\n\n~~~\n\n---\n\n~~~\n\ntail";
+        assert_eq!(
+            parse(deck).len(),
+            1,
+            "a tilde fence did not protect the separator"
+        );
+    }
+
+    #[test]
+    fn an_unclosed_fence_swallows_the_rest_rather_than_splitting_it() {
+        let deck = "# Oops\n\n```\nnever closed\n\n---\n\n# Two";
+        assert_eq!(parse(deck).len(), 1);
     }
 }

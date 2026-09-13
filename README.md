@@ -56,6 +56,9 @@ Palmcast reads Markdown. Two rules extend it:
 - `---` on its own line starts a new slide.
 - `???` starts the speaker notes for the slide it sits in.
 
+Neither applies inside a fenced code block, so a YAML document separator or a
+regex full of question marks stays code.
+
 ```markdown
 # Why Rust
 
