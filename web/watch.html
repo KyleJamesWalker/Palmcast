@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Palmcast</title>
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/watch.css">
+</head>
+<body>
+<span id="status" class="status" data-state="offline">connecting</span>
+<main id="stage" class="viewer">
+  <div class="pane">
+    <div id="slide" class="slide" aria-live="polite"></div>
+    <div id="options" class="options" aria-live="polite" hidden></div>
+  </div>
+</main>
+<section id="qa" class="qa" hidden>
+  <h2 class="label">Leaderboard</h2>
+  <form id="name-form" class="name-form">
+    <input id="name-text" type="text" maxlength="24" placeholder="Your name, to join the game"
+      autocomplete="off" aria-label="Your name">
+    <button type="submit">Join</button>
+  </form>
+  <ul id="scores" class="score-list"></ul>
+  <h2 class="label label-spaced">Questions</h2>
+  <form id="ask-form" class="ask-form">
+    <input id="ask-text" type="text" maxlength="280" placeholder="Ask a question"
+      autocomplete="off" aria-label="Ask a question">
+    <button type="submit" class="primary">Ask</button>
+  </form>
+  <ul id="questions" class="question-list"></ul>
+</section>
+<div id="reactions" class="reaction-bar"></div>
+<footer class="bar">
+  <span id="position" class="dim">—</span>
+  <button id="qa-toggle" class="ghost-small">Room</button>
+</footer>
+<div id="ended" class="ended" role="status" hidden>
+  <h2>This session has ended</h2>
+  <p>Ask the presenter for a new link.</p>
+</div>
+<script type="module" src="/watch.js"></script>
+</body>
+</html>

@@ -1,0 +1,368 @@
+/* Dark ground, warm white text, one amber accent. Built to be read at
+   arm's length on a phone in a dim room without lighting up the table. */
+:root {
+  --ground: #0b0b0d;
+  --raised: #17171b;
+  --edge: #2a2a31;
+  --ink: #f4f1ea;
+  --ink-dim: #9a978f;
+  --accent: #f5a623;
+  --accent-ink: #1a1206;
+  --tap: 56px;
+  --pad: 20px;
+}
+
+* { box-sizing: border-box; }
+
+/* An author `display` beats the UA sheet, so panels toggled with the hidden
+   attribute need this or they never hide. */
+[hidden] { display: none !important; }
+
+/* Keep a visible ring for keyboard users, in the palette rather than the
+ browser's blue. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 17px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+
+button {
+  font: inherit;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  min-height: var(--tap);
+  padding: 0 20px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+button:active { background: var(--edge); }
+button.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: 650;
+}
+button[disabled] { opacity: .35; cursor: default; }
+
+a { color: var(--accent); }
+
+/* Rendered slide body. Sized so a phone at arm's length stays comfortable
+   and a TV across the room still works. */
+.slide {
+  font-size: clamp(20px, 5.2vw, 34px);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.slide :first-child { margin-top: 0; }
+.slide :last-child { margin-bottom: 0; }
+.slide h1 { font-size: 1.5em; line-height: 1.15; margin: 0 0 .5em; letter-spacing: -.02em; }
+.slide h2 { font-size: 1.25em; line-height: 1.2; margin: 0 0 .5em; }
+.slide h3 { font-size: 1.1em; margin: 0 0 .5em; }
+.slide p, .slide ul, .slide ol { margin: 0 0 .7em; }
+.slide li { margin-bottom: .35em; }
+.slide code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .85em;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  padding: .1em .35em;
+}
+.slide pre {
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 14px;
+  overflow-x: auto;
+  font-size: .62em;
+}
+.slide pre code { background: none; border: 0; padding: 0; font-size: 1em; }
+.slide blockquote {
+  margin: 0 0 .7em;
+  padding-left: .7em;
+  border-left: 3px solid var(--accent);
+  color: var(--ink-dim);
+}
+.slide img { max-width: 100%; height: auto; border-radius: 10px; }
+.slide table { border-collapse: collapse; width: 100%; font-size: .7em; }
+.slide th, .slide td { border: 1px solid var(--edge); padding: .4em .5em; text-align: left; }
+.slide hr { border: 0; border-top: 1px solid var(--edge); margin: 1em 0; }
+
+.dim { color: var(--ink-dim); }
+
+.status {
+  position: fixed;
+  top: 8px;
+  right: 10px;
+  font-size: 12px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.status[data-state="offline"] { color: #e0564f; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .slide { transition: opacity .12s ease; }
+}
+
+/* Quiz options. One column, because a thumb finds a row faster than a grid. */
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 12px 16px;
+  text-align: left;
+  font-size: clamp(17px, 4vw, 22px);
+  background: var(--raised);
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* The bar sits behind the label so the text stays readable at any share. */
+.option.counted::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--share, 0%);
+  background: var(--edge);
+  transition: width .25s ease;
+}
+.option-text { position: relative; flex: 1; }
+.option-count {
+  position: relative;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+  font-size: .8em;
+}
+
+/* A locked option is still the result the room wants to read, so it keeps full
+   contrast instead of taking the usual disabled dimming. */
+.option[disabled],
+.option[aria-disabled="true"] { opacity: 1; cursor: default; }
+
+.option.chosen { border-color: var(--accent); }
+.option.correct {
+  border-color: #4caf7d;
+  background: #14271f;
+}
+.option.correct::before { background: #1d4633; }
+.option.wrong {
+  border-color: #e0564f;
+  background: #2a1513;
+}
+.option.wrong::before { background: #4a201d; }
+
+/* Reactions */
+.reaction-bar {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 8px var(--pad) max(8px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--edge);
+}
+.reaction {
+  flex: 1;
+  min-height: 52px;
+  padding: 0;
+  font-size: 26px;
+  line-height: 1;
+  border-radius: 12px;
+}
+.reaction:active { transform: scale(.92); }
+
+.reaction-float {
+  position: fixed;
+  left: var(--start, 20%);
+  bottom: 72px;
+  font-size: 30px;
+  pointer-events: none;
+  z-index: 20;
+  animation: rise 2.2s ease-out forwards;
+}
+
+@keyframes rise {
+  0%   { opacity: 0; transform: translate(0, 0) scale(.6); }
+  12%  { opacity: 1; transform: translate(0, -10px) scale(1.1); }
+  100% { opacity: 0; transform: translate(var(--drift, 0), -46vh) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reaction-float { animation: fade .4s ease-out forwards; }
+  @keyframes fade {
+    0% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+}
+
+/* Questions from the floor */
+.question-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.question {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  font-size: clamp(15px, 3.6vw, 18px);
+}
+.question.answered { opacity: .5; }
+.question.answered .question-text { text-decoration: line-through; }
+
+.question-vote {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 0 10px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  border-radius: 9px;
+}
+.question-vote[disabled] { opacity: .5; }
+.question-text { flex: 1; overflow-wrap: anywhere; padding-top: 8px; }
+.question-done {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 0 12px;
+  font-size: 14px;
+  border-radius: 9px;
+}
+.question-empty { margin: 0; font-size: 14px; }
+
+.ask-form { display: flex; gap: 8px; margin-bottom: 10px; }
+.ask-form input {
+  flex: 1;
+  min-height: 48px;
+  padding: 0 14px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+}
+.ask-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ask-form button { flex: 0 0 auto; }
+
+/* Leaderboard */
+.score-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.score {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  font-size: clamp(15px, 3.6vw, 18px);
+}
+.score-rank {
+  flex: 0 0 1.6em;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  font-size: .85em;
+}
+.score-name { flex: 1; overflow-wrap: anywhere; }
+.score-points {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+.score.leading { border-color: var(--accent); }
+.score.leading .score-points { color: var(--accent); }
+.score.me { background: #1d1a12; }
+.score-empty { margin: 0; font-size: 14px; }
+
+.name-form { display: flex; gap: 8px; margin-bottom: 10px; }
+.name-form input {
+  flex: 1;
+  min-height: 48px;
+  padding: 0 14px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+}
+.name-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+
+/* A room that has ended. Better than a blank slide that never fills. */
+.ended {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: var(--pad);
+  text-align: center;
+  background: var(--ground);
+  z-index: 30;
+}
+.ended h2 { margin: 0; font-size: clamp(20px, 5vw, 30px); }
+.ended p { margin: 0; color: var(--ink-dim); }
+
+
+/* Present for a screen reader, absent for everyone else. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.option-hint { margin: 4px 0 0; font-size: 13px; }
+.option-send { width: 100%; margin-top: 4px; }
+
+/* A link too long to read, offered for selection when there is no clipboard. */
+input.url {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-dim);
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+}
+input.url:focus { outline: 2px solid var(--accent); outline-offset: 1px; }

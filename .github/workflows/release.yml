@@ -1,0 +1,195 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: palmcast-x86_64-linux
+            zig: true
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            asset: palmcast-aarch64-linux
+            zig: true
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: palmcast-aarch64-macos
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset: palmcast-x86_64-macos
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: palmcast-x86_64-windows
+            ext: .exe
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            asset: palmcast-aarch64-windows
+            ext: .exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.0
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.asset }}
+
+      - name: Stamp version from release tag
+        shell: bash
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          [ -n "$v" ] || { echo "::error::GITHUB_REF_NAME empty — release event carried no tag name"; exit 1; }
+          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || { echo "::error::tag '$GITHUB_REF_NAME' is not a version this pipeline can publish: build metadata after a plus sign cannot become a Docker tag"; exit 1; }
+          python3 - "$v" <<'PY'
+          import re
+          import sys
+
+          version = sys.argv[1]
+
+          toml = open("Cargo.toml").read()
+          toml, count = re.subn(
+              r'(?m)^version = "[^"]+"$', f'version = "{version}"', toml, count=1
+          )
+          if count != 1:
+              sys.exit("::error::could not stamp Cargo.toml")
+          open("Cargo.toml", "w").write(toml)
+
+          lines = open("Cargo.lock").read().split("\n")
+          stamped = False
+          for index, line in enumerate(lines):
+              if line == 'name = "palmcast"':
+                  for offset in range(index + 1, min(index + 4, len(lines))):
+                      if lines[offset].startswith("version = "):
+                          lines[offset] = f'version = "{version}"'
+                          stamped = True
+                          break
+                  break
+          if not stamped:
+              sys.exit("::error::could not stamp Cargo.lock")
+          open("Cargo.lock", "w").write("\n".join(lines))
+          PY
+          grep -q "^version = \"$v\"\$" Cargo.toml || { echo "::error::Cargo.toml not stamped to '$v'"; exit 1; }
+          grep -q "^version = \"$v\"\$" Cargo.lock || { echo "::error::Cargo.lock not stamped to '$v'"; exit 1; }
+
+      - name: Install Zig
+        if: matrix.zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.16.0"
+
+      - name: Install cargo-zigbuild
+        if: matrix.zig
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      - name: Build (zigbuild)
+        if: matrix.zig
+        run: cargo zigbuild --release --target ${{ matrix.target }} --locked
+
+      - name: Build (cargo)
+        if: ${{ !matrix.zig }}
+        run: cargo build --release --target ${{ matrix.target }} --locked
+
+      - name: Stage asset
+        shell: bash
+        run: cp "target/${{ matrix.target }}/release/palmcast${{ matrix.ext }}" "${{ matrix.asset }}${{ matrix.ext }}"
+
+      - name: Upload to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "${{ matrix.asset }}${{ matrix.ext }}" --clobber
+
+  checksums:
+    name: SHA256SUMS
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate and upload SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'palmcast-*' --dir assets
+          (cd assets && sha256sum *) > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$GITHUB_REF_NAME" SHA256SUMS --clobber \
+            --repo "$GITHUB_REPOSITORY"
+
+  docker:
+    name: Build & Publish Docker Image
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'palmcast-x86_64-linux' --dir dist
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'palmcast-aarch64-linux' --dir dist
+          mv dist/palmcast-x86_64-linux dist/palmcast-amd64
+          mv dist/palmcast-aarch64-linux dist/palmcast-arm64
+
+      - name: Downcase repository name for GHCR tag compat
+        run: echo "REPO_LOWER=${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine Docker tags
+        id: tags
+        run: |
+          version="ghcr.io/${{ env.REPO_LOWER }}:$GITHUB_REF_NAME"
+          case "$GITHUB_REF_NAME" in
+            *-*) echo "tags=$version" >> $GITHUB_OUTPUT ;;
+            *) echo "tags=$version,ghcr.io/${{ env.REPO_LOWER }}:latest" >> $GITHUB_OUTPUT ;;
+          esac
+          cat $GITHUB_OUTPUT
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}

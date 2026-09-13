@@ -1,0 +1,109 @@
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: max(var(--pad), env(safe-area-inset-top)) var(--pad)
+           max(var(--pad), env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  gap: 14px;
+}
+
+header h1 {
+  margin: 0 0 4px;
+  font-size: 30px;
+  letter-spacing: -.02em;
+}
+header h1::after {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 4px;
+}
+header p { margin: 0; font-size: 15px; }
+
+.field { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.label {
+  font-size: 12px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin-bottom: 6px;
+}
+
+textarea {
+  flex: 1;
+  min-height: 44vh;
+  width: 100%;
+  resize: vertical;
+  background: var(--raised);
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: 14px;
+  font: 400 16px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.syntax { margin: 0; font-size: 13px; }
+.syntax code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  padding: .1em .3em;
+  color: var(--ink);
+}
+
+.actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* Three buttons and a slide count do not fit one phone row, so they wrap. */
+.actions button { flex: 1 1 auto; min-width: 44%; }
+
+.error {
+  margin: 0;
+  color: #e0564f;
+  font-size: 14px;
+}
+
+/* Deck preview */
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  /* The deck, not the page, is what scrolls: the editor stays reachable. */
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px;
+}
+.preview-card {
+  position: relative;
+  padding: 16px 16px 14px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+}
+.preview-number {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 11px;
+  letter-spacing: .08em;
+  color: var(--ink-dim);
+}
+.preview-card .options { margin-top: 12px; }
+.preview-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* Where a prompt goes when the clipboard is not available. Never the editor:
+   the fallback must not cost anyone the deck they were writing. */
+.fallback {
+  min-height: 140px;
+  flex: 0 0 auto;
+  font-size: 12px;
+}

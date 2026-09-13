@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Palmcast — presenting</title>
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/present.css">
+</head>
+<body>
+<span id="status" class="status" data-state="offline">connecting</span>
+
+<h1 class="visually-hidden">Palmcast presenter console</h1>
+<main class="console">
+  <div class="topline">
+    <span id="role-badge" class="role-badge" hidden>co-host</span>
+    <button id="position" class="position" aria-label="Jump to a slide">—</button>
+    <span id="viewers" class="dim viewers">0 watching</span>
+    <button id="follow" class="ghost follow" hidden>Room is on 1 · follow</button>
+    <button id="edit-toggle" class="ghost">Edit</button>
+    <button id="share-toggle" class="ghost">Share</button>
+  </div>
+
+  <section id="share" class="share" hidden>
+    <img id="qr" alt="QR code linking to this session" width="180" height="180">
+    <div class="share-links">
+      <button id="copy" class="ghost">Copy audience link</button>
+      <a id="stage-link" href="#" target="_blank" rel="noopener">Open stage view</a>
+      <button id="handoff" class="ghost">Copy my presenter link</button>
+      <button id="cohost" class="ghost">Copy co-host link</button>
+      <p id="share-url" class="dim url"></p>
+    </div>
+  </section>
+
+  <nav id="jump" class="jump" hidden aria-label="Slides"></nav>
+
+  <section id="editor" class="editor" hidden>
+    <label class="label" for="deck-text">Deck</label>
+    <textarea id="deck-text" spellcheck="false"></textarea>
+    <div class="editor-actions">
+      <button id="deck-save" class="primary">Save</button>
+      <button id="deck-prompt" class="ghost">Copy prompt for an agent</button>
+      <button id="deck-link" class="ghost">Copy deck link</button>
+      <button id="deck-cancel" class="ghost">Cancel</button>
+      <span id="deck-status" class="dim"></span>
+    </div>
+    <input id="deck-link-url" class="url" readonly hidden
+      aria-label="Shareable link to this deck">
+  </section>
+
+  <section class="now">
+    <h2 class="label">On screen</h2>
+    <div id="slide" class="slide"></div>
+    <div id="options" class="options" aria-live="polite" hidden></div>
+    <button id="reveal" class="reveal" hidden>Reveal the answer</button>
+  </section>
+
+  <section class="notes">
+    <h2 class="label">Notes</h2>
+    <div id="notes" class="notes-body dim"></div>
+  </section>
+
+  <section class="qa-console">
+    <h2 class="label">Questions</h2>
+    <ul id="questions" class="question-list"></ul>
+  </section>
+
+  <section class="board">
+    <h2 class="label">Leaderboard</h2>
+    <ul id="scores" class="score-list"></ul>
+  </section>
+
+  <section class="next">
+    <h2 class="label">Next</h2>
+    <div id="next" class="slide next-body dim"></div>
+  </section>
+</main>
+
+<nav class="controls">
+  <button id="prev" aria-label="Previous slide">←</button>
+  <button id="next-btn" class="primary" aria-label="Next slide">Next →</button>
+</nav>
+
+<div id="denied" class="denied" hidden>
+  <p>You are not the presenter for this session.</p>
+  <p class="dim">Open the audience view instead.</p>
+  <a id="watch-link" class="primary-link" href="#">Watch</a>
+</div>
+
+<div id="ended" class="ended" role="status" hidden>
+  <h2>This session has ended</h2>
+  <p>Ask the presenter for a new link.</p>
+</div>
+<script type="module" src="/present.js"></script>
+</body>
+</html>

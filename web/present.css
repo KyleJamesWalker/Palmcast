@@ -1,0 +1,204 @@
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+.console {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: max(30px, env(safe-area-inset-top)) var(--pad) 12px;
+  overflow-y: auto;
+}
+
+.topline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.position {
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  min-height: 40px;
+  padding: 0 8px;
+}
+.position:active { border-color: var(--edge); }
+.viewers { flex: 1; font-size: 14px; }
+
+button.ghost {
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 14px;
+  border-radius: 10px;
+}
+
+.label {
+  margin: 0 0 6px;
+  font-size: 11px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  font-weight: 600;
+}
+
+.share {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 14px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+}
+.share img { background: #fff; border-radius: 10px; padding: 8px; }
+.share-links { display: flex; flex-direction: column; gap: 8px; min-width: 180px; flex: 1; }
+.url { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+
+/* The presenter reads this at a glance, so it stays smaller than the
+   audience copy and never grows past a thumb's reach. */
+.now .slide { font-size: clamp(17px, 3.6vw, 22px); }
+.next-body { font-size: clamp(14px, 3vw, 17px); opacity: .75; }
+
+.notes-body {
+  font-size: clamp(16px, 3.6vw, 19px);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+  min-height: 1.4em;
+}
+
+.controls {
+  display: flex;
+  gap: 10px;
+  padding: 10px var(--pad) max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--edge);
+  background: var(--ground);
+}
+.controls button { min-height: 64px; font-size: 19px; }
+#prev { flex: 0 0 30%; }
+#next-btn { flex: 1; }
+
+.denied {
+  position: fixed;
+  inset: 0;
+  background: var(--ground);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: var(--pad);
+  text-align: center;
+}
+.primary-link {
+  margin-top: 10px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 650;
+  text-decoration: none;
+  border-radius: 12px;
+  padding: 16px 28px;
+}
+
+.reveal {
+  width: 100%;
+  margin-top: 12px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: 650;
+}
+.reveal[disabled] { background: var(--raised); color: var(--ink-dim); border-color: var(--edge); }
+
+/* The presenter reads the tally at a glance, so it stays compact. */
+.console .options { margin-top: 12px; }
+.console .option { min-height: 44px; font-size: clamp(15px, 3.4vw, 18px); padding: 8px 12px; }
+
+.board .score { min-height: 38px; padding: 6px 10px; font-size: clamp(14px, 3.2vw, 17px); }
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+}
+.editor textarea {
+  min-height: 34vh;
+  resize: vertical;
+  background: var(--ground);
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 12px;
+  font: 400 15px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.editor textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.editor-actions { display: flex; align-items: center; gap: 10px; }
+.editor-actions button { min-height: 46px; }
+.editor-actions .dim { font-size: 13px; }
+
+/* Stepping one slide at a time is fine going forward and miserable going back,
+   so the position doubles as a jump target. */
+.jump {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  gap: 8px;
+}
+.jump button {
+  min-height: 52px;
+  padding: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+}
+.jump button.current {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: 650;
+}
+.jump button.quiz::after {
+  content: "?";
+  margin-left: 3px;
+  color: var(--ink-dim);
+  font-size: .8em;
+}
+.jump button.current.quiz::after { color: var(--accent-ink); }
+
+.role-badge {
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-weight: 650;
+}
+
+/* A co-host does not drive, so the controls that drive are not shown a dead
+   button to press. */
+body[data-role="cohost"] .controls,
+body[data-role="cohost"] .reveal { display: none; }
+
+/* A co-host looking ahead needs to know where the room actually is, and one
+   tap back to it. */
+.follow {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+  border-radius: 9px;
+  border-color: var(--accent);
+  color: var(--accent);
+}
