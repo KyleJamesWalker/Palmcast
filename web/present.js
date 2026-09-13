@@ -1,6 +1,7 @@
 import { clamp, connect, sessionId, tokenFor } from '/shared.js';
 import { renderOptions } from '/quiz.js';
 import { burst } from '/reactions.js';
+import { renderQuestions } from '/questions.js';
 
 const id = sessionId();
 const token = tokenFor(id);
@@ -25,6 +26,7 @@ const els = {
   handoff: document.getElementById('handoff'),
   options: document.getElementById('options'),
   reveal: document.getElementById('reveal'),
+  questions: document.getElementById('questions'),
 };
 
 const audienceUrl = `${location.origin}/s/${id}`;
@@ -40,6 +42,7 @@ if (!token) {
 
 let slides = [];
 let current = 0;
+const voted = new Set();
 const tallies = new Map();
 const revealed = new Map();
 
@@ -93,6 +96,20 @@ const socket = connect(id, token, {
   },
   react(msg) {
     burst(msg.kind);
+  },
+  questions(msg) {
+    renderQuestions(els.questions, msg.items, {
+      canClose: true,
+      voted,
+      emptyText: 'Nothing from the floor yet.',
+      onUpvote(id) {
+        voted.add(id);
+        socket.send({ type: 'upvote', question: id });
+      },
+      onAnswered(id) {
+        socket.send({ type: 'answered', question: id });
+      },
+    });
   },
   viewers(msg) {
     const n = msg.count;

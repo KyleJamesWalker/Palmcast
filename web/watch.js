@@ -1,6 +1,7 @@
 import { connect, sessionId } from '/shared.js';
 import { renderOptions } from '/quiz.js';
 import { burst, reactionBar } from '/reactions.js';
+import { renderQuestions } from '/questions.js';
 
 const id = sessionId();
 const slide = document.getElementById('slide');
@@ -51,6 +52,10 @@ const socket = connect(id, null, {
   react(msg) {
     burst(msg.kind);
   },
+  questions(msg) {
+    questions = msg.items;
+    paintQuestions();
+  },
   status(state) {
     status.dataset.state = state;
     status.textContent = state;
@@ -65,3 +70,42 @@ document.addEventListener('visibilitychange', () => {
 reactionBar(document.getElementById('reactions'), (kind) => {
   socket.send({ type: 'react', kind });
 });
+
+const qa = document.getElementById('qa');
+const qaToggle = document.getElementById('qa-toggle');
+const questionList = document.getElementById('questions');
+const askForm = document.getElementById('ask-form');
+const askText = document.getElementById('ask-text');
+
+let questions = [];
+const voted = new Set();
+
+function paintQuestions() {
+  qaToggle.textContent = questions.length
+    ? `Questions \u00b7 ${questions.length}`
+    : 'Questions';
+  renderQuestions(questionList, questions, {
+    voted,
+    emptyText: 'No questions yet. Ask the first one.',
+    onUpvote(id) {
+      voted.add(id);
+      socket.send({ type: 'upvote', question: id });
+      paintQuestions();
+    },
+  });
+}
+
+qaToggle.addEventListener('click', () => {
+  qa.hidden = !qa.hidden;
+  if (!qa.hidden) askText.focus();
+});
+
+askForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const text = askText.value.trim();
+  if (!text) return;
+  socket.send({ type: 'ask', text });
+  askText.value = '';
+});
+
+paintQuestions();
