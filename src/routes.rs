@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::assets::{self, Web};
 use crate::deck;
 use crate::origin;
-use crate::session::{EditError, Registry};
+use crate::session::{EditError, Registry, Role};
 use crate::share;
 use crate::ws::{self, Join};
 
@@ -305,13 +305,13 @@ async fn whoami(
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let token = params.get("token").map(String::as_str).unwrap_or_default();
-    let role = registry.role(&id, token);
-    let name = if role.drives() {
-        "mc"
-    } else if role.edits() {
-        "cohost"
-    } else {
-        "viewer"
+    // A driver drives without editing, so it cannot fold into either of the
+    // other two: the console has to hide the lineup from a speaker.
+    let name = match registry.role(&id, token) {
+        Role::Mc => "mc",
+        Role::CoHost => "cohost",
+        Role::Driver => "driver",
+        Role::Viewer => "viewer",
     };
     name.into_response()
 }

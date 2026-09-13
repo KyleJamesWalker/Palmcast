@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 /// What survives a restart. Slides are absent on purpose: they are rebuilt from
 /// the markdown on load, so a change to the parser cannot bring back a deck
 /// that no longer matches its source.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PersistedSession {
     pub id: String,
     pub owner_token: String,
@@ -36,6 +36,38 @@ pub struct PersistedSession {
     /// not hand an expired room a fresh life, so the age travels with it.
     #[serde(default)]
     pub idle_seconds: u64,
+    /// The running order. A host who restarts mid evening must not lose the
+    /// talks the room has already written, so the decks and the tokens that
+    /// drive them travel too.
+    #[serde(default)]
+    pub lineup: Vec<PersistedTalk>,
+    #[serde(default)]
+    pub next_talk_id: u64,
+    #[serde(default)]
+    pub staged: Option<u64>,
+    #[serde(default)]
+    pub baton: Option<u64>,
+    #[serde(default)]
+    pub submissions_open: bool,
+    /// The host deck, while a talk stands in front of it.
+    #[serde(default)]
+    pub parked: Option<String>,
+    #[serde(default)]
+    pub parked_current: usize,
+    /// Points from talks that have already come down. Derived scores cannot
+    /// survive the deck they were derived from, so they are banked.
+    #[serde(default)]
+    pub banked: HashMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedTalk {
+    pub id: u64,
+    pub title: String,
+    pub markdown: String,
+    pub token: String,
+    #[serde(default)]
+    pub by: String,
 }
 
 /// What one voter chose on one slide.
@@ -146,6 +178,7 @@ mod tests {
             names: HashMap::from([("sam".to_string(), "Sam".to_string())]),
             participants: HashSet::from(["sam".to_string()]),
             idle_seconds: 0,
+            ..Default::default()
         }
     }
 

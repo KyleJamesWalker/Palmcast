@@ -1666,3 +1666,65 @@ async fn a_deck_too_large_to_present_is_too_large_to_preview() {
     .await;
     assert_eq!(status, 413);
 }
+
+async fn ws_send(socket: &mut Socket, msg: Value) {
+    socket
+        .send(Message::Text(msg.to_string().into()))
+        .await
+        .unwrap();
+}
+
+/// A talk is put up by somebody who is already in the room, so the running
+/// order says who is giving it.
+#[tokio::test]
+async fn a_submitted_talk_carries_the_name_of_whoever_put_it_up() {
+    let host = spawn().await;
+    let (id, mc) = create(&host, "# Lightning talks").await;
+
+    let mut console = open(&host, &id, Some(&mc)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "submissions", "open": true }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut phone = open_as(&host, &id, None, "ada-browser").await;
+    ws_send(
+        &mut phone,
+        serde_json::json!({ "type": "set_name", "name": "Ada" }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let res = reqwest::Client::new()
+        .post(format!("http://{host}/api/sessions/{id}/talks"))
+        .json(&serde_json::json!({
+            "title": "",
+            "markdown": "# Borrow checking\n\n---\n\n# Two",
+            "who": "ada-browser",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 201, "the submission was refused");
+
+    // Read the lineup off a freshly opened socket, which is hydrated with it.
+    let mut later = open(&host, &id, Some(&mc)).await;
+    let mut seen = None;
+    for _ in 0..8 {
+        let msg = next_json(&mut later).await;
+        if msg["type"] == "lineup" {
+            seen = Some(msg);
+            break;
+        }
+    }
+    let lineup = seen.expect("no lineup in the opening state");
+    let entry = &lineup["items"][0];
+    assert_eq!(entry["title"], "Borrow checking");
+    assert_eq!(entry["slides"], 2);
+    assert_eq!(
+        entry["by"], "Ada",
+        "the running order lost who is giving the talk"
+    );
+}

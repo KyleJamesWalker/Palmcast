@@ -7,7 +7,7 @@ use subtle::ConstantTimeEq;
 use tokio::sync::broadcast;
 
 use crate::deck::{self, Slide};
-use crate::persist::{Choice, PersistedQuestion, PersistedSession};
+use crate::persist::{Choice, PersistedQuestion, PersistedSession, PersistedTalk};
 use crate::wire::{AudienceQuestion, Frame, LineupEntry, Reaction, ScoreRow, ServerMsg};
 
 /// No vowels, so an id cannot spell a word, and no glyphs that look alike when
@@ -1011,6 +1011,24 @@ impl Registry {
                 names: s.names.clone(),
                 participants: s.participants.clone(),
                 idle_seconds: s.touched.elapsed().as_secs(),
+                lineup: s
+                    .lineup
+                    .iter()
+                    .map(|talk| PersistedTalk {
+                        id: talk.id,
+                        title: talk.title.clone(),
+                        markdown: talk.markdown.clone(),
+                        token: talk.token.clone(),
+                        by: talk.by.clone(),
+                    })
+                    .collect(),
+                next_talk_id: s.next_talk_id,
+                staged: s.staged,
+                baton: s.baton,
+                submissions_open: s.submissions_open,
+                parked: s.parked.as_ref().map(|p| p.markdown.clone()),
+                parked_current: s.parked.as_ref().map(|p| p.current).unwrap_or(0),
+                banked: s.banked.clone(),
             })
             .collect()
     }
@@ -1100,13 +1118,32 @@ impl Registry {
                     next_question_id: item.next_question_id.max(1),
                     participants: item.participants,
                     names: item.names,
-                    lineup: Vec::new(),
-                    next_talk_id: 1,
-                    staged: None,
-                    parked: None,
-                    baton: None,
-                    submissions_open: false,
-                    banked: HashMap::new(),
+                    lineup: item
+                        .lineup
+                        .into_iter()
+                        .map(|talk| Talk {
+                            id: talk.id,
+                            title: talk.title,
+                            markdown: talk.markdown,
+                            token: talk.token,
+                            by: talk.by,
+                        })
+                        .collect(),
+                    next_talk_id: item.next_talk_id.max(1),
+                    staged: item.staged,
+                    parked: item.parked.map(|markdown| {
+                        let slides = deck::parse(&markdown);
+                        let current = item.parked_current.min(slides.len().saturating_sub(1));
+                        Parked {
+                            markdown,
+                            slides,
+                            current,
+                        }
+                    }),
+                    baton: item.baton,
+                    submissions_open: item.submissions_open,
+                    banked: item.banked,
+                    // What the room saw belongs to the run that saw it.
                     timeline: Vec::new(),
                     opened: SystemTime::now(),
                 },
@@ -1499,6 +1536,86 @@ mod tests {
         );
     }
 
+    /// A host who restarts mid evening must not lose what the room wrote.
+    #[test]
+    fn the_running_order_survives_a_restart() {
+        let (before, id, _) = open_room();
+        before
+            .with_mut(&id, |s| s.set_name("ada", "Ada"))
+            .flatten()
+            .unwrap();
+        let (talk, speaker) = submit(&before, &id, "ada", "# Ada\n\n---\n\n# Two");
+        submit(&before, &id, "ada", "# Later");
+        before
+            .with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+
+        let after = registry();
+        assert_eq!(after.import(before.export()), 1);
+
+        let ServerMsg::Lineup {
+            items,
+            staged,
+            open,
+        } = after.with(&id, Session::lineup_msg).unwrap()
+        else {
+            panic!("no lineup");
+        };
+        assert_eq!(items.len(), 2, "the running order was lost");
+        assert_eq!(items[0].by, "Ada");
+        assert_eq!(staged, Some(talk), "the room came back on a different deck");
+        assert!(open, "the room stopped taking talks across a restart");
+
+        // The speaker keeps driving without being handed a new link.
+        assert_eq!(after.role(&id, &speaker), Role::Driver);
+        assert!(
+            after
+                .with_mut(&id, |s| s.goto(&speaker, 1))
+                .flatten()
+                .is_some()
+        );
+
+        // And the host deck is still behind the talk.
+        after.with_mut(&id, |s| s.stage(Role::Mc, None)).unwrap();
+        let ServerMsg::Deck { slides, .. } = after.with(&id, Session::snapshot).unwrap() else {
+            panic!("no deck");
+        };
+        assert_eq!(slides.len(), 2, "the parked host deck did not come back");
+    }
+
+    #[test]
+    fn the_board_survives_a_restart_mid_evening() {
+        let (before, id, mc) = open_room();
+        let (talk, _) = submit(&before, &id, "ada", "# Ada\n\n---\n\n- [x] yes\n- [ ] no");
+        before
+            .with_mut(&id, |s| s.set_name("sam", "Sam"))
+            .flatten()
+            .unwrap();
+        before
+            .with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+        before
+            .with_mut(&id, |s| s.answer(1, "sam", &[0]))
+            .flatten()
+            .unwrap();
+        before
+            .with_mut(&id, |s| s.reveal(&mc, 1))
+            .flatten()
+            .unwrap();
+        // Banked as the talk comes down.
+        before.with_mut(&id, |s| s.stage(Role::Mc, None)).unwrap();
+
+        let after = registry();
+        after.import(before.export());
+        let ServerMsg::Scores { items } = after.with(&id, Session::score_table).unwrap() else {
+            panic!("no scores");
+        };
+        assert_eq!(
+            items[0].score, 1,
+            "points earned before the restart were lost"
+        );
+    }
+
     #[test]
     fn a_participant_cap_bounds_a_room() {
         let reg = registry();
@@ -1559,6 +1676,7 @@ mod tests {
             names: Default::default(),
             participants: Default::default(),
             idle_seconds: 0,
+            ..Default::default()
         }];
         assert_eq!(reg.import(saved), 1);
 
@@ -1758,6 +1876,7 @@ mod tests {
             names: Default::default(),
             participants: Default::default(),
             idle_seconds: 0,
+            ..Default::default()
         }];
 
         let reg = Registry::new(Duration::from_secs(3600));
@@ -2055,6 +2174,7 @@ mod tests {
             names: HashMap::from([("sam".to_string(), "Sam".to_string())]),
             participants: HashSet::from(["sam".to_string()]),
             idle_seconds: 0,
+            ..Default::default()
         }];
 
         let reg = Registry::new(Duration::from_secs(3600));

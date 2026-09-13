@@ -11,6 +11,8 @@ import {
 } from '/shared.js';
 import { renderOptions } from '/quiz.js';
 import { agentPrompt, pruneBySlide, survivingSlides } from '/deckstate.js';
+import { renderLineup } from '/lineup.js';
+import { previewDeck, renderPreview } from '/preview.js';
 import { burst } from '/reactions.js';
 import { renderQuestions } from '/questions.js';
 import { renderScores } from '/scores.js';
@@ -44,6 +46,14 @@ const els = {
   deckStatus: document.getElementById('deck-status'),
   deckPrompt: document.getElementById('deck-prompt'),
   deckLink: document.getElementById('deck-link'),
+  lineupToggle: document.getElementById('lineup-toggle'),
+  lineupPanel: document.getElementById('lineup-panel'),
+  lineup: document.getElementById('lineup'),
+  submissions: document.getElementById('submissions'),
+  talkRead: document.getElementById('talk-read'),
+  talkReadTitle: document.getElementById('talk-read-title'),
+  talkReadClose: document.getElementById('talk-read-close'),
+  talkPreview: document.getElementById('talk-preview'),
   deckLinkUrl: document.getElementById('deck-link-url'),
   cohost: document.getElementById('cohost'),
   roleBadge: document.getElementById('role-badge'),
@@ -75,6 +85,9 @@ let roomCurrent = 0;
 let independent = false;
 let latestQuestions = [];
 let editingRev = null;
+let myRole = 'viewer';
+let lineup = { items: [], staged: null, open: false };
+let baton = null;
 const voted = new Set();
 const tallies = new Map();
 const revealed = new Map();
@@ -174,6 +187,17 @@ const socket = connect(id, token, {
       },
     });
   },
+  lineup(msg) {
+    lineup = msg;
+    paintLineup();
+  },
+  baton(msg) {
+    baton = msg.talk;
+    paintLineup();
+    // Who drives can change under an open socket, so the console asks again
+    // rather than trusting what it learned when it opened.
+    refreshRole();
+  },
   viewers(msg) {
     const n = msg.count;
     els.viewers.textContent = `${n} watching`;
@@ -183,6 +207,97 @@ const socket = connect(id, token, {
     els.status.textContent = state;
   },
 });
+
+function paintLineup() {
+  els.submissions.textContent = lineup.open ? 'Close submissions' : 'Open submissions';
+  els.submissions.hidden = myRole !== 'mc';
+  renderLineup(els.lineup, lineup, {
+    role: myRole,
+    baton,
+    onStage(talk) {
+      socket.send({ type: 'stage', talk });
+    },
+    onHand(talk) {
+      socket.send({ type: 'hand', talk });
+    },
+    onDrop(talk) {
+      // A deck somebody wrote, so this asks before throwing it away.
+      if (confirm(`Drop "${talk.title}" from the running order?`)) {
+        socket.send({ type: 'drop', talk: talk.id });
+      }
+    },
+    async onPreview(talk) {
+      els.talkReadTitle.textContent = `Reading: ${talk.title}`;
+      els.talkRead.hidden = false;
+      els.talkPreview.innerHTML = '<p class="dim">Opening\u2026</p>';
+      try {
+        const res = await fetch(
+          `/api/sessions/${id}/talks/${talk.id}?token=${encodeURIComponent(token ?? '')}`,
+        );
+        if (!res.ok) throw new Error(`server said ${res.status}`);
+        renderPreview(els.talkPreview, await previewDeck(await res.text()));
+      } catch (e) {
+        els.talkPreview.innerHTML = '';
+        const failed = document.createElement('p');
+        failed.className = 'error';
+        failed.textContent = `Could not read that talk: ${e.message}`;
+        els.talkPreview.append(failed);
+      }
+    },
+  });
+}
+
+els.lineupToggle.addEventListener('click', () => {
+  els.lineupPanel.hidden = !els.lineupPanel.hidden;
+  if (!els.lineupPanel.hidden) paintLineup();
+});
+
+els.talkReadClose.addEventListener('click', () => {
+  els.talkRead.hidden = true;
+});
+
+els.submissions.addEventListener('click', () => {
+  socket.send({ type: 'submissions', open: !lineup.open });
+});
+
+/// A speaker drives and nothing else, so the console hides what is not theirs:
+/// the deck editor, the running order, and the share links that hand out the
+/// room rather than one talk.
+function applyRole(role) {
+  myRole = role;
+  document.body.dataset.role = role;
+  const staff = role === 'mc' || role === 'cohost';
+  els.editToggle.hidden = !staff;
+  els.lineupToggle.hidden = role !== 'mc';
+  els.shareToggle.hidden = role !== 'mc';
+  if (!staff) {
+    els.editor.hidden = true;
+  }
+  if (role !== 'mc') {
+    els.lineupPanel.hidden = true;
+    els.share.hidden = true;
+  }
+  els.roleBadge.hidden = staff && role !== 'cohost';
+  if (role === 'cohost') els.roleBadge.textContent = 'co-host';
+  if (role === 'driver') {
+    els.roleBadge.textContent = 'you are driving';
+    els.roleBadge.hidden = false;
+  }
+  paintLineup();
+}
+
+async function refreshRole() {
+  try {
+    const res = await fetch(`/api/sessions/${id}/role?token=${encodeURIComponent(token ?? '')}`);
+    if (!res.ok) return;
+    const role = (await res.text()).trim();
+    applyRole(role);
+    // A speaker whose turn just ended is watching, not presenting.
+    if (role === 'viewer') location.href = `/s/${id}`;
+  } catch {
+    /* the socket is the thing that matters, and it is still open */
+  }
+}
 
 /// A grid of slide numbers, marking which ones are questions so an MC can find
 /// the round they want without stepping through the talk.
@@ -404,12 +519,12 @@ const roleKnown = (async () => {
     const res = await fetch(`/api/sessions/${id}/role?token=${encodeURIComponent(token ?? '')}`);
     if (!res.ok) return 'mc';
     const role = (await res.text()).trim();
-    document.body.dataset.role = role;
+    applyRole(role);
     if (role === 'cohost') {
-      els.roleBadge.hidden = false;
       els.cohost.hidden = true;
       document.title = 'Palmcast \u2014 co-host';
     }
+    if (role === 'driver') document.title = 'Palmcast \u2014 your talk';
     return role;
   } catch {
     // Without an answer the console stays as it is, which is the mc layout.

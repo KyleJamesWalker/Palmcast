@@ -36,3 +36,37 @@ body { display: flex; flex-direction: column; min-height: 100dvh; }
 
 .qa .label { margin: 0 0 8px; }
 .qa .label-spaced { margin-top: 18px; }
+
+/* Putting a talk up */
+.talk-form { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.talk-form input, .talk-form textarea {
+  font: inherit;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.talk-form input { min-height: 48px; padding: 0 14px; }
+.talk-form textarea { min-height: 180px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.talk-form input:focus, .talk-form textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.talk-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.talk-actions button { flex: 1 1 auto; }
+
+/* Your turn */
+.yours {
+  position: fixed;
+  left: 50%;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-radius: 14px;
+  font-size: 14px;
+  z-index: 5;
+}
+.yours a { color: var(--accent-ink); font-weight: 600; }
