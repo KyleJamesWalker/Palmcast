@@ -39,6 +39,15 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
     {
         return;
     }
+    // A round can already be under way. Only the presenter is told, because the
+    // room seeing the split form is the thing the tally is withheld for.
+    if is_owner {
+        for tally in registry.tallies(&id) {
+            if send(&mut sink, &tally, is_owner).await.is_err() {
+                return;
+            }
+        }
+    }
     // A full room closes the socket. A viewer who silently saw nothing would
     // look like a broken app rather than a full one.
     let Some(count) = registry.join(&id) else {
@@ -153,6 +162,11 @@ where
     }
     if let Some(scores) = registry.scores(id) {
         send(sink, &scores, is_owner).await?;
+    }
+    if is_owner {
+        for tally in registry.tallies(id) {
+            send(sink, &tally, is_owner).await?;
+        }
     }
     Ok(())
 }

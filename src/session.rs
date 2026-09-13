@@ -461,6 +461,29 @@ impl Registry {
         Some(session.score_table())
     }
 
+    /// Every slide that already holds votes, so a console opened part way
+    /// through a round knows where the room stands. Presenter only, on the same
+    /// footing as a live tally.
+    pub fn tallies(&self, id: &str) -> Vec<ServerMsg> {
+        let map = self.lock();
+        let Some(session) = map.get(id) else {
+            return Vec::new();
+        };
+        let mut slides: Vec<usize> = session.votes.keys().copied().collect();
+        slides.sort_unstable();
+        slides
+            .into_iter()
+            .filter_map(|slide| {
+                let (counts, total) = session.counts(slide);
+                (total > 0).then_some(ServerMsg::Tally {
+                    slide,
+                    counts,
+                    total,
+                })
+            })
+            .collect()
+    }
+
     pub fn scores(&self, id: &str) -> Option<ServerMsg> {
         self.lock().get(id).map(Session::score_table)
     }

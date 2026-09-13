@@ -1186,3 +1186,64 @@ async fn a_rewritten_asset_tags_the_bytes_it_actually_sends() {
         "a plain asset carried the build id"
     );
 }
+
+#[tokio::test]
+async fn a_presenter_joining_mid_round_is_told_the_tally() {
+    let host = spawn().await;
+    let (id, token) = create(&host, TWO_QUIZ).await;
+
+    // The room votes before anyone opens the console.
+    for who in ["sam", "alex", "robin"] {
+        let mut voter = open_as(&host, &id, None, who).await;
+        let _ = next_json(&mut voter).await;
+        voter
+            .send(Message::Text(
+                r#"{"type":"answer","slide":0,"option":0}"#.into(),
+            ))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        std::mem::forget(voter);
+    }
+
+    let mut mc = open_as(&host, &id, Some(&token), "mc").await;
+
+    let mut saw = None;
+    for _ in 0..12 {
+        let msg = next_json(&mut mc).await;
+        if msg["type"] == "tally" && msg["slide"] == 0 {
+            saw = Some(msg);
+            break;
+        }
+    }
+    let tally = saw.expect("the console was never told how the room had voted");
+    assert_eq!(tally["total"], 3);
+    assert_eq!(tally["counts"][0], 3);
+}
+
+#[tokio::test]
+async fn a_viewer_joining_mid_round_is_not_told_the_tally() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, TWO_QUIZ).await;
+
+    let mut voter = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut voter).await;
+    voter
+        .send(Message::Text(
+            r#"{"type":"answer","slide":0,"option":0}"#.into(),
+        ))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let mut latecomer = open_as(&host, &id, None, "late").await;
+    for _ in 0..6 {
+        match tokio::time::timeout(Duration::from_millis(400), latecomer.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => {
+                let msg: Value = serde_json::from_str(&text).unwrap();
+                assert_ne!(msg["type"], "tally", "the room saw the split forming");
+            }
+            _ => break,
+        }
+    }
+}
