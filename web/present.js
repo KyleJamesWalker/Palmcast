@@ -1,4 +1,14 @@
-import { clamp, connect, copyText, navIntent, sessionId, shareLink, tokenFor } from '/shared.js';
+import {
+  clamp,
+  connect,
+  copyText,
+  deckLinkFor,
+  navIntent,
+  packDeck,
+  sessionId,
+  shareLink,
+  tokenFor,
+} from '/shared.js';
 import { renderOptions } from '/quiz.js';
 import { agentPrompt, pruneBySlide, survivingSlides } from '/deckstate.js';
 import { burst } from '/reactions.js';
@@ -33,6 +43,8 @@ const els = {
   deckCancel: document.getElementById('deck-cancel'),
   deckStatus: document.getElementById('deck-status'),
   deckPrompt: document.getElementById('deck-prompt'),
+  deckLink: document.getElementById('deck-link'),
+  deckLinkUrl: document.getElementById('deck-link-url'),
   cohost: document.getElementById('cohost'),
   roleBadge: document.getElementById('role-badge'),
   follow: document.getElementById('follow'),
@@ -336,6 +348,31 @@ els.deckPrompt.addEventListener('click', async () => {
   }
   setTimeout(() => {
     els.deckPrompt.textContent = label;
+  }, 2000);
+});
+
+// Saves the deck, not the room. A room carries questions the audience asked
+// and scores they earned; a link that quietly resurrected those would be a
+// leak, so the token holds the markdown and nothing else.
+els.deckLink.addEventListener('click', async () => {
+  const label = els.deckLink.textContent;
+  els.deckLink.disabled = true;
+  try {
+    const link = deckLinkFor(await packDeck(els.deckText.value));
+    els.deckLinkUrl.value = link;
+    els.deckLinkUrl.hidden = false;
+    if ((await copyText(link)) === 'copied') {
+      els.deckLink.textContent = 'Link copied';
+    } else {
+      els.deckLink.textContent = 'No clipboard \u2014 copy the link below';
+      els.deckLinkUrl.select();
+    }
+  } catch (e) {
+    els.deckLink.textContent = `Could not make a link: ${e.message}`;
+  }
+  els.deckLink.disabled = false;
+  setTimeout(() => {
+    els.deckLink.textContent = label;
   }, 2000);
 });
 

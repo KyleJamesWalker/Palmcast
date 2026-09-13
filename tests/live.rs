@@ -1488,3 +1488,139 @@ async fn a_cohost_token_survives_the_save_and_load_round_trip() {
         "an empty token authenticated"
     );
 }
+
+async fn post_json(host: &str, path: &str, body: Value) -> (u16, String) {
+    let res = reqwest::Client::new()
+        .post(format!("http://{host}{path}"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    let status = res.status().as_u16();
+    (status, res.text().await.unwrap())
+}
+
+#[tokio::test]
+async fn a_deck_link_survives_a_trip_through_the_api() {
+    let host = spawn().await;
+    let deck = "# Quiz night\n\n---\n\n- [x] yes\n- [ ] no\n\n???\nNotes travel too.\n";
+
+    let (status, body) =
+        post_json(&host, "/api/pack", serde_json::json!({ "markdown": deck })).await;
+    assert_eq!(status, 200);
+    let token = serde_json::from_str::<Value>(&body).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, body) =
+        post_json(&host, "/api/unpack", serde_json::json!({ "token": token })).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["markdown"]
+            .as_str()
+            .unwrap(),
+        deck
+    );
+}
+
+#[tokio::test]
+async fn a_deck_from_a_link_starts_a_real_session() {
+    let host = spawn().await;
+    let deck = "# One\n\n---\n\n# Two\n";
+    let (_, body) = post_json(&host, "/api/pack", serde_json::json!({ "markdown": deck })).await;
+    let token = serde_json::from_str::<Value>(&body).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (_, body) = post_json(&host, "/api/unpack", serde_json::json!({ "token": token })).await;
+    let markdown = serde_json::from_str::<Value>(&body).unwrap()["markdown"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (id, presenter) = create(&host, &markdown).await;
+    let mut socket = open(&host, &id, Some(&presenter)).await;
+    let deck_msg = next_json(&mut socket).await;
+    assert_eq!(deck_msg["slides"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_damaged_deck_link_is_refused_with_a_reason() {
+    let host = spawn().await;
+    let (status, body) = post_json(
+        &host,
+        "/api/unpack",
+        serde_json::json!({ "token": "not a token" }),
+    )
+    .await;
+    assert_eq!(status, 400);
+    assert!(body.contains("not a Palmcast deck"), "got {body}");
+}
+
+#[tokio::test]
+async fn a_deck_too_long_to_share_is_refused_by_the_api() {
+    let host = spawn().await;
+    let deck = "a".repeat(palmcast::share::MAX_SHARE_BYTES + 1);
+    let (status, body) =
+        post_json(&host, "/api/pack", serde_json::json!({ "markdown": deck })).await;
+    assert_eq!(status, 413);
+    assert!(body.contains("too long to share"), "got {body}");
+}
+
+/// A room accumulates things the audience contributed. A link that carried
+/// those back would be a leak dressed up as a convenience.
+#[tokio::test]
+async fn a_deck_link_carries_the_slides_and_nothing_the_room_added() {
+    let host = spawn().await;
+    let deck = "# Quiz\n\n---\n\n- [x] yes\n- [ ] no\n";
+    let (id, presenter) = create(&host, deck).await;
+
+    let mut viewer = open_as(&host, &id, None, "guest").await;
+    viewer
+        .send(Message::Text(
+            serde_json::json!({ "type": "ask", "text": "who is buying" })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    viewer
+        .send(Message::Text(
+            serde_json::json!({ "type": "answer", "slide": 1, "options": [0] })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let markdown = reqwest::get(format!(
+        "http://{host}/api/sessions/{id}/markdown?token={presenter}"
+    ))
+    .await
+    .unwrap()
+    .text()
+    .await
+    .unwrap();
+
+    let (_, body) = post_json(
+        &host,
+        "/api/pack",
+        serde_json::json!({ "markdown": markdown }),
+    )
+    .await;
+    let token = serde_json::from_str::<Value>(&body).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (_, body) = post_json(&host, "/api/unpack", serde_json::json!({ "token": token })).await;
+    let shared = serde_json::from_str::<Value>(&body).unwrap()["markdown"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    assert_eq!(shared, deck);
+    assert!(!shared.contains("who is buying"), "a question rode along");
+    assert!(!shared.contains("guest"), "a participant rode along");
+}

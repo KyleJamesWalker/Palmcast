@@ -28,8 +28,12 @@
 
   <div class="actions">
     <button id="start" class="primary">Start presenting</button>
+    <button id="deck-link" class="ghost">Copy deck link</button>
     <span id="count" class="dim"></span>
   </div>
+  <p id="loaded" class="dim" role="status" hidden></p>
+  <input id="deck-link-url" class="url" readonly hidden
+    aria-label="Shareable link to this deck">
   <p id="error" class="error" hidden></p>
 </main>
 <script type="module" src="/new.js"></script>

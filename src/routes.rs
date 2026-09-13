@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::assets::{self, Web};
 use crate::origin;
 use crate::session::{EditError, Registry};
+use crate::share;
 use crate::ws::{self, Join};
 
 const MAX_DECK_BYTES: usize = 256 * 1024;
@@ -72,6 +73,8 @@ pub fn router_with(app: App) -> Router {
         .route("/", get(|| async { page("new.html") }))
         .route("/healthz", get(health))
         .route("/api/sessions", post(create_session))
+        .route("/api/pack", post(pack_deck))
+        .route("/api/unpack", post(unpack_deck))
         .route(
             "/api/sessions/{id}",
             get(session_exists).put(update_session),
@@ -107,7 +110,7 @@ async fn health(State(registry): State<Registry>) -> Response {
     .into_response()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct DeckBody {
     markdown: String,
 }
@@ -133,6 +136,37 @@ async fn create_session(
             .into_response();
     };
     (StatusCode::CREATED, axum::Json(Created { id, token })).into_response()
+}
+
+#[derive(Serialize)]
+struct Packed {
+    token: String,
+}
+
+#[derive(Deserialize)]
+struct TokenBody {
+    token: String,
+}
+
+/// Turns a deck into the token half of a share link.
+///
+/// The deck arrives in a body rather than a query string so it stays out of
+/// access logs, and no session has to exist: a deck is shareable before it is
+/// ever presented.
+async fn pack_deck(axum::Json(body): axum::Json<DeckBody>) -> Response {
+    match share::pack(&body.markdown) {
+        Ok(token) => axum::Json(Packed { token }).into_response(),
+        Err(error) => (StatusCode::PAYLOAD_TOO_LARGE, error.to_string()).into_response(),
+    }
+}
+
+/// The other direction. The token lives in the URL fragment on the client, so
+/// posting it back is what keeps a shared deck out of this server's logs.
+async fn unpack_deck(axum::Json(body): axum::Json<TokenBody>) -> Response {
+    match share::unpack(&body.token) {
+        Ok(markdown) => axum::Json(DeckBody { markdown }).into_response(),
+        Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    }
 }
 
 async fn update_session(

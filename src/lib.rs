@@ -4,5 +4,6 @@ pub mod origin;
 pub mod persist;
 pub mod routes;
 pub mod session;
+pub mod share;
 pub mod wire;
 pub mod ws;

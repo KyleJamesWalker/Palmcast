@@ -148,6 +148,24 @@ split form votes differently from a room that cannot see it.
 
 One vote per browser. A second tap replaces the first rather than adding one.
 
+## Save a deck for later
+
+A room is temporary. **Copy deck link** turns the deck itself into a link, on
+the start page and in the presenter console under **Edit**. Opening that link
+puts the deck in the editor on the start page, ready to present again.
+
+The link carries the slides and nothing else. Questions the audience asked,
+scores they earned, and the presenter token stay behind with the room.
+
+The deck travels in the link, not on the server, so nothing expires and no
+database holds it. MessagePack wraps the markdown, Brotli squeezes it, and
+base64url carries it: a ten round quiz deck of 3.6 KB becomes about 620
+characters. Above 64 KB the server refuses, rather than hand back a link no
+chat client would carry.
+
+The token sits in the URL fragment. Browsers never send a fragment to the
+server, so a deck shared in a chat leaves no trace in an access log.
+
 ## Reactions and questions
 
 The audience gets five reactions in a bar under the slide. A tap floats the
@@ -168,7 +186,7 @@ asked and the board as it stands.
 |---|---|---|---|
 | `--port` | `PALMCAST_PORT` | `8080` | Port to listen on. |
 | `--bind` | `PALMCAST_BIND` | `0.0.0.0` | Address to bind. |
-| `--ttl-hours` | `PALMCAST_TTL_HOURS` | `6` | Hours a session survives with no viewers. |
+| `--ttl-hours` | `PALMCAST_TTL_HOURS` | `6` | Hours a session survives with nobody watching. |
 | `--state-file` | `PALMCAST_STATE_FILE` | none | Carry live rooms across a restart. |
 | `--public-url` | `PALMCAST_PUBLIC_URL` | none | The address the audience reaches. |
 
@@ -225,6 +243,9 @@ every phone in the room renders it. The server therefore:
 - Puts question text on screen as text, never as markup.
 - Limits a reaction to one per viewer every 400ms, and a question to one per
   viewer every three seconds, 280 characters, and 200 per session.
+- Bounds a deck link in both directions. Packing refuses a deck over 64 KB
+  before it compresses anything. Unpacking stops reading at the 256 KB deck
+  limit, so a small token cannot ask for a large allocation.
 
 The presenter token travels in the URL fragment, which browsers never send to the
 server. Copy the presenter link to move control to another device.

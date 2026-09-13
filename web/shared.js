@@ -224,3 +224,41 @@ export async function shareLink(url, nav = globalThis.navigator) {
 
   return 'unavailable';
 }
+
+/// Reads the deck token out of a URL fragment, if there is one.
+///
+/// The fragment, not the query string: a deck someone shared in a chat should
+/// not land in an access log on the way to being opened.
+export function deckTokenIn(hash) {
+  const raw = String(hash ?? '').replace(/^#/, '');
+  if (!raw) return null;
+  const token = new URLSearchParams(raw).get('d');
+  // Base64url only. Anything else was not written by `pack`, and refusing it
+  // here saves a round trip to a server that would refuse it too.
+  return token && /^[A-Za-z0-9_-]+$/.test(token) ? token : null;
+}
+
+export function deckLinkFor(token, origin = globalThis.location?.origin ?? '') {
+  return `${origin}/#d=${token}`;
+}
+
+/// Squeezes a deck into a token. Throws with a message worth showing.
+export async function packDeck(markdown, fetcher = globalThis.fetch) {
+  const res = await fetcher('/api/pack', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ markdown }),
+  });
+  if (!res.ok) throw new Error((await res.text()) || `server said ${res.status}`);
+  return (await res.json()).token;
+}
+
+export async function unpackDeck(token, fetcher = globalThis.fetch) {
+  const res = await fetcher('/api/unpack', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  if (!res.ok) throw new Error((await res.text()) || `server said ${res.status}`);
+  return (await res.json()).markdown;
+}
