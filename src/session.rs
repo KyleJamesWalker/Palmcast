@@ -7,6 +7,7 @@ use subtle::ConstantTimeEq;
 use tokio::sync::broadcast;
 
 use crate::deck::{self, Slide};
+use crate::persist::{PersistedQuestion, PersistedSession};
 use crate::wire::{AudienceQuestion, Reaction, ScoreRow, ServerMsg};
 
 /// No vowels, so an id cannot spell a word, and no glyphs that look alike when
@@ -499,6 +500,79 @@ impl Registry {
         self.len() == 0
     }
 
+    /// Everything worth carrying across a restart.
+    pub fn export(&self) -> Vec<PersistedSession> {
+        self.lock()
+            .iter()
+            .map(|(id, s)| PersistedSession {
+                id: id.clone(),
+                owner_token: s.owner_token.clone(),
+                markdown: s.markdown.clone(),
+                current: s.current,
+                rev: s.rev,
+                votes: s.votes.clone(),
+                revealed: s.revealed.clone(),
+                questions: s
+                    .questions
+                    .iter()
+                    .map(|q| PersistedQuestion {
+                        id: q.id,
+                        text: q.text.clone(),
+                        answered: q.answered,
+                        voters: q.voters.clone(),
+                    })
+                    .collect(),
+                next_question_id: s.next_question_id,
+                names: s.names.clone(),
+                participants: s.participants.clone(),
+            })
+            .collect()
+    }
+
+    /// Returns how many came back. Viewer counts start at zero, because nobody
+    /// is connected to a process that has just started.
+    pub fn import(&self, saved: Vec<PersistedSession>) -> usize {
+        let mut map = self.lock();
+        let mut restored = 0;
+        for item in saved.into_iter().take(MAX_SESSIONS) {
+            let slides = deck::parse(&item.markdown);
+            let current = item.current.min(slides.len().saturating_sub(1));
+            let (tx, _) = broadcast::channel(64);
+            map.insert(
+                item.id,
+                Session {
+                    owner_token: item.owner_token,
+                    markdown: item.markdown,
+                    slides,
+                    rev: item.rev,
+                    current,
+                    viewers: 0,
+                    touched: Instant::now(),
+                    tx,
+                    votes: item.votes,
+                    revealed: item.revealed,
+                    last_reaction: HashMap::new(),
+                    questions: item
+                        .questions
+                        .into_iter()
+                        .map(|q| StoredQuestion {
+                            id: q.id,
+                            text: q.text,
+                            answered: q.answered,
+                            voters: q.voters,
+                        })
+                        .collect(),
+                    last_ask: HashMap::new(),
+                    next_question_id: item.next_question_id.max(1),
+                    participants: item.participants,
+                    names: item.names,
+                },
+            );
+            restored += 1;
+        }
+        restored
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Session>> {
         self.inner.lock().expect("session registry lock")
     }
@@ -550,6 +624,34 @@ mod tests {
         let session = map.get(&id).unwrap();
         assert_eq!(session.participants.len(), MAX_PARTICIPANTS);
         assert!(session.last_reaction.len() <= MAX_PARTICIPANTS);
+    }
+
+    #[test]
+    fn a_restored_session_rebuilds_its_slides_and_clamps_the_position() {
+        let reg = registry();
+        let saved = vec![crate::persist::PersistedSession {
+            id: "abc123".into(),
+            owner_token: "tok".into(),
+            // Two slides, but the saved position points past them.
+            markdown: "# One\n\n---\n\n# Two".into(),
+            current: 9,
+            rev: 4,
+            votes: Default::default(),
+            revealed: Default::default(),
+            questions: Vec::new(),
+            next_question_id: 0,
+            names: Default::default(),
+            participants: Default::default(),
+        }];
+        assert_eq!(reg.import(saved), 1);
+
+        let map = reg.lock();
+        let session = map.get("abc123").unwrap();
+        assert_eq!(session.slides.len(), 2);
+        assert_eq!(session.current, 1, "a stale position was not clamped");
+        assert_eq!(session.viewers, 0);
+        // A zero id would collide with the first question asked after a restart.
+        assert_eq!(session.next_question_id, 1);
     }
 
     #[test]

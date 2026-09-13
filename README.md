@@ -113,6 +113,7 @@ asked and the board as it stands.
 | `--port` | `PALMCAST_PORT` | `8080` | Port to listen on. |
 | `--bind` | `PALMCAST_BIND` | `0.0.0.0` | Address to bind. |
 | `--ttl-hours` | `PALMCAST_TTL_HOURS` | `6` | Hours a session survives with no viewers. |
+| `--state-file` | `PALMCAST_STATE_FILE` | none | Carry live rooms across a restart. |
 
 The server drops a session with no viewers after the TTL, and keeps any session
 with viewers. This stops a public instance from collecting dead rooms.
@@ -125,6 +126,17 @@ with viewers. This stops a public instance from collecting dead rooms.
 
 The server stops on SIGTERM, so an ordinary container redeploy does not kill a
 live room mid-slide.
+
+Without `--state-file` every room lives in memory and a restart drops them all,
+which suits a laptop at a venue. Point it at a file and rooms come back: the
+deck, the current slide, the votes, the questions and the scores. The presenter
+keeps control, because the file holds the token too.
+
+That is also why the server writes the file with mode 600. Anyone who can read
+it can drive every room on the instance. The server saves once a minute and again on shutdown. It writes through a
+temporary file, so a stop midway leaves the previous state rather than half of
+this one. The server logs a file it cannot parse and starts empty, because an
+empty instance still works and a dead one does not.
 
 A public instance also caps itself: 2000 sessions, 400 viewers per session, and
 500 participants per room. A participant id comes from the browser, so without

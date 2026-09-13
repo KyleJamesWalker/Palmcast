@@ -1,6 +1,9 @@
 use std::time::Duration;
 
+use std::path::PathBuf;
+
 use clap::Parser;
+use palmcast::persist;
 use palmcast::routes;
 use palmcast::session::Registry;
 use tracing_subscriber::EnvFilter;
@@ -17,6 +20,11 @@ struct Args {
     /// Hours a session survives with nobody watching it.
     #[arg(long, env = "PALMCAST_TTL_HOURS", default_value_t = 6)]
     ttl_hours: u64,
+
+    /// Carry live rooms across a restart. Holds presenter tokens, so the file
+    /// is written 0600. Leave unset to keep everything in memory.
+    #[arg(long, env = "PALMCAST_STATE_FILE")]
+    state_file: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -27,6 +35,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
     let registry = Registry::new(Duration::from_secs(args.ttl_hours * 3600));
+
+    if let Some(path) = &args.state_file {
+        match persist::load(path) {
+            Ok(saved) if saved.is_empty() => {}
+            Ok(saved) => {
+                let restored = registry.import(saved);
+                tracing::info!(restored, "restored rooms from {}", path.display());
+            }
+            // A bad state file must not stop the server: an empty instance
+            // still works, a dead one does not.
+            Err(error) => tracing::error!(%error, "could not read {}", path.display()),
+        }
+    }
+
+    if let Some(path) = args.state_file.clone() {
+        let saver = registry.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                let saved = saver.export();
+                if let Err(error) = persist::save(&path, &saved) {
+                    tracing::error!(%error, "periodic save failed");
+                }
+            }
+        });
+    }
 
     let sweeper = registry.clone();
     tokio::spawn(async move {
@@ -42,9 +77,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind((args.bind.as_str(), args.port)).await?;
     tracing::info!("palmcast listening on http://{}", listener.local_addr()?);
-    axum::serve(listener, routes::router(registry))
+    axum::serve(listener, routes::router(registry.clone()))
         .with_graceful_shutdown(shutdown())
         .await?;
+
+    if let Some(path) = &args.state_file {
+        let saved = registry.export();
+        match persist::save(path, &saved) {
+            Ok(()) => tracing::info!(rooms = saved.len(), "saved to {}", path.display()),
+            Err(error) => tracing::error!(%error, "could not save {}", path.display()),
+        }
+    }
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod deck;
+pub mod persist;
 pub mod routes;
 pub mod session;
 pub mod wire;
