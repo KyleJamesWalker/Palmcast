@@ -13,7 +13,7 @@
 <main id="stage" class="viewer">
   <div class="pane">
     <div id="slide" class="slide" aria-live="polite"></div>
-    <div id="options" class="options" hidden></div>
+    <div id="options" class="options" aria-live="polite" hidden></div>
   </div>
 </main>
 <section id="qa" class="qa" hidden>
@@ -37,7 +37,7 @@
   <span id="position" class="dim">—</span>
   <button id="qa-toggle" class="ghost-small">Room</button>
 </footer>
-<div id="ended" class="ended" hidden>
+<div id="ended" class="ended" role="status" hidden>
   <h2>This session has ended</h2>
   <p>Ask the presenter for a new link.</p>
 </div>

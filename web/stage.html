@@ -9,16 +9,17 @@
 <link rel="stylesheet" href="/stage.css">
 </head>
 <body>
+<h1 class="visually-hidden">Palmcast stage view</h1>
 <main class="stage">
   <div class="pane">
     <div id="slide" class="slide" aria-live="polite"></div>
-    <div id="options" class="options" hidden></div>
+    <div id="options" class="options" aria-live="polite" hidden></div>
     <ul id="scores" class="score-list" hidden></ul>
   </div>
 </main>
 <div id="position" class="corner dim"></div>
 <button id="fullscreen" class="fullscreen" aria-label="Full screen">⛶</button>
-<div id="ended" class="ended" hidden>
+<div id="ended" class="ended" role="status" hidden>
   <h2>This session has ended</h2>
   <p>Ask the presenter for a new link.</p>
 </div>

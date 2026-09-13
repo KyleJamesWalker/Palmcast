@@ -11,6 +11,7 @@
 <body>
 <span id="status" class="status" data-state="offline">connecting</span>
 
+<h1 class="visually-hidden">Palmcast presenter console</h1>
 <main class="console">
   <div class="topline">
     <button id="position" class="position" aria-label="Jump to a slide">—</button>
@@ -44,7 +45,7 @@
   <section class="now">
     <h2 class="label">On screen</h2>
     <div id="slide" class="slide"></div>
-    <div id="options" class="options" hidden></div>
+    <div id="options" class="options" aria-live="polite" hidden></div>
     <button id="reveal" class="reveal" hidden>Reveal the answer</button>
   </section>
 
@@ -80,7 +81,7 @@
   <a id="watch-link" class="primary-link" href="#">Watch</a>
 </div>
 
-<div id="ended" class="ended" hidden>
+<div id="ended" class="ended" role="status" hidden>
   <h2>This session has ended</h2>
   <p>Ask the presenter for a new link.</p>
 </div>
