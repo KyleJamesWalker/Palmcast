@@ -1453,3 +1453,38 @@ async fn a_save_without_a_revision_still_works() {
         204
     );
 }
+
+#[tokio::test]
+async fn a_cohost_cannot_hand_out_further_cohost_links() {
+    let host = spawn().await;
+    let (id, token) = create(&host, EDIT_DECK).await;
+    let cohost = cohost_token(&host, &id, &token).await;
+
+    let res = reqwest::get(format!(
+        "http://{host}/api/sessions/{id}/cohost?token={cohost}"
+    ))
+    .await
+    .unwrap();
+    assert_eq!(res.status(), 403, "a cohost minted another cohost");
+}
+
+#[tokio::test]
+async fn a_cohost_token_survives_the_save_and_load_round_trip() {
+    use palmcast::session::{Registry, Role};
+
+    let before = Registry::new(Duration::from_secs(3600));
+    let (id, mc) = before.create("# Deck").unwrap();
+    let cohost = before.cohost_token(&id, &mc).expect("no cohost token");
+
+    let after = Registry::new(Duration::from_secs(3600));
+    after.import(before.export());
+
+    assert_eq!(after.role(&id, &mc), Role::Mc);
+    assert_eq!(after.role(&id, &cohost), Role::CoHost);
+    assert_eq!(after.role(&id, "guessed"), Role::Viewer);
+    assert_eq!(
+        after.role(&id, ""),
+        Role::Viewer,
+        "an empty token authenticated"
+    );
+}

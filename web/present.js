@@ -115,7 +115,15 @@ const socket = connect(id, token, {
     }
     slides = msg.slides;
     roomCurrent = msg.current;
-    if (!independent) current = msg.current;
+    if (independent) {
+      // An edit can shorten the deck under somebody reading ahead, which would
+      // otherwise leave them past the end looking at nothing.
+      current = Math.min(current, Math.max(0, slides.length - 1));
+      // Landing back where the room is means there is nothing to follow.
+      if (current === roomCurrent) independent = false;
+    } else {
+      current = msg.current;
+    }
     paint();
   },
   move(msg) {
@@ -187,9 +195,9 @@ function paintJump() {
 /// The mc moves the room. A co-host moves only their own screen, because the
 /// server will not take a goto from them and a button that does nothing is
 /// worse than one that does something useful.
-function go(index) {
+async function go(index) {
   const target = clamp(index, 0, Math.max(0, slides.length - 1));
-  if (document.body.dataset.role === 'cohost') {
+  if ((await roleKnown) === 'cohost') {
     independent = target !== roomCurrent;
     current = target;
     paint();
@@ -346,10 +354,12 @@ els.cohost.addEventListener('click', async () => {
 
 // A co-host edits but does not drive, so the driving controls go away rather
 // than sitting there doing nothing when pressed.
-(async () => {
+// A tap taken before this resolves would be read as the wrong role, so `go`
+// waits on it rather than guessing from the dom.
+const roleKnown = (async () => {
   try {
     const res = await fetch(`/api/sessions/${id}/role?token=${encodeURIComponent(token ?? '')}`);
-    if (!res.ok) return;
+    if (!res.ok) return 'mc';
     const role = (await res.text()).trim();
     document.body.dataset.role = role;
     if (role === 'cohost') {
@@ -357,8 +367,10 @@ els.cohost.addEventListener('click', async () => {
       els.cohost.hidden = true;
       document.title = 'Palmcast \u2014 co-host';
     }
+    return role;
   } catch {
     // Without an answer the console stays as it is, which is the mc layout.
+    return 'mc';
   }
 })();
 
