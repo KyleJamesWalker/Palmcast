@@ -142,6 +142,9 @@ that learns the room is gone says "This session has ended" instead of
 reconnecting at a blank screen forever. An unreachable server is not a missing room, so a failed check keeps
 retrying.
 
+A room carries its age through a restart, so one that had already run out is
+swept rather than handed a fresh life.
+
 The server drops a session with no viewers after the TTL, and keeps any session
 with viewers. This stops a public instance from collecting dead rooms.
 

@@ -542,6 +542,7 @@ impl Registry {
                 next_question_id: s.next_question_id,
                 names: s.names.clone(),
                 participants: s.participants.clone(),
+                idle_seconds: s.touched.elapsed().as_secs(),
             })
             .collect()
     }
@@ -551,10 +552,16 @@ impl Registry {
     pub fn import(&self, saved: Vec<PersistedSession>) -> usize {
         let mut map = self.lock();
         let mut restored = 0;
+        let now = Instant::now();
         for item in saved.into_iter().take(MAX_SESSIONS) {
             let slides = deck::parse(&item.markdown);
             let current = item.current.min(slides.len().saturating_sub(1));
             let (tx, _) = broadcast::channel(64);
+            // Carrying the age forward means the next sweep drops whatever had
+            // already run out, rather than the restart granting it a new life.
+            let touched = now
+                .checked_sub(Duration::from_secs(item.idle_seconds))
+                .unwrap_or(now);
             map.insert(
                 item.id,
                 Session {
@@ -564,7 +571,7 @@ impl Registry {
                     rev: item.rev,
                     current,
                     viewers: 0,
-                    touched: Instant::now(),
+                    touched,
                     tx,
                     votes: item.votes,
                     revealed: item.revealed,
@@ -659,6 +666,7 @@ mod tests {
             next_question_id: 0,
             names: Default::default(),
             participants: Default::default(),
+            idle_seconds: 0,
         }];
         assert_eq!(reg.import(saved), 1);
 
@@ -682,5 +690,47 @@ mod tests {
         }
         assert_eq!(made, MAX_SESSIONS, "the instance created {made} sessions");
         assert!(reg.create("# hi").is_none());
+    }
+
+    #[test]
+    fn a_restart_does_not_resurrect_a_room_that_had_expired() {
+        let ttl = Duration::from_secs(60);
+        let before = Registry::new(ttl);
+        let (id, _token) = before.create("# Old room").unwrap();
+
+        // The room has sat idle for well past its life.
+        {
+            let mut map = before.lock();
+            let session = map.get_mut(&id).unwrap();
+            session.touched = Instant::now() - Duration::from_secs(600);
+        }
+
+        let saved = before.export();
+        let after = Registry::new(ttl);
+        after.import(saved);
+
+        assert_eq!(
+            after.sweep(),
+            1,
+            "a room idle past its ttl came back alive after a restart"
+        );
+        assert!(!after.exists(&id));
+    }
+
+    #[test]
+    fn a_restart_keeps_the_remaining_life_of_a_live_room() {
+        let ttl = Duration::from_secs(600);
+        let before = Registry::new(ttl);
+        let (id, _token) = before.create("# Live room").unwrap();
+        {
+            let mut map = before.lock();
+            map.get_mut(&id).unwrap().touched = Instant::now() - Duration::from_secs(60);
+        }
+
+        let after = Registry::new(ttl);
+        after.import(before.export());
+
+        assert_eq!(after.sweep(), 0, "a live room was swept after a restart");
+        assert!(after.exists(&id));
     }
 }

@@ -27,6 +27,10 @@ pub struct PersistedSession {
     pub names: HashMap<String, String>,
     #[serde(default)]
     pub participants: HashSet<String>,
+    /// How long the room had already sat idle when it was saved. A restart must
+    /// not hand an expired room a fresh life, so the age travels with it.
+    #[serde(default)]
+    pub idle_seconds: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +112,7 @@ mod tests {
             next_question_id: 2,
             names: HashMap::from([("sam".to_string(), "Sam".to_string())]),
             participants: HashSet::from(["sam".to_string()]),
+            idle_seconds: 0,
         }
     }
 
