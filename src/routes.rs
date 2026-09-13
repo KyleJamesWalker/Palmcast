@@ -82,6 +82,8 @@ pub fn router_with(app: App) -> Router {
             get(session_exists).put(update_session),
         )
         .route("/api/sessions/{id}/markdown", get(get_markdown))
+        .route("/api/sessions/{id}/talks", post(submit_talk))
+        .route("/api/sessions/{id}/talks/{talk}", get(read_talk))
         .route("/api/sessions/{id}/cohost", get(cohost_link))
         .route("/api/sessions/{id}/role", get(whoami))
         .route("/s/{id}", get(|| async { page("watch.html") }))
@@ -138,6 +140,78 @@ async fn create_session(
             .into_response();
     };
     (StatusCode::CREATED, axum::Json(Created { id, token })).into_response()
+}
+
+#[derive(Deserialize)]
+struct TalkBody {
+    #[serde(default)]
+    title: String,
+    markdown: String,
+    /// The browser id, the same one the socket uses, so a submission is
+    /// attributed to whoever is already in the room.
+    who: String,
+}
+
+#[derive(Serialize)]
+struct Submitted {
+    id: u64,
+    token: String,
+}
+
+/// Adds a talk to the running order.
+///
+/// Open to the room, because that is the point, and bounded because of it: the
+/// room has to be taking submissions, and the caps sit in the session.
+async fn submit_talk(
+    State(registry): State<Registry>,
+    Path(id): Path<String>,
+    axum::Json(body): axum::Json<TalkBody>,
+) -> Response {
+    if body.markdown.len() > MAX_DECK_BYTES {
+        return (StatusCode::PAYLOAD_TOO_LARGE, "deck too large").into_response();
+    }
+    let Some(outcome) =
+        registry.with_mut(&id, |s| s.submit(&body.who, &body.title, &body.markdown))
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match outcome {
+        Some((talk, token)) => (
+            StatusCode::CREATED,
+            axum::Json(Submitted { id: talk, token }),
+        )
+            .into_response(),
+        None => (
+            StatusCode::CONFLICT,
+            "this room is not taking talks right now",
+        )
+            .into_response(),
+    }
+}
+
+/// The markdown of one submitted talk, for the host to read before staging it.
+/// Staff only: the running order is public, the decks behind it are not.
+async fn read_talk(
+    State(registry): State<Registry>,
+    Path((id, talk)): Path<(String, u64)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    let found = registry.with(&id, |s| {
+        s.role_of(token)
+            .edits()
+            .then(|| s.talk_markdown(talk))
+            .flatten()
+    });
+    match found {
+        Some(Some(markdown)) => (
+            [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+            markdown,
+        )
+            .into_response(),
+        Some(None) => StatusCode::FORBIDDEN.into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 #[derive(Serialize)]

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use rand::Rng;
 use subtle::ConstantTimeEq;
@@ -8,7 +8,7 @@ use tokio::sync::broadcast;
 
 use crate::deck::{self, Slide};
 use crate::persist::{Choice, PersistedQuestion, PersistedSession};
-use crate::wire::{AudienceQuestion, Frame, Reaction, ScoreRow, ServerMsg};
+use crate::wire::{AudienceQuestion, Frame, LineupEntry, Reaction, ScoreRow, ServerMsg};
 
 /// No vowels, so an id cannot spell a word, and no glyphs that look alike when
 /// read off a phone screen in a dark room.
@@ -34,6 +34,14 @@ const MAX_NAME_CHARS: usize = 24;
 /// Bounds one broadcast. Nobody reads past the top of a leaderboard anyway.
 const MAX_SCORE_ROWS: usize = 50;
 const TOKEN_LEN: usize = 32;
+/// An evening of lightning talks is a dozen, not a thousand. Every entry holds
+/// a whole deck, so this is what bounds a room that takes submissions.
+const MAX_TALKS: usize = 40;
+/// One person cannot fill the running order on their own.
+const MAX_TALKS_PER_PERSON: usize = 3;
+/// A lightning talk, not a keynote. Also what one submission can cost the room.
+const MAX_TALK_BYTES: usize = 64 * 1024;
+const MAX_TITLE_CHARS: usize = 60;
 
 /// What a socket or a request is allowed to do.
 ///
@@ -43,18 +51,47 @@ const TOKEN_LEN: usize = 32;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     Viewer,
+    /// Whoever the host has handed the controls to. Drives the room and nothing
+    /// else: a speaker moves their own slides without gaining the lineup, the
+    /// other talks, or the ability to take the stage back.
+    Driver,
     CoHost,
     Mc,
 }
 
 impl Role {
     pub fn drives(self) -> bool {
-        self == Role::Mc
+        matches!(self, Role::Mc | Role::Driver)
     }
 
     pub fn edits(self) -> bool {
         matches!(self, Role::Mc | Role::CoHost)
     }
+
+    /// Who runs the evening. The host keeps this whatever they hand out, so
+    /// taking the controls back is always theirs to do.
+    pub fn hosts(self) -> bool {
+        self == Role::Mc
+    }
+}
+
+/// A deck somebody submitted to the running order.
+pub struct Talk {
+    pub id: u64,
+    pub title: String,
+    pub markdown: String,
+    /// Minted at submission and kept in the submitter's browser. It drives only
+    /// while the host has handed over, so a leaked one is worth what the host
+    /// allows and no more.
+    pub token: String,
+    pub by: String,
+}
+
+/// The host's own deck, parked while a talk is on stage.
+pub struct Parked {
+    pub markdown: String,
+    pub slides: Vec<Slide>,
+    pub current: usize,
 }
 
 pub struct Session {
@@ -80,6 +117,33 @@ pub struct Session {
     pub participants: HashSet<String>,
     /// participant id -> the name they chose.
     pub names: HashMap<String, String>,
+    pub lineup: Vec<Talk>,
+    pub next_talk_id: u64,
+    /// The talk on stage. `None` means the host's own deck is live.
+    pub staged: Option<u64>,
+    /// The host's deck while a talk stands in front of it.
+    pub parked: Option<Parked>,
+    /// The talk whose owner drives. `None` means the host drives.
+    pub baton: Option<u64>,
+    pub submissions_open: bool,
+    /// Points from talks that have already come down.
+    ///
+    /// A score is derived from the votes so a late reveal or a correction can
+    /// never leave a stale total behind. That holds inside one deck and cannot
+    /// survive the next one replacing it, so what a talk was worth is banked
+    /// when it ends. Keyed by browser id, because a name can change.
+    pub banked: HashMap<String, usize>,
+    /// What was on screen and when, for anyone cutting a recording afterwards.
+    pub timeline: Vec<Cue>,
+    pub opened: SystemTime,
+}
+
+/// One moment the room saw something new.
+pub struct Cue {
+    pub at: SystemTime,
+    pub talk: Option<u64>,
+    pub slide: usize,
+    pub title: String,
 }
 
 pub struct StoredQuestion {
@@ -103,39 +167,40 @@ impl Session {
         true
     }
 
-    /// One point for each revealed question this person got right. Scores are
-    /// derived from the votes rather than counted as they arrive, so a late
-    /// reveal or a correction cannot leave a stale total behind.
+    /// One point for each revealed question this person got right on the deck
+    /// that is up. Derived from the votes rather than counted as they arrive,
+    /// so a late reveal or a correction cannot leave a stale total behind.
+    fn earned(&self, who: &str) -> usize {
+        self.revealed
+            .iter()
+            .filter(|slide| {
+                let Some(question) = self.slides.get(**slide).and_then(|s| s.question.as_ref())
+                else {
+                    return false;
+                };
+                // The point is for the answer, not for one part of it, so the
+                // selection has to be exactly right.
+                self.votes
+                    .get(*slide)
+                    .and_then(|cast| cast.get(who))
+                    .is_some_and(|chosen| {
+                        let mut want = question.correct.clone();
+                        want.sort_unstable();
+                        *chosen == want
+                    })
+            })
+            .count()
+    }
+
+    /// The evening's total: what earlier talks were worth, plus the deck that
+    /// is up.
     fn score_table(&self) -> ServerMsg {
         let mut items: Vec<ScoreRow> = self
             .names
             .iter()
-            .map(|(who, name)| {
-                let score = self
-                    .revealed
-                    .iter()
-                    .filter(|slide| {
-                        let Some(question) =
-                            self.slides.get(**slide).and_then(|s| s.question.as_ref())
-                        else {
-                            return false;
-                        };
-                        // The point is for the answer, not for one part of it,
-                        // so the selection has to be exactly right.
-                        self.votes
-                            .get(*slide)
-                            .and_then(|cast| cast.get(who))
-                            .is_some_and(|chosen| {
-                                let mut want = question.correct.clone();
-                                want.sort_unstable();
-                                *chosen == want
-                            })
-                    })
-                    .count();
-                ScoreRow {
-                    name: name.clone(),
-                    score,
-                }
+            .map(|(who, name)| ScoreRow {
+                name: name.clone(),
+                score: self.banked.get(who).copied().unwrap_or(0) + self.earned(who),
             })
             .collect();
         items.sort_by(|a, b| b.score.cmp(&a.score).then(a.name.cmp(&b.name)));
@@ -194,12 +259,20 @@ impl Session {
     /// which token matched nor whether any did can be read off the clock.
     /// Every caller goes through this: a second hand-rolled comparison is a
     /// second chance to get constant time wrong.
-    fn role_of(&self, token: &str) -> Role {
+    pub fn role_of(&self, token: &str) -> Role {
         let mc: bool = self.owner_token.as_bytes().ct_eq(token.as_bytes()).into();
         let cohost: bool = self.cohost_token.as_bytes().ct_eq(token.as_bytes()).into();
-        match (mc, cohost) {
-            (true, _) => Role::Mc,
-            (_, true) => Role::CoHost,
+        // Only the talk actually holding the baton is checked, so a speaker
+        // whose turn has passed drives nothing with the same token.
+        let driver: bool = self
+            .baton
+            .and_then(|id| self.lineup.iter().find(|talk| talk.id == id))
+            .map(|talk| talk.token.as_bytes().ct_eq(token.as_bytes()).into())
+            .unwrap_or(false);
+        match (mc, cohost, driver) {
+            (true, _, _) => Role::Mc,
+            (_, true, _) => Role::CoHost,
+            (_, _, true) => Role::Driver,
             _ => Role::Viewer,
         }
     }
@@ -270,7 +343,13 @@ impl Session {
     /// states that never existed together. Tallies are staff only, because the
     /// room seeing the split is the thing a tally is withheld for.
     pub fn catch_up(&self, is_staff: bool) -> Vec<ServerMsg> {
-        let mut out = vec![self.snapshot(), self.question_list(), self.score_table()];
+        let mut out = vec![
+            self.snapshot(),
+            self.question_list(),
+            self.score_table(),
+            self.lineup_msg(),
+            self.baton_msg(),
+        ];
         out.extend(self.reveals());
         if is_staff {
             out.extend(self.tallies());
@@ -285,6 +364,7 @@ impl Session {
         }
         self.current = index;
         self.touched = Instant::now();
+        self.mark();
         let msg = ServerMsg::Move { current: index };
         self.emit(&msg);
         Some(msg)
@@ -513,6 +593,249 @@ impl Session {
         self.emit(&self.score_table());
         Some(msg)
     }
+    fn lineup_msg(&self) -> ServerMsg {
+        ServerMsg::Lineup {
+            items: self
+                .lineup
+                .iter()
+                .map(|talk| LineupEntry {
+                    id: talk.id,
+                    title: talk.title.clone(),
+                    by: talk.by.clone(),
+                    slides: deck::parse(&talk.markdown).len(),
+                })
+                .collect(),
+            staged: self.staged,
+            open: self.submissions_open,
+        }
+    }
+
+    fn baton_msg(&self) -> ServerMsg {
+        ServerMsg::Baton { talk: self.baton }
+    }
+
+    /// Notes what the room is looking at, so a recording can be cut against it
+    /// afterwards. Only a change is worth a cue: holding on a slide is one
+    /// moment, however long it lasts.
+    fn mark(&mut self) {
+        let title = self
+            .staged
+            .and_then(|id| self.lineup.iter().find(|t| t.id == id))
+            .map(|t| t.title.clone())
+            .unwrap_or_else(|| "Host".to_string());
+        if let Some(last) = self.timeline.last()
+            && last.talk == self.staged
+            && last.slide == self.current
+        {
+            return;
+        }
+        self.timeline.push(Cue {
+            at: SystemTime::now(),
+            talk: self.staged,
+            slide: self.current,
+            title,
+        });
+    }
+
+    /// Adds a talk to the running order and returns the token that will drive
+    /// it. `None` when the room is not taking submissions or the caps say no.
+    pub fn submit(&mut self, who: &str, title: &str, markdown: &str) -> Option<(u64, String)> {
+        if !self.submissions_open
+            || self.lineup.len() >= MAX_TALKS
+            || markdown.len() > MAX_TALK_BYTES
+        {
+            return None;
+        }
+        if !self.admit(who) {
+            return None;
+        }
+        let by = self.names.get(who).cloned().unwrap_or_default();
+        if !by.is_empty()
+            && self.lineup.iter().filter(|t| t.by == by).count() >= MAX_TALKS_PER_PERSON
+        {
+            return None;
+        }
+        let title: String = match title.trim() {
+            "" => first_heading(markdown),
+            given => given.chars().take(MAX_TITLE_CHARS).collect(),
+        };
+        let id = self.next_talk_id;
+        self.next_talk_id += 1;
+        let token = random_string(TOKEN_LEN);
+        self.lineup.push(Talk {
+            id,
+            title,
+            markdown: markdown.to_string(),
+            token: token.clone(),
+            by,
+        });
+        self.touched = Instant::now();
+        self.emit(&self.lineup_msg());
+        Some((id, token))
+    }
+
+    pub fn talk_markdown(&self, talk: u64) -> Option<String> {
+        // A staged talk is being edited live, so the live deck is the truth.
+        if self.staged == Some(talk) {
+            return Some(self.markdown.clone());
+        }
+        self.lineup
+            .iter()
+            .find(|t| t.id == talk)
+            .map(|t| t.markdown.clone())
+    }
+
+    pub fn set_submissions(&mut self, role: Role, open: bool) -> bool {
+        if !role.hosts() {
+            return false;
+        }
+        self.submissions_open = open;
+        self.touched = Instant::now();
+        self.emit(&self.lineup_msg());
+        true
+    }
+
+    /// Drops a talk. A staged talk comes off the stage first, so the room is
+    /// never left looking at a deck the lineup no longer has.
+    pub fn drop_talk(&mut self, role: Role, talk: u64) -> bool {
+        if !role.hosts() || !self.lineup.iter().any(|t| t.id == talk) {
+            return false;
+        }
+        if self.staged == Some(talk) {
+            self.stage(role, None);
+        }
+        if self.baton == Some(talk) {
+            self.baton = None;
+            self.emit(&self.baton_msg());
+        }
+        self.lineup.retain(|t| t.id != talk);
+        self.touched = Instant::now();
+        self.emit(&self.lineup_msg());
+        true
+    }
+
+    /// Puts a talk in front of the room, or clears the stage with `None`.
+    ///
+    /// The speaker takes the controls with it: that is what selecting a talk
+    /// means. The host can still take them back, which is `hand`.
+    ///
+    /// Questions belong to the talk they were asked during, so the floor clears
+    /// here. The leaderboard does not: it runs the whole evening.
+    pub fn stage(&mut self, role: Role, talk: Option<u64>) -> bool {
+        if !role.hosts() || self.staged == talk {
+            return false;
+        }
+        if let Some(id) = talk
+            && !self.lineup.iter().any(|t| t.id == id)
+        {
+            return false;
+        }
+
+        // What the talk that just ended was worth, before the votes behind it
+        // go. Without this the board resets every time the deck changes.
+        let owed: Vec<(String, usize)> = self
+            .votes
+            .values()
+            .flat_map(|cast| cast.keys())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .map(|who| (who.clone(), self.earned(who)))
+            .collect();
+        for (who, points) in owed {
+            *self.banked.entry(who).or_insert(0) += points;
+        }
+
+        // Whatever is live now goes back where it came from, so an edit made
+        // while a talk was up is the version that gets exported.
+        match self.staged {
+            Some(id) => {
+                if let Some(held) = self.lineup.iter_mut().find(|t| t.id == id) {
+                    held.markdown = self.markdown.clone();
+                }
+            }
+            None => {
+                self.parked = Some(Parked {
+                    markdown: self.markdown.clone(),
+                    slides: self.slides.clone(),
+                    current: self.current,
+                });
+            }
+        }
+
+        match talk {
+            Some(id) => {
+                let markdown = self
+                    .lineup
+                    .iter()
+                    .find(|t| t.id == id)
+                    .map(|t| t.markdown.clone())
+                    .unwrap_or_default();
+                self.slides = deck::parse(&markdown);
+                self.markdown = markdown;
+                self.current = 0;
+            }
+            None => {
+                let back = self.parked.take().unwrap_or_else(|| Parked {
+                    markdown: self.markdown.clone(),
+                    slides: self.slides.clone(),
+                    current: self.current,
+                });
+                self.markdown = back.markdown;
+                self.slides = back.slides;
+                self.current = back.current.min(self.slides.len().saturating_sub(1));
+            }
+        }
+
+        self.staged = talk;
+        self.baton = talk;
+        self.rev += 1;
+        // Nothing held against a slide position survives a different deck.
+        self.votes.clear();
+        self.revealed.clear();
+        self.questions.clear();
+        self.last_ask.clear();
+        self.touched = Instant::now();
+        self.mark();
+
+        self.emit(&self.snapshot());
+        self.emit(&self.lineup_msg());
+        self.emit(&self.baton_msg());
+        self.emit(&self.question_list());
+        true
+    }
+
+    /// Hands the controls to a talk's owner, or takes them back with `None`.
+    /// Independent of the stage, so a co-presenter can drive someone else's
+    /// deck and the host can take over without changing what is on screen.
+    pub fn hand(&mut self, role: Role, talk: Option<u64>) -> bool {
+        if !role.hosts() {
+            return false;
+        }
+        if let Some(id) = talk
+            && !self.lineup.iter().any(|t| t.id == id)
+        {
+            return false;
+        }
+        self.baton = talk;
+        self.touched = Instant::now();
+        self.emit(&self.baton_msg());
+        true
+    }
+}
+
+/// The first heading in a deck, which is what a speaker has already written
+/// rather than a second thing to ask them for.
+fn first_heading(markdown: &str) -> String {
+    markdown
+        .lines()
+        .find_map(|line| {
+            let text = line.trim_start_matches('#').trim();
+            line.trim_start()
+                .starts_with('#')
+                .then(|| text.chars().take(MAX_TITLE_CHARS).collect::<String>())
+                .filter(|t: &String| !t.is_empty())
+        })
+        .unwrap_or_else(|| "Untitled".to_string())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -592,6 +915,15 @@ impl Registry {
                 next_question_id: 1,
                 participants: HashSet::new(),
                 names: HashMap::new(),
+                lineup: Vec::new(),
+                next_talk_id: 1,
+                staged: None,
+                parked: None,
+                baton: None,
+                submissions_open: false,
+                banked: HashMap::new(),
+                timeline: Vec::new(),
+                opened: SystemTime::now(),
             },
         );
         Some((id, token))
@@ -768,6 +1100,15 @@ impl Registry {
                     next_question_id: item.next_question_id.max(1),
                     participants: item.participants,
                     names: item.names,
+                    lineup: Vec::new(),
+                    next_talk_id: 1,
+                    staged: None,
+                    parked: None,
+                    baton: None,
+                    submissions_open: false,
+                    banked: HashMap::new(),
+                    timeline: Vec::new(),
+                    opened: SystemTime::now(),
                 },
             );
             restored += 1;
@@ -846,6 +1187,315 @@ mod tests {
             totals.last().copied(),
             Some(voters),
             "the room ended on a stale count"
+        );
+    }
+
+    fn open_room() -> (Registry, String, String) {
+        let reg = registry();
+        let (id, mc) = reg.create("# Welcome\n\n---\n\n# Up next").unwrap();
+        reg.with_mut(&id, |s| s.set_submissions(Role::Mc, true));
+        (reg, id, mc)
+    }
+
+    fn submit(reg: &Registry, id: &str, who: &str, markdown: &str) -> (u64, String) {
+        reg.with_mut(id, |s| s.submit(who, "", markdown))
+            .flatten()
+            .expect("the submission was refused")
+    }
+
+    #[test]
+    fn a_closed_room_takes_no_talks() {
+        let reg = registry();
+        let (id, _) = reg.create("# Welcome").unwrap();
+        assert!(
+            reg.with_mut(&id, |s| s.submit("who", "", "# Mine"))
+                .flatten()
+                .is_none(),
+            "a room that never opened took a talk"
+        );
+    }
+
+    #[test]
+    fn only_the_host_opens_submissions() {
+        let reg = registry();
+        let (id, _) = reg.create("# Welcome").unwrap();
+        for role in [Role::Viewer, Role::CoHost, Role::Driver] {
+            assert!(
+                !reg.with_mut(&id, |s| s.set_submissions(role, true))
+                    .unwrap()
+            );
+        }
+        assert!(
+            reg.with_mut(&id, |s| s.set_submissions(Role::Mc, true))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn a_title_falls_back_to_the_first_heading() {
+        let (reg, id, _) = open_room();
+        let (talk, _) = submit(&reg, &id, "ada", "\n\n## Borrow checking\n\nbody");
+        let ServerMsg::Lineup { items, .. } = reg.with(&id, Session::lineup_msg).unwrap() else {
+            panic!("no lineup");
+        };
+        assert_eq!(items[0].id, talk);
+        assert_eq!(items[0].title, "Borrow checking");
+    }
+
+    #[test]
+    fn the_lineup_never_carries_the_decks() {
+        let (reg, id, _) = open_room();
+        submit(&reg, &id, "ada", "# Mine\n\nsecret punchline");
+        let msg = reg.with(&id, Session::lineup_msg).unwrap();
+        let wire = serde_json::to_string(&msg).unwrap();
+        assert!(
+            !wire.contains("punchline"),
+            "an unstaged deck went out to the room: {wire}"
+        );
+    }
+
+    #[test]
+    fn staging_a_talk_puts_it_on_screen_and_parks_the_host_deck() {
+        let (reg, id, _) = open_room();
+        let (talk, _) = submit(&reg, &id, "ada", "# Ada\n\n---\n\n# Two\n\n---\n\n# Three");
+
+        assert!(
+            reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+                .unwrap()
+        );
+        let ServerMsg::Deck {
+            slides, current, ..
+        } = reg.with(&id, Session::snapshot).unwrap()
+        else {
+            panic!("no deck");
+        };
+        assert_eq!(slides.len(), 3, "the talk did not go up");
+        assert_eq!(current, 0, "a staged talk starts at its first slide");
+
+        // And the host deck comes back untouched.
+        assert!(reg.with_mut(&id, |s| s.stage(Role::Mc, None)).unwrap());
+        let ServerMsg::Deck { slides, .. } = reg.with(&id, Session::snapshot).unwrap() else {
+            panic!("no deck");
+        };
+        assert_eq!(slides.len(), 2, "the host deck did not come back");
+    }
+
+    #[test]
+    fn staging_clears_the_floor_but_not_the_board() {
+        let (reg, id, mc) = open_room();
+        let (talk, _) = submit(&reg, &id, "ada", "# Ada\n\n---\n\n- [x] yes\n- [ ] no");
+
+        // A question and a point earned before the talk goes up.
+        reg.with_mut(&id, |s| s.set_name("sam", "Sam"))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.ask("sam", "who is buying"))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+        reg.with_mut(&id, |s| s.answer(1, "sam", &[0]))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.reveal(&mc, 1)).flatten().unwrap();
+
+        let ServerMsg::Scores { items } = reg.with(&id, Session::score_table).unwrap() else {
+            panic!("no scores");
+        };
+        assert_eq!(items[0].score, 1);
+
+        // The next talk clears the questions and the votes, and keeps the board.
+        let (next, _) = submit(&reg, &id, "bob", "# Bob");
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(next)))
+            .unwrap();
+        let ServerMsg::Questions { items } = reg.with(&id, Session::question_list).unwrap() else {
+            panic!("no questions");
+        };
+        assert!(items.is_empty(), "the floor carried over to the next talk");
+        let ServerMsg::Scores { items } = reg.with(&id, Session::score_table).unwrap() else {
+            panic!("no scores");
+        };
+        assert_eq!(items[0].score, 1, "the board reset between talks");
+    }
+
+    #[test]
+    fn staging_hands_the_speaker_the_controls_and_the_host_can_take_them_back() {
+        let (reg, id, mc) = open_room();
+        let (talk, speaker) = submit(&reg, &id, "ada", "# Ada\n\n---\n\n# Two");
+        assert_eq!(
+            reg.role(&id, &speaker),
+            Role::Viewer,
+            "a talk alone drives nothing"
+        );
+
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+        assert_eq!(reg.role(&id, &speaker), Role::Driver);
+        assert!(
+            reg.with_mut(&id, |s| s.goto(&speaker, 1))
+                .flatten()
+                .is_some(),
+            "the speaker could not drive their own talk"
+        );
+
+        // The host is never not the host.
+        assert_eq!(reg.role(&id, &mc), Role::Mc);
+        reg.with_mut(&id, |s| s.hand(Role::Mc, None)).unwrap();
+        assert_eq!(reg.role(&id, &speaker), Role::Viewer);
+        assert!(
+            reg.with_mut(&id, |s| s.goto(&speaker, 0))
+                .flatten()
+                .is_none(),
+            "the speaker still drove after the host took over"
+        );
+        assert!(reg.with_mut(&id, |s| s.goto(&mc, 0)).flatten().is_some());
+    }
+
+    #[test]
+    fn a_driver_drives_and_nothing_else() {
+        let (reg, id, _) = open_room();
+        let (talk, speaker) = submit(&reg, &id, "ada", "# Ada");
+        let (other, _) = submit(&reg, &id, "bob", "# Bob\n\nnot yours");
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+
+        let role = reg.role(&id, &speaker);
+        assert!(role.drives());
+        assert!(!role.edits(), "a speaker gained the deck editor");
+        assert!(!role.hosts(), "a speaker gained the running order");
+        // So none of the host's controls answer to them.
+        assert!(!reg.with_mut(&id, |s| s.stage(role, Some(other))).unwrap());
+        assert!(!reg.with_mut(&id, |s| s.hand(role, None)).unwrap());
+        assert!(!reg.with_mut(&id, |s| s.drop_talk(role, other)).unwrap());
+        assert!(
+            !reg.with_mut(&id, |s| s.set_submissions(role, false))
+                .unwrap()
+        );
+        assert!(
+            reg.with(&id, |s| s.talk_markdown(other))
+                .flatten()
+                .is_some(),
+            "the test is meaningless if the other talk never existed"
+        );
+    }
+
+    #[test]
+    fn the_host_can_hand_the_controls_to_someone_else_mid_talk() {
+        let (reg, id, _) = open_room();
+        let (talk, speaker) = submit(&reg, &id, "ada", "# Ada\n\n---\n\n# Two");
+        let (second, helper) = submit(&reg, &id, "bob", "# Bob");
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+
+        // A co-presenter drives the deck that is already up.
+        reg.with_mut(&id, |s| s.hand(Role::Mc, Some(second)))
+            .unwrap();
+        assert_eq!(reg.role(&id, &helper), Role::Driver);
+        assert_eq!(reg.role(&id, &speaker), Role::Viewer);
+        assert!(
+            reg.with_mut(&id, |s| s.goto(&helper, 1))
+                .flatten()
+                .is_some()
+        );
+        // And the stage did not move.
+        let ServerMsg::Lineup { staged, .. } = reg.with(&id, Session::lineup_msg).unwrap() else {
+            panic!("no lineup");
+        };
+        assert_eq!(staged, Some(talk), "handing the controls moved the stage");
+    }
+
+    #[test]
+    fn an_edit_made_on_stage_is_the_one_that_comes_back() {
+        let (reg, id, _) = open_room();
+        let (talk, _) = submit(&reg, &id, "ada", "# Ada");
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+        reg.with_mut(&id, |s| {
+            s.replace_deck(Role::Mc, None, "# Ada\n\n---\n\n# Fixed")
+        })
+        .unwrap()
+        .unwrap();
+        reg.with_mut(&id, |s| s.stage(Role::Mc, None)).unwrap();
+
+        assert_eq!(
+            reg.with(&id, |s| s.talk_markdown(talk)).flatten().unwrap(),
+            "# Ada\n\n---\n\n# Fixed",
+            "the fix made on stage was lost when the talk came down"
+        );
+    }
+
+    #[test]
+    fn dropping_the_staged_talk_takes_it_off_the_screen_first() {
+        let (reg, id, _) = open_room();
+        let (talk, speaker) = submit(&reg, &id, "ada", "# Ada\n\n---\n\n# Two\n\n---\n\n# Three");
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+        assert!(reg.with_mut(&id, |s| s.drop_talk(Role::Mc, talk)).unwrap());
+
+        let ServerMsg::Deck { slides, .. } = reg.with(&id, Session::snapshot).unwrap() else {
+            panic!("no deck");
+        };
+        assert_eq!(slides.len(), 2, "the room was left on a dropped talk");
+        assert_eq!(reg.role(&id, &speaker), Role::Viewer);
+        let ServerMsg::Lineup { items, staged, .. } = reg.with(&id, Session::lineup_msg).unwrap()
+        else {
+            panic!("no lineup");
+        };
+        assert!(items.is_empty());
+        assert_eq!(staged, None);
+    }
+
+    #[test]
+    fn one_person_cannot_fill_the_running_order() {
+        let (reg, id, _) = open_room();
+        reg.with_mut(&id, |s| s.set_name("ada", "Ada"))
+            .flatten()
+            .unwrap();
+        for n in 0..MAX_TALKS_PER_PERSON {
+            assert!(
+                reg.with_mut(&id, |s| s.submit("ada", "", &format!("# Talk {n}")))
+                    .flatten()
+                    .is_some(),
+                "talk {n} inside the cap was refused"
+            );
+        }
+        assert!(
+            reg.with_mut(&id, |s| s.submit("ada", "", "# One too many"))
+                .flatten()
+                .is_none(),
+            "one person filled the running order"
+        );
+        // Somebody else still gets a slot.
+        reg.with_mut(&id, |s| s.set_name("bob", "Bob"))
+            .flatten()
+            .unwrap();
+        assert!(
+            reg.with_mut(&id, |s| s.submit("bob", "", "# Mine"))
+                .flatten()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn the_timeline_records_a_change_and_not_a_pause() {
+        let (reg, id, mc) = open_room();
+        let (talk, _) = submit(&reg, &id, "ada", "# Ada\n\n---\n\n# Two");
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+        reg.with_mut(&id, |s| s.goto(&mc, 1)).flatten().unwrap();
+        // Driving to the slide the room is already on is not a new moment.
+        reg.with_mut(&id, |s| s.goto(&mc, 1)).flatten().unwrap();
+
+        let cues = reg.with(&id, |s| {
+            s.timeline
+                .iter()
+                .map(|c| (c.talk, c.slide))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            cues.unwrap(),
+            vec![(Some(talk), 0), (Some(talk), 1)],
+            "the timeline is not what the room actually saw"
         );
     }
 
