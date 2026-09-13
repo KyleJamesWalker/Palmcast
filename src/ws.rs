@@ -2,7 +2,7 @@ use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::session::{Registry, Role};
+use crate::session::{Registry, Role, Session};
 use crate::wire::{ClientMsg, Frame, ServerMsg};
 
 pub struct Join {
@@ -28,45 +28,21 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
     };
     let (mut sink, mut stream) = socket.split();
 
-    if let Some(snapshot) = registry.snapshot(&id)
-        && send(&mut sink, &snapshot, is_owner).await.is_err()
-    {
+    // One lock for the whole opening state, so a socket is never hydrated from
+    // a snapshot of one moment and a leaderboard of another.
+    let Some(opening) = registry.with(&id, |s| s.catch_up(is_owner)) else {
         return;
-    }
-    // A joiner needs the questions already on the floor, not just the ones
-    // asked after they arrived.
-    if let Some(questions) = registry.questions(&id)
-        && send(&mut sink, &questions, is_owner).await.is_err()
-    {
-        return;
-    }
-    if let Some(scores) = registry.scores(&id)
-        && send(&mut sink, &scores, is_owner).await.is_err()
-    {
-        return;
-    }
-    // An answer the presenter already opened is public, so it goes to whoever
-    // has just arrived as well.
-    for reveal in registry.reveals(&id) {
-        if send(&mut sink, &reveal, is_owner).await.is_err() {
+    };
+    for msg in &opening {
+        if send(&mut sink, msg, is_owner).await.is_err() {
             return;
-        }
-    }
-    // A round can already be under way. Only the presenter is told, because the
-    // room seeing the split form is the thing the tally is withheld for.
-    if is_owner {
-        for tally in registry.tallies(&id) {
-            if send(&mut sink, &tally, is_owner).await.is_err() {
-                return;
-            }
         }
     }
     // A full room closes the socket. A viewer who silently saw nothing would
     // look like a broken app rather than a full one.
-    let Some(count) = registry.join(&id) else {
+    if registry.with_mut(&id, Session::join).flatten().is_none() {
         return;
-    };
-    registry.broadcast(&id, count);
+    }
 
     loop {
         tokio::select! {
@@ -98,9 +74,7 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
         }
     }
 
-    if let Some(count) = registry.leave(&id) {
-        registry.broadcast(&id, count);
-    }
+    registry.with_mut(&id, Session::leave);
 }
 
 /// Every branch re-checks the token inside the registry, so a forged frame from
@@ -115,54 +89,34 @@ fn handle(
 ) {
     match msg {
         ClientMsg::Goto { index } => {
-            if let Some(token) = token
-                && let Some(moved) = registry.goto(id, token, index)
-            {
-                registry.broadcast(id, moved);
+            if let Some(token) = token {
+                registry.with_mut(id, |s| s.goto(token, index));
             }
         }
+        // The reveal also moves the board, and both leave under the one lock.
         ClientMsg::Reveal { slide } => {
-            if let Some(token) = token
-                && let Some(revealed) = registry.reveal(id, token, slide)
-            {
-                registry.broadcast(id, revealed);
-                // The board only changes when an answer opens, so it rides
-                // along with the reveal rather than on a timer.
-                if let Some(scores) = registry.scores(id) {
-                    registry.broadcast(id, scores);
-                }
+            if let Some(token) = token {
+                registry.with_mut(id, |s| s.reveal(token, slide));
             }
         }
         ClientMsg::SetName { name } => {
-            if let Some(scores) = registry.set_name(id, who, &name) {
-                registry.broadcast(id, scores);
-            }
+            registry.with_mut(id, |s| s.set_name(who, &name));
         }
         ClientMsg::React { kind } => {
-            if let Some(react) = registry.react(id, who, kind) {
-                registry.broadcast(id, react);
-            }
+            registry.with_mut(id, |s| s.react(who, kind));
         }
         ClientMsg::Ask { text } => {
-            if let Some(list) = registry.ask(id, who, &text) {
-                registry.broadcast(id, list);
-            }
+            registry.with_mut(id, |s| s.ask(who, &text));
         }
         ClientMsg::Upvote { question } => {
-            if let Some(list) = registry.upvote(id, who, question) {
-                registry.broadcast(id, list);
-            }
+            registry.with_mut(id, |s| s.upvote(who, question));
         }
         ClientMsg::Answered { question } => {
-            if let Some(list) = registry.mark_answered(id, role, question) {
-                registry.broadcast(id, list);
-            }
+            registry.with_mut(id, |s| s.mark_answered(role, question));
         }
         // Anyone in the room may vote, the presenter included.
         ClientMsg::Answer { slide, options } => {
-            if let Some(tally) = registry.answer(id, slide, who, &options) {
-                registry.broadcast(id, tally);
-            }
+            registry.with_mut(id, |s| s.answer(slide, who, &options));
         }
     }
 }
@@ -172,22 +126,11 @@ async fn resync<S>(sink: &mut S, registry: &Registry, id: &str, is_owner: bool) 
 where
     S: SinkExt<Message> + Unpin,
 {
-    if let Some(snapshot) = registry.snapshot(id) {
-        send(sink, &snapshot, is_owner).await?;
-    }
-    if let Some(questions) = registry.questions(id) {
-        send(sink, &questions, is_owner).await?;
-    }
-    if let Some(scores) = registry.scores(id) {
-        send(sink, &scores, is_owner).await?;
-    }
-    for reveal in registry.reveals(id) {
-        send(sink, &reveal, is_owner).await?;
-    }
-    if is_owner {
-        for tally in registry.tallies(id) {
-            send(sink, &tally, is_owner).await?;
-        }
+    let Some(state) = registry.with(id, |s| s.catch_up(is_owner)) else {
+        return Ok(());
+    };
+    for msg in &state {
+        send(sink, msg, is_owner).await?;
     }
     Ok(())
 }
