@@ -672,3 +672,82 @@ async fn the_presenter_can_mark_a_question_answered() {
         }
     }
 }
+
+#[tokio::test]
+async fn every_response_carries_the_security_headers() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, DECK).await;
+
+    for path in ["/", &format!("/s/{id}"), "/base.css"] {
+        let res = reqwest::get(format!("http://{host}{path}")).await.unwrap();
+        let headers = res.headers();
+        let csp = headers
+            .get("content-security-policy")
+            .expect("no content security policy")
+            .to_str()
+            .unwrap();
+        assert!(csp.contains("default-src 'self'"), "{path}: {csp}");
+        assert!(csp.contains("object-src 'none'"), "{path}: {csp}");
+        assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
+    }
+}
+
+#[tokio::test]
+async fn an_oversized_deck_is_refused() {
+    let host = spawn().await;
+    let body = serde_json::json!({ "markdown": "x".repeat(300 * 1024) });
+    let res = reqwest::Client::new()
+        .post(format!("http://{host}/api/sessions"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        res.status().is_client_error(),
+        "a 300KB deck got {}",
+        res.status()
+    );
+}
+
+#[tokio::test]
+async fn a_lagging_socket_is_resynced_not_dropped() {
+    let host = spawn().await;
+    let (id, token) = create(&host, DECK).await;
+
+    let mut slow = open_as(&host, &id, None, "slow").await;
+    let _ = next_json(&mut slow).await;
+
+    // Outrun the 64 slot broadcast channel without reading a single frame.
+    let mut presenter = open_as(&host, &id, Some(&token), "mc").await;
+    let _ = next_json(&mut presenter).await;
+    for n in 0..200 {
+        presenter
+            .send(Message::Text(
+                format!(r#"{{"type":"goto","index":{}}}"#, n % 3).into(),
+            ))
+            .await
+            .unwrap();
+    }
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // The socket must still be usable, and must be able to say where it is.
+    let mut saw_state = false;
+    for _ in 0..400 {
+        match tokio::time::timeout(Duration::from_millis(500), slow.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => {
+                let msg: Value = serde_json::from_str(&text).unwrap();
+                if msg["type"] == "deck" || msg["type"] == "move" {
+                    saw_state = true;
+                    break;
+                }
+            }
+            Ok(Some(Ok(_))) => continue,
+            _ => break,
+        }
+    }
+    assert!(
+        saw_state,
+        "a lagging socket was dropped instead of resynced"
+    );
+}

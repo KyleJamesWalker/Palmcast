@@ -1,5 +1,6 @@
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
+use tokio::sync::broadcast::error::RecvError;
 
 use crate::session::Registry;
 use crate::wire::{ClientMsg, ServerMsg};
@@ -40,9 +41,20 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
     loop {
         tokio::select! {
             outgoing = rx.recv() => {
-                let Ok(msg) = outgoing else { break };
-                if send(&mut sink, &msg, is_owner).await.is_err() {
-                    break;
+                match outgoing {
+                    Ok(msg) => {
+                        if send(&mut sink, &msg, is_owner).await.is_err() {
+                            break;
+                        }
+                    }
+                    // A phone on bar wifi falls behind a burst of reactions.
+                    // Resend the state it missed instead of closing on it.
+                    Err(RecvError::Lagged(_)) => {
+                        if resync(&mut sink, &registry, &id, is_owner).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(RecvError::Closed) => break,
                 }
             }
             incoming = stream.next() => {
@@ -108,6 +120,20 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
             }
         }
     }
+}
+
+/// Everything a socket needs to be correct again after missing messages.
+async fn resync<S>(sink: &mut S, registry: &Registry, id: &str, is_owner: bool) -> Result<(), ()>
+where
+    S: SinkExt<Message> + Unpin,
+{
+    if let Some(snapshot) = registry.snapshot(id) {
+        send(sink, &snapshot, is_owner).await?;
+    }
+    if let Some(questions) = registry.questions(id) {
+        send(sink, &questions, is_owner).await?;
+    }
+    Ok(())
 }
 
 async fn send<S>(sink: &mut S, msg: &ServerMsg, is_owner: bool) -> Result<(), ()>

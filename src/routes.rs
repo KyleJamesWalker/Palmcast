@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use axum::Router;
-use axum::extract::{Path, Query, State, WebSocketUpgrade};
-use axum::http::{HeaderMap, StatusCode, Uri, header};
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State, WebSocketUpgrade};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use qrcode::QrCode;
@@ -14,6 +15,35 @@ use crate::session::Registry;
 use crate::ws::{self, Join};
 
 const MAX_DECK_BYTES: usize = 256 * 1024;
+/// A deck is the largest thing anyone posts. The margin covers the JSON frame.
+const MAX_BODY_BYTES: usize = MAX_DECK_BYTES + 4096;
+/// A socket frame only ever carries a short command, so the default megabytes
+/// are room a client does not need and an attacker would.
+const MAX_WS_MESSAGE: usize = 16 * 1024;
+
+/// A deck is somebody else's Markdown rendered on everybody's phone, so the
+/// page is pinned to its own origin as well as escaped at the source.
+const CSP: &str = "default-src 'self'; img-src 'self' data:; style-src 'self'; \
+script-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; \
+base-uri 'none'; form-action 'self'; object-src 'none'";
+
+async fn security_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(CSP),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    response
+}
 
 pub fn router(registry: Registry) -> Router {
     Router::new()
@@ -27,6 +57,8 @@ pub fn router(registry: Registry) -> Router {
         .route("/s/{id}/qr.svg", get(qr))
         .route("/s/{id}/ws", get(socket))
         .fallback(asset)
+        .layer(middleware::from_fn(security_headers))
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(registry)
 }
 
@@ -106,7 +138,10 @@ async fn socket(
         token: params.get("token").cloned(),
         who: params.get("who").cloned().unwrap_or_default(),
     };
-    upgrade.on_upgrade(move |sock| ws::serve(sock, registry, join))
+    upgrade
+        .max_message_size(MAX_WS_MESSAGE)
+        .max_frame_size(MAX_WS_MESSAGE)
+        .on_upgrade(move |sock| ws::serve(sock, registry, join))
 }
 
 async fn qr(
