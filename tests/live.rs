@@ -1141,3 +1141,48 @@ async fn the_existence_probe_leaks_nothing_about_the_room() {
     assert!(body.is_empty(), "the probe returned a body: {body}");
     assert!(!body.contains(&token));
 }
+
+#[tokio::test]
+async fn a_rewritten_asset_tags_the_bytes_it_actually_sends() {
+    let host = spawn().await;
+    let client = reqwest::Client::new();
+
+    // present.js is rewritten to carry the build id, so its tag must depend on
+    // the build and not only on the file.
+    let res = client
+        .get(format!("http://{host}/present.js"))
+        .send()
+        .await
+        .unwrap();
+    let tag = res
+        .headers()
+        .get("etag")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let body = res.text().await.unwrap();
+
+    let build = body
+        .split("?v=")
+        .nth(1)
+        .and_then(|rest| rest.split('\'').next())
+        .expect("no build id in the rewritten body")
+        .to_string();
+    assert!(
+        tag.contains(&build),
+        "etag {tag} does not cover the build id {build} it served"
+    );
+
+    // A stylesheet is not rewritten, so its tag stays the plain digest.
+    let css = client
+        .get(format!("http://{host}/base.css"))
+        .send()
+        .await
+        .unwrap();
+    let css_tag = css.headers().get("etag").unwrap().to_str().unwrap();
+    assert!(
+        !css_tag.contains(&build),
+        "a plain asset carried the build id"
+    );
+}

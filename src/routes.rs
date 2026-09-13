@@ -243,7 +243,17 @@ fn serve(path: &str, request: Option<&HeaderMap>) -> Response {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     };
 
-    let tag = format!("\"{}\"", hex(&file.metadata.sha256_hash()[..8]));
+    // Html and js are rewritten to carry the build id, so the bytes sent depend
+    // on every asset and not just this one. An etag over the file alone lets a
+    // cached client answer a revalidation with a body holding last build's
+    // import urls, which is the staleness the versioning exists to prevent.
+    let rewritten = path.ends_with(".html") || path.ends_with(".js");
+    let digest = hex(&file.metadata.sha256_hash()[..8]);
+    let tag = if rewritten {
+        format!("\"{digest}-{}\"", assets::build_id())
+    } else {
+        format!("\"{digest}\"")
+    };
     if let Some(headers) = request
         && headers
             .get(header::IF_NONE_MATCH)
@@ -254,8 +264,7 @@ fn serve(path: &str, request: Option<&HeaderMap>) -> Response {
     }
 
     let mime = mime_guess::from_path(path).first_or_octet_stream();
-    let rewrite = path.ends_with(".html") || path.ends_with(".js");
-    let body: Vec<u8> = if rewrite {
+    let body: Vec<u8> = if rewritten {
         match std::str::from_utf8(&file.data) {
             Ok(text) => assets::versioned(text).into_bytes(),
             Err(_) => file.data.to_vec(),
