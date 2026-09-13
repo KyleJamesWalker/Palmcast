@@ -48,7 +48,13 @@ async fn create_session(
     if body.markdown.len() > MAX_DECK_BYTES {
         return (StatusCode::PAYLOAD_TOO_LARGE, "deck too large").into_response();
     }
-    let (id, token) = registry.create(&body.markdown);
+    let Some((id, token)) = registry.create(&body.markdown) else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "this instance is holding as many sessions as it can",
+        )
+            .into_response();
+    };
     (StatusCode::CREATED, axum::Json(Created { id, token })).into_response()
 }
 

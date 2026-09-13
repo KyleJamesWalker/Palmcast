@@ -19,6 +19,12 @@ const ASK_GAP: Duration = Duration::from_secs(3);
 const MAX_QUESTION_CHARS: usize = 280;
 /// Bounds the memory one session can take from a public instance.
 const MAX_QUESTIONS: usize = 200;
+/// `who` arrives from the client, so every map keyed by it would grow without
+/// limit against a loop of fresh ids. This bounds the room and, with it, how
+/// far one client can inflate a tally.
+const MAX_PARTICIPANTS: usize = 500;
+/// Bounds what one public instance can be made to hold.
+const MAX_SESSIONS: usize = 2000;
 const TOKEN_LEN: usize = 32;
 
 pub struct Session {
@@ -37,6 +43,7 @@ pub struct Session {
     pub questions: Vec<StoredQuestion>,
     pub last_ask: HashMap<String, Instant>,
     pub next_question_id: u64,
+    pub participants: HashSet<String>,
 }
 
 pub struct StoredQuestion {
@@ -47,6 +54,19 @@ pub struct StoredQuestion {
 }
 
 impl Session {
+    /// True when this viewer may take part. A viewer already known is always
+    /// admitted, so the cap turns away new ids rather than existing ones.
+    fn admit(&mut self, who: &str) -> bool {
+        if self.participants.contains(who) {
+            return true;
+        }
+        if self.participants.len() >= MAX_PARTICIPANTS {
+            return false;
+        }
+        self.participants.insert(who.to_string());
+        true
+    }
+
     /// Most wanted first, with anything the presenter has marked answered sunk
     /// to the bottom rather than deleted.
     fn question_list(&self) -> ServerMsg {
@@ -112,8 +132,17 @@ impl Registry {
         }
     }
 
-    pub fn create(&self, markdown: &str) -> (String, String) {
+    /// `None` when the instance is already holding MAX_SESSIONS.
+    pub fn create(&self, markdown: &str) -> Option<(String, String)> {
         let mut map = self.lock();
+        if map.len() >= MAX_SESSIONS {
+            // Drop anything idle before turning a real room away.
+            let ttl = self.ttl;
+            map.retain(|_, s| s.viewers > 0 || s.touched.elapsed() < ttl);
+            if map.len() >= MAX_SESSIONS {
+                return None;
+            }
+        }
         let id = loop {
             let candidate = random_string(ID_LEN);
             if !map.contains_key(&candidate) {
@@ -139,9 +168,10 @@ impl Registry {
                 questions: Vec::new(),
                 last_ask: HashMap::new(),
                 next_question_id: 1,
+                participants: HashSet::new(),
             },
         );
-        (id, token)
+        Some((id, token))
     }
 
     pub fn exists(&self, id: &str) -> bool {
@@ -245,7 +275,7 @@ impl Registry {
             .get(slide)
             .and_then(|s| s.question.as_ref())
             .map(|q| q.options.len())?;
-        if option >= width {
+        if option >= width || !session.admit(who) {
             return None;
         }
         session
@@ -269,6 +299,9 @@ impl Registry {
         let mut map = self.lock();
         let session = map.get_mut(id)?;
         let now = Instant::now();
+        if !session.admit(who) {
+            return None;
+        }
         if let Some(last) = session.last_reaction.get(who)
             && now.duration_since(*last) < REACTION_GAP
         {
@@ -290,6 +323,9 @@ impl Registry {
             return None;
         }
         let now = Instant::now();
+        if !session.admit(who) {
+            return None;
+        }
         if let Some(last) = session.last_ask.get(who)
             && now.duration_since(*last) < ASK_GAP
         {
@@ -314,6 +350,9 @@ impl Registry {
     pub fn upvote(&self, id: &str, who: &str, question: u64) -> Option<ServerMsg> {
         let mut map = self.lock();
         let session = map.get_mut(id)?;
+        if !session.admit(who) {
+            return None;
+        }
         let found = session.questions.iter_mut().find(|q| q.id == question)?;
         // A set, so a second tap from the same browser is not a second vote.
         if !found.voters.insert(who.to_string()) {
@@ -398,4 +437,59 @@ fn random_string(len: usize) -> String {
     (0..len)
         .map(|_| ALPHABET[rng.random_range(0..ALPHABET.len())] as char)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wire::Reaction;
+
+    fn registry() -> Registry {
+        Registry::new(Duration::from_secs(3600))
+    }
+
+    #[test]
+    fn a_participant_cap_bounds_a_room() {
+        let reg = registry();
+        let (id, _) = reg.create("# q\n\n- [ ] a\n- [x] b").unwrap();
+
+        for n in 0..MAX_PARTICIPANTS {
+            assert!(
+                reg.answer(&id, 0, &format!("who{n}"), 0).is_some(),
+                "voter {n} inside the cap was turned away"
+            );
+        }
+        assert!(
+            reg.answer(&id, 0, "one-too-many", 0).is_none(),
+            "a fresh id past the cap still voted"
+        );
+        // Someone already admitted keeps taking part.
+        assert!(reg.answer(&id, 0, "who0", 1).is_some());
+    }
+
+    #[test]
+    fn the_cap_does_not_grow_the_maps_past_it() {
+        let reg = registry();
+        let (id, _) = reg.create("# hi").unwrap();
+        for n in 0..(MAX_PARTICIPANTS + 50) {
+            let _ = reg.react(&id, &format!("who{n}"), Reaction::Clap);
+        }
+        let map = reg.lock();
+        let session = map.get(&id).unwrap();
+        assert_eq!(session.participants.len(), MAX_PARTICIPANTS);
+        assert!(session.last_reaction.len() <= MAX_PARTICIPANTS);
+    }
+
+    #[test]
+    fn an_instance_stops_creating_sessions_at_the_cap() {
+        let reg = registry();
+        let mut made = 0;
+        for _ in 0..(MAX_SESSIONS + 10) {
+            if reg.create("# hi").is_some() {
+                made += 1;
+            }
+        }
+        assert_eq!(made, MAX_SESSIONS, "the instance created {made} sessions");
+        assert!(reg.create("# hi").is_none());
+    }
 }
