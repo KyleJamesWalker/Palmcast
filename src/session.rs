@@ -684,8 +684,16 @@ impl Registry {
         let mut restored = 0;
         let now = Instant::now();
         for item in saved.into_iter().take(MAX_SESSIONS) {
+            // Reparsed here, not restored, so a change to the parser can give
+            // the same markdown a different shape. Anything held against a slide
+            // position has to be checked against the deck that actually came
+            // back, or it describes a slide that is no longer there.
             let slides = deck::parse(&item.markdown);
             let current = item.current.min(slides.len().saturating_sub(1));
+            let mut votes = item.votes;
+            votes.retain(|slide, _| *slide < slides.len());
+            let mut revealed = item.revealed;
+            revealed.retain(|slide| *slide < slides.len());
             let (tx, _) = broadcast::channel(64);
             // Carrying the age forward means the next sweep drops whatever had
             // already run out, rather than the restart granting it a new life.
@@ -710,8 +718,8 @@ impl Registry {
                     viewers: 0,
                     touched,
                     tx,
-                    votes: item.votes,
-                    revealed: item.revealed,
+                    votes,
+                    revealed,
                     last_reaction: HashMap::new(),
                     questions: item
                         .questions
@@ -870,5 +878,127 @@ mod tests {
 
         assert_eq!(after.sweep(), 0, "a live room was swept after a restart");
         assert!(after.exists(&id));
+    }
+
+    #[test]
+    fn a_quiz_in_progress_comes_back_whole() {
+        let before = Registry::new(Duration::from_secs(3600));
+        let (id, mc) = before
+            .create("# Q one\n\n- [ ] a\n- [x] b\n\n---\n\n# Q two\n\n- [x] c\n- [ ] d")
+            .unwrap();
+
+        // Two players, one right and one wrong on the first question.
+        before.set_name(&id, "sam", "Sam").unwrap();
+        before.set_name(&id, "alex", "Alex").unwrap();
+        before.answer(&id, 0, "sam", 1).unwrap();
+        before.answer(&id, 0, "alex", 0).unwrap();
+        before.reveal(&id, &mc, 0).unwrap();
+        // A vote on a question the mc has not opened yet.
+        before.answer(&id, 1, "sam", 0).unwrap();
+
+        let after = Registry::new(Duration::from_secs(3600));
+        after.import(before.export());
+
+        // The opened answer is still open.
+        let reveals = after.reveals(&id);
+        assert_eq!(reveals.len(), 1, "the reveal did not survive");
+        match &reveals[0] {
+            ServerMsg::Reveal {
+                slide,
+                correct,
+                total,
+                ..
+            } => {
+                assert_eq!(*slide, 0);
+                assert_eq!(correct, &vec![1]);
+                assert_eq!(*total, 2, "the votes did not survive");
+            }
+            other => panic!("expected a reveal, got {other:?}"),
+        }
+
+        // The unopened question kept its vote and stayed shut.
+        let tallies = after.tallies(&id);
+        assert_eq!(tallies.len(), 2, "a slide with votes lost its tally");
+
+        // Scores recompute from the votes, so only the opened question counts.
+        let ServerMsg::Scores { items } = after.scores(&id).unwrap() else {
+            panic!("no scores");
+        };
+        let sam = items.iter().find(|r| r.name == "Sam").expect("Sam is gone");
+        let alex = items
+            .iter()
+            .find(|r| r.name == "Alex")
+            .expect("Alex is gone");
+        assert_eq!(
+            sam.score, 1,
+            "a right answer stopped counting after a restart"
+        );
+        assert_eq!(alex.score, 0, "a wrong answer started counting");
+    }
+
+    #[test]
+    fn opening_an_answer_after_a_restart_scores_the_votes_cast_before_it() {
+        let before = Registry::new(Duration::from_secs(3600));
+        let (id, mc) = before.create("# Q\n\n- [ ] a\n- [x] b").unwrap();
+        before.set_name(&id, "sam", "Sam").unwrap();
+        before.answer(&id, 0, "sam", 1).unwrap();
+
+        let after = Registry::new(Duration::from_secs(3600));
+        after.import(before.export());
+
+        // The same mc token still opens it, and the vote from before counts.
+        after
+            .reveal(&id, &mc, 0)
+            .expect("the mc token stopped working");
+        let ServerMsg::Scores { items } = after.scores(&id).unwrap() else {
+            panic!("no scores");
+        };
+        assert_eq!(
+            items[0].score, 1,
+            "a vote cast before the restart did not score"
+        );
+    }
+
+    #[test]
+    fn state_pointing_past_the_deck_does_not_survive_a_restore() {
+        // What a parser change does: the same markdown now yields fewer slides,
+        // so votes and reveals saved against the old positions no longer
+        // describe anything. This shape is exactly the code fence fix.
+        let saved = vec![crate::persist::PersistedSession {
+            id: "abc123".into(),
+            owner_token: "tok".into(),
+            cohost_token: "co".into(),
+            markdown: "# Only one slide now".into(),
+            current: 0,
+            rev: 4,
+            votes: HashMap::from([
+                (0, HashMap::from([("sam".to_string(), 0usize)])),
+                (5, HashMap::from([("sam".to_string(), 1usize)])),
+            ]),
+            revealed: HashSet::from([0, 5]),
+            questions: Vec::new(),
+            next_question_id: 1,
+            names: Default::default(),
+            participants: Default::default(),
+            idle_seconds: 0,
+        }];
+
+        let reg = Registry::new(Duration::from_secs(3600));
+        assert_eq!(reg.import(saved), 1);
+
+        let map = reg.lock();
+        let session = map.get("abc123").unwrap();
+        assert_eq!(session.slides.len(), 1);
+        assert!(
+            !session.votes.contains_key(&5),
+            "votes survived for a slide that no longer exists"
+        );
+        assert!(
+            !session.revealed.contains(&5),
+            "a reveal survived for a slide that no longer exists"
+        );
+        // The slide that does still exist keeps its state.
+        assert!(session.votes.contains_key(&0));
+        assert!(session.revealed.contains(&0));
     }
 }
