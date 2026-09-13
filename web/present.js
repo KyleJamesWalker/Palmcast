@@ -35,6 +35,7 @@ const els = {
   deckPrompt: document.getElementById('deck-prompt'),
   cohost: document.getElementById('cohost'),
   roleBadge: document.getElementById('role-badge'),
+  follow: document.getElementById('follow'),
   options: document.getElementById('options'),
   reveal: document.getElementById('reveal'),
   questions: document.getElementById('questions'),
@@ -56,6 +57,10 @@ if (!token) {
 let slides = [];
 let current = 0;
 let rev = 0;
+// Where the room is, and where this console is looking. They are the same for
+// the mc, who drives. A co-host can read ahead without taking the room along.
+let roomCurrent = 0;
+let independent = false;
 let latestQuestions = [];
 let editingRev = null;
 const voted = new Set();
@@ -86,6 +91,9 @@ function paint() {
   });
 
   paintJump();
+  // Only meaningful when this console has wandered off on its own.
+  els.follow.hidden = !independent;
+  els.follow.textContent = `Room is on ${roomCurrent + 1} \u00b7 follow`;
   els.reveal.hidden = !question;
   els.reveal.disabled = Boolean(answer);
   els.reveal.textContent = answer
@@ -106,11 +114,13 @@ const socket = connect(id, token, {
       rev = msg.rev;
     }
     slides = msg.slides;
-    current = msg.current;
+    roomCurrent = msg.current;
+    if (!independent) current = msg.current;
     paint();
   },
   move(msg) {
-    current = msg.current;
+    roomCurrent = msg.current;
+    if (!independent) current = msg.current;
     paint();
   },
   tally(msg) {
@@ -174,8 +184,17 @@ function paintJump() {
   });
 }
 
+/// The mc moves the room. A co-host moves only their own screen, because the
+/// server will not take a goto from them and a button that does nothing is
+/// worse than one that does something useful.
 function go(index) {
   const target = clamp(index, 0, Math.max(0, slides.length - 1));
+  if (document.body.dataset.role === 'cohost') {
+    independent = target !== roomCurrent;
+    current = target;
+    paint();
+    return;
+  }
   if (target === current) return;
   socket.send({ type: 'goto', index: target });
 }
@@ -342,3 +361,9 @@ els.cohost.addEventListener('click', async () => {
     // Without an answer the console stays as it is, which is the mc layout.
   }
 })();
+
+els.follow.addEventListener('click', () => {
+  independent = false;
+  current = roomCurrent;
+  paint();
+});

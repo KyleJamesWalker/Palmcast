@@ -92,6 +92,11 @@ slide controls, so one person runs the room while another writes the next round
 from what the floor is asking. Two people editing at once is handled: whoever
 saves second is told the deck moved rather than writing over the first.
 
+A co-host reads the deck on their own. Tapping the slide counter moves their
+screen alone, so they can write slide seven while the room is on slide three,
+and a button shows where the room actually is and returns them to it. The MC
+always moves with the room, because the MC is the one moving it.
+
 **Copy prompt for an agent** puts the deck, the open questions and the format
 rules on the clipboard, ready to paste into whatever assistant you use.
 
