@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -39,15 +40,28 @@ pub struct PersistedQuestion {
 
 /// Writes through a temporary file in the same directory and renames it, so a
 /// stop midway through leaves the previous state rather than half of this one.
+///
+/// The temporary name is unique per call, by counter rather than by clock. The
+/// periodic save and the save on shutdown can overlap, and any shared name lets
+/// one rename the other's file out from under it. A nanosecond timestamp was
+/// not enough: two saves in the same microsecond collided.
 pub fn save(path: &Path, sessions: &[PersistedSession]) -> io::Result<()> {
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;
     }
-    let temporary = path.with_extension("tmp");
+    // A clock is not a source of uniqueness: two saves in the same microsecond
+    // picked the same name, and one renamed the other's file away.
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let ticket = NEXT.fetch_add(1, Ordering::Relaxed);
+    let temporary = path.with_extension(format!("tmp{}-{ticket}", std::process::id()));
     let json = serde_json::to_vec(sessions)?;
     std::fs::write(&temporary, &json)?;
     restrict(&temporary)?;
-    std::fs::rename(&temporary, path)?;
+    // A failed rename must not leave the temporary behind.
+    if let Err(error) = std::fs::rename(&temporary, path) {
+        std::fs::remove_file(&temporary).ok();
+        return Err(error);
+    }
     Ok(())
 }
 
@@ -142,6 +156,37 @@ mod tests {
             0,
             "state file is readable by others: {mode:o}"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn concurrent_saves_leave_a_readable_file_and_no_litter() {
+        let dir = std::env::temp_dir().join(format!("pc-race-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("state.json");
+
+        std::thread::scope(|scope| {
+            for n in 0..8 {
+                let path = path.clone();
+                scope.spawn(move || {
+                    let mut item = sample(&format!("room{n}"));
+                    item.markdown = "x".repeat(200_000);
+                    save(&path, &[item]).unwrap();
+                });
+            }
+        });
+
+        assert_eq!(
+            load(&path).unwrap().len(),
+            1,
+            "the state file did not survive"
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temporary files were left behind");
         std::fs::remove_dir_all(&dir).ok();
     }
 }
