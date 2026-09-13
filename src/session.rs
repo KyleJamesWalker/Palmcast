@@ -7,7 +7,7 @@ use subtle::ConstantTimeEq;
 use tokio::sync::broadcast;
 
 use crate::deck::{self, Slide};
-use crate::persist::{PersistedQuestion, PersistedSession};
+use crate::persist::{Choice, PersistedQuestion, PersistedSession};
 use crate::wire::{AudienceQuestion, Frame, Reaction, ScoreRow, ServerMsg};
 
 /// No vowels, so an id cannot spell a word, and no glyphs that look alike when
@@ -69,8 +69,9 @@ pub struct Session {
     pub viewers: usize,
     pub touched: Instant,
     pub tx: broadcast::Sender<Arc<Frame>>,
-    /// slide index -> voter id -> chosen option. One vote each, last one wins.
-    pub votes: HashMap<usize, HashMap<String, usize>>,
+    /// slide index -> voter id -> the options they chose. One selection each,
+    /// and a later one replaces it rather than adding to it.
+    pub votes: HashMap<usize, HashMap<String, Vec<usize>>>,
     pub revealed: HashSet<usize>,
     pub last_reaction: HashMap<String, Instant>,
     pub questions: Vec<StoredQuestion>,
@@ -119,10 +120,16 @@ impl Session {
                         else {
                             return false;
                         };
+                        // The point is for the answer, not for one part of it,
+                        // so the selection has to be exactly right.
                         self.votes
                             .get(*slide)
                             .and_then(|cast| cast.get(who))
-                            .is_some_and(|option| question.correct.contains(option))
+                            .is_some_and(|chosen| {
+                                let mut want = question.correct.clone();
+                                want.sort_unstable();
+                                *chosen == want
+                            })
                     })
                     .count();
                 ScoreRow {
@@ -167,11 +174,14 @@ impl Session {
             .unwrap_or(0);
         let mut counts = vec![0usize; width];
         let cast = self.votes.get(&slide);
+        // People, not choices: somebody picking three options is still one vote.
         let total = cast.map(HashMap::len).unwrap_or(0);
         if let Some(cast) = cast {
-            for option in cast.values() {
-                if let Some(slot) = counts.get_mut(*option) {
-                    *slot += 1;
+            for chosen in cast.values() {
+                for option in chosen {
+                    if let Some(slot) = counts.get_mut(*option) {
+                        *slot += 1;
+                    }
                 }
             }
         }
@@ -406,25 +416,41 @@ impl Registry {
 
     /// Records one vote and returns the tally for the presenter. A voter who
     /// answers twice replaces their own vote rather than adding one.
-    pub fn answer(&self, id: &str, slide: usize, who: &str, option: usize) -> Option<ServerMsg> {
+    pub fn answer(
+        &self,
+        id: &str,
+        slide: usize,
+        who: &str,
+        options: &[usize],
+    ) -> Option<ServerMsg> {
         let mut map = self.lock();
         let session = map.get_mut(id)?;
         if session.revealed.contains(&slide) {
             return None;
         }
-        let width = session
+        let question = session
             .slides
             .get(slide)
-            .and_then(|s| s.question.as_ref())
-            .map(|q| q.options.len())?;
-        if option >= width || !session.admit(who) {
+            .and_then(|s| s.question.as_ref())?;
+        let width = question.options.len();
+        // A single answer question takes one pick however many arrive.
+        let limit = if question.multi { width } else { 1 };
+
+        let mut chosen: Vec<usize> = options.iter().copied().filter(|o| *o < width).collect();
+        chosen.sort_unstable();
+        chosen.dedup();
+        if chosen.is_empty() || chosen.len() > limit {
             return None;
         }
+        if !session.admit(who) {
+            return None;
+        }
+
         session
             .votes
             .entry(slide)
             .or_default()
-            .insert(who.to_string(), option);
+            .insert(who.to_string(), chosen);
         session.touched = Instant::now();
         let (counts, total) = session.counts(slide);
         Some(ServerMsg::Tally {
@@ -434,9 +460,6 @@ impl Registry {
         })
     }
 
-    /// One reaction per viewer per REACTION_GAP. A thumb can move faster than
-    /// a room can read, and an unthrottled tap is a denial of service on the
-    /// broadcast channel.
     pub fn react(&self, id: &str, who: &str, kind: Reaction) -> Option<ServerMsg> {
         let mut map = self.lock();
         let session = map.get_mut(id)?;
@@ -653,7 +676,17 @@ impl Registry {
                 markdown: s.markdown.clone(),
                 current: s.current,
                 rev: s.rev,
-                votes: s.votes.clone(),
+                votes: s
+                    .votes
+                    .iter()
+                    .map(|(slide, cast)| {
+                        let cast = cast
+                            .iter()
+                            .map(|(who, chosen)| (who.clone(), Choice::from(chosen.clone())))
+                            .collect();
+                        (*slide, cast)
+                    })
+                    .collect(),
                 revealed: s.revealed.clone(),
                 questions: s
                     .questions
@@ -686,8 +719,35 @@ impl Registry {
             // back, or it describes a slide that is no longer there.
             let slides = deck::parse(&item.markdown);
             let current = item.current.min(slides.len().saturating_sub(1));
-            let mut votes = item.votes;
+            let mut votes: HashMap<usize, HashMap<String, Vec<usize>>> = item
+                .votes
+                .into_iter()
+                .map(|(slide, cast)| {
+                    let cast = cast
+                        .into_iter()
+                        .map(|(who, choice)| {
+                            let mut chosen = choice.into_vec();
+                            chosen.sort_unstable();
+                            chosen.dedup();
+                            (who, chosen)
+                        })
+                        .collect();
+                    (slide, cast)
+                })
+                .collect();
             votes.retain(|slide, _| *slide < slides.len());
+            // A vote for an option the deck no longer has means nothing.
+            for (slide, cast) in votes.iter_mut() {
+                let width = slides
+                    .get(*slide)
+                    .and_then(|s| s.question.as_ref())
+                    .map(|q| q.options.len())
+                    .unwrap_or(0);
+                cast.retain(|_, chosen| {
+                    chosen.iter().all(|option| *option < width) && !chosen.is_empty()
+                });
+            }
+            votes.retain(|_, cast| !cast.is_empty());
             let mut revealed = item.revealed;
             revealed.retain(|slide| *slide < slides.len());
             let (tx, _) = broadcast::channel(64);
@@ -766,16 +826,16 @@ mod tests {
 
         for n in 0..MAX_PARTICIPANTS {
             assert!(
-                reg.answer(&id, 0, &format!("who{n}"), 0).is_some(),
+                reg.answer(&id, 0, &format!("who{n}"), &[0]).is_some(),
                 "voter {n} inside the cap was turned away"
             );
         }
         assert!(
-            reg.answer(&id, 0, "one-too-many", 0).is_none(),
+            reg.answer(&id, 0, "one-too-many", &[0]).is_none(),
             "a fresh id past the cap still voted"
         );
         // Someone already admitted keeps taking part.
-        assert!(reg.answer(&id, 0, "who0", 1).is_some());
+        assert!(reg.answer(&id, 0, "who0", &[1]).is_some());
     }
 
     #[test]
@@ -886,11 +946,11 @@ mod tests {
         // Two players, one right and one wrong on the first question.
         before.set_name(&id, "sam", "Sam").unwrap();
         before.set_name(&id, "alex", "Alex").unwrap();
-        before.answer(&id, 0, "sam", 1).unwrap();
-        before.answer(&id, 0, "alex", 0).unwrap();
+        before.answer(&id, 0, "sam", &[1]).unwrap();
+        before.answer(&id, 0, "alex", &[0]).unwrap();
         before.reveal(&id, &mc, 0).unwrap();
         // A vote on a question the mc has not opened yet.
-        before.answer(&id, 1, "sam", 0).unwrap();
+        before.answer(&id, 1, "sam", &[0]).unwrap();
 
         let after = Registry::new(Duration::from_secs(3600));
         after.import(before.export());
@@ -937,7 +997,7 @@ mod tests {
         let before = Registry::new(Duration::from_secs(3600));
         let (id, mc) = before.create("# Q\n\n- [ ] a\n- [x] b").unwrap();
         before.set_name(&id, "sam", "Sam").unwrap();
-        before.answer(&id, 0, "sam", 1).unwrap();
+        before.answer(&id, 0, "sam", &[1]).unwrap();
 
         let after = Registry::new(Duration::from_secs(3600));
         after.import(before.export());
@@ -964,12 +1024,18 @@ mod tests {
             id: "abc123".into(),
             owner_token: "tok".into(),
             cohost_token: "co".into(),
-            markdown: "# Only one slide now".into(),
+            markdown: "# Only one slide now\n\n- [ ] a\n- [x] b".into(),
             current: 0,
             rev: 4,
             votes: HashMap::from([
-                (0, HashMap::from([("sam".to_string(), 0usize)])),
-                (5, HashMap::from([("sam".to_string(), 1usize)])),
+                (
+                    0,
+                    HashMap::from([("sam".to_string(), crate::persist::Choice::One(0))]),
+                ),
+                (
+                    5,
+                    HashMap::from([("sam".to_string(), crate::persist::Choice::One(1))]),
+                ),
             ]),
             revealed: HashSet::from([0, 5]),
             questions: Vec::new(),
@@ -992,6 +1058,14 @@ mod tests {
         assert!(
             !session.revealed.contains(&5),
             "a reveal survived for a slide that no longer exists"
+        );
+        // A vote for an option the slide no longer offers goes too.
+        assert!(
+            !session
+                .votes
+                .values()
+                .any(|cast| cast.values().any(|chosen| chosen.iter().any(|o| *o >= 2))),
+            "a vote survived for an option that is not there"
         );
         // The slide that does still exist keeps its state.
         assert!(session.votes.contains_key(&0));
@@ -1071,6 +1145,154 @@ mod tests {
         assert!(
             after.react(&id, "sam", Reaction::Clap).is_some(),
             "a restart left somebody unable to react"
+        );
+    }
+
+    const MULTI: &str = "# Which tracks?\n\n- [x] AI\n- [x] Data Engineering\n- [x] Architecture\n- [ ] Quantum Game Boy";
+
+    #[test]
+    fn a_multi_answer_question_scores_only_the_whole_set() {
+        let reg = Registry::new(Duration::from_secs(3600));
+        let (id, mc) = reg.create(MULTI).unwrap();
+        for who in ["ada", "bo", "cy", "di"] {
+            reg.set_name(&id, who, who).unwrap();
+        }
+
+        reg.answer(&id, 0, "ada", &[0, 1, 2]).unwrap(); // exactly right
+        reg.answer(&id, 0, "bo", &[0]).unwrap(); // one of three
+        reg.answer(&id, 0, "cy", &[0, 1, 2, 3]).unwrap(); // all four
+        reg.answer(&id, 0, "di", &[3]).unwrap(); // the joke answer
+        reg.reveal(&id, &mc, 0).unwrap();
+
+        let ServerMsg::Scores { items } = reg.scores(&id).unwrap() else {
+            panic!("no scores");
+        };
+        let score = |name: &str| items.iter().find(|r| r.name == name).unwrap().score;
+        assert_eq!(score("ada"), 1, "the exact set did not score");
+        assert_eq!(score("bo"), 0, "a partial answer scored");
+        assert_eq!(score("cy"), 0, "picking everything scored");
+        assert_eq!(score("di"), 0);
+    }
+
+    #[test]
+    fn the_order_options_are_picked_in_does_not_matter() {
+        let reg = Registry::new(Duration::from_secs(3600));
+        let (id, mc) = reg.create(MULTI).unwrap();
+        reg.set_name(&id, "ada", "Ada").unwrap();
+        reg.answer(&id, 0, "ada", &[2, 0, 1]).unwrap();
+        reg.reveal(&id, &mc, 0).unwrap();
+
+        let ServerMsg::Scores { items } = reg.scores(&id).unwrap() else {
+            panic!("no scores");
+        };
+        assert_eq!(
+            items[0].score, 1,
+            "a correct answer in another order missed"
+        );
+    }
+
+    #[test]
+    fn a_single_answer_question_still_takes_one_pick() {
+        let reg = Registry::new(Duration::from_secs(3600));
+        let (id, _mc) = reg
+            .create("# One right\n\n- [ ] a\n- [x] b\n- [ ] c")
+            .unwrap();
+        assert!(reg.answer(&id, 0, "ada", &[1]).is_some());
+        assert!(
+            reg.answer(&id, 0, "bo", &[0, 1]).is_none(),
+            "two picks landed on a single answer question"
+        );
+    }
+
+    #[test]
+    fn a_tally_counts_people_once_however_many_they_pick() {
+        let reg = Registry::new(Duration::from_secs(3600));
+        let (id, _mc) = reg.create(MULTI).unwrap();
+        reg.answer(&id, 0, "ada", &[0, 1, 2]).unwrap();
+        reg.answer(&id, 0, "bo", &[0]).unwrap();
+
+        let map = reg.lock();
+        let (counts, total) = map.get(&id).unwrap().counts(0);
+        drop(map);
+        assert_eq!(counts, vec![2, 1, 1, 0], "options were not counted each");
+        assert_eq!(total, 2, "a voter picking three counted as three people");
+    }
+
+    #[test]
+    fn an_empty_or_impossible_selection_is_refused() {
+        let reg = Registry::new(Duration::from_secs(3600));
+        let (id, _mc) = reg.create(MULTI).unwrap();
+        assert!(
+            reg.answer(&id, 0, "ada", &[]).is_none(),
+            "an empty pick landed"
+        );
+        assert!(
+            reg.answer(&id, 0, "ada", &[9]).is_none(),
+            "a pick past the options landed"
+        );
+        // A repeated option is one option, not two.
+        assert!(reg.answer(&id, 0, "ada", &[1, 1, 1]).is_some());
+        let map = reg.lock();
+        assert_eq!(map.get(&id).unwrap().votes[&0]["ada"], vec![1]);
+    }
+
+    #[test]
+    fn a_question_says_whether_several_answers_are_right() {
+        let reg = Registry::new(Duration::from_secs(3600));
+        let (id, _mc) = reg.create(MULTI).unwrap();
+        let ServerMsg::Deck { slides, .. } = reg.snapshot(&id).unwrap() else {
+            panic!("no deck");
+        };
+        let q = slides[0].question.as_ref().unwrap();
+        assert!(q.multi, "a multi answer question did not say so");
+
+        // And the room is told that much without being told which.
+        let hidden = ServerMsg::Deck {
+            rev: 1,
+            current: 0,
+            slides: slides.clone(),
+        }
+        .redacted()
+        .unwrap();
+        let ServerMsg::Deck { slides, .. } = hidden else {
+            panic!("not a deck");
+        };
+        let q = slides[0].question.as_ref().unwrap();
+        assert!(q.multi, "the room was not told it may pick several");
+        assert!(q.correct.is_empty(), "the room was told which");
+    }
+
+    #[test]
+    fn a_vote_saved_before_multi_select_still_loads() {
+        // The old file shape: one bare number per voter.
+        let saved = vec![crate::persist::PersistedSession {
+            id: "abc123".into(),
+            owner_token: "tok".into(),
+            cohost_token: "co".into(),
+            markdown: "# One right\n\n- [ ] a\n- [x] b".into(),
+            current: 0,
+            rev: 1,
+            votes: HashMap::from([(
+                0,
+                HashMap::from([("sam".to_string(), crate::persist::Choice::One(1))]),
+            )]),
+            revealed: HashSet::from([0]),
+            questions: Vec::new(),
+            next_question_id: 1,
+            names: HashMap::from([("sam".to_string(), "Sam".to_string())]),
+            participants: HashSet::from(["sam".to_string()]),
+            idle_seconds: 0,
+        }];
+
+        let reg = Registry::new(Duration::from_secs(3600));
+        assert_eq!(reg.import(saved), 1);
+
+        let ServerMsg::Scores { items } = reg.scores("abc123").unwrap() else {
+            panic!("no scores");
+        };
+        assert_eq!(
+            items[0].score, 1,
+            "a vote from before multi select stopped counting"
         );
     }
 }

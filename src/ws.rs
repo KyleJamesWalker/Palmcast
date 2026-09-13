@@ -159,8 +159,8 @@ fn handle(
             }
         }
         // Anyone in the room may vote, the presenter included.
-        ClientMsg::Answer { slide, option } => {
-            if let Some(tally) = registry.answer(id, slide, who, option) {
+        ClientMsg::Answer { slide, options } => {
+            if let Some(tally) = registry.answer(id, slide, who, &options) {
                 registry.broadcast(id, tally);
             }
         }

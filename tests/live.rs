@@ -216,7 +216,7 @@ async fn a_vote_reaches_the_presenter_as_a_tally() {
     let _ = next_json(&mut voter).await;
     voter
         .send(Message::Text(
-            r#"{"type":"answer","slide":0,"option":1}"#.into(),
+            r#"{"type":"answer","slide":0,"options":[1]}"#.into(),
         ))
         .await
         .unwrap();
@@ -243,7 +243,7 @@ async fn the_audience_never_sees_the_running_tally() {
     let _ = next_json(&mut voter).await;
     voter
         .send(Message::Text(
-            r#"{"type":"answer","slide":0,"option":1}"#.into(),
+            r#"{"type":"answer","slide":0,"options":[1]}"#.into(),
         ))
         .await
         .unwrap();
@@ -271,7 +271,7 @@ async fn one_voter_cannot_stuff_the_tally() {
     for option in [0, 1, 2, 1] {
         voter
             .send(Message::Text(
-                format!(r#"{{"type":"answer","slide":0,"option":{option}}}"#).into(),
+                format!(r#"{{"type":"answer","slide":0,"options":[{option}]}}"#).into(),
             ))
             .await
             .unwrap();
@@ -336,7 +336,7 @@ async fn a_viewer_cannot_reveal_the_answer() {
     let _ = next_json(&mut presenter).await;
     heckler
         .send(Message::Text(
-            r#"{"type":"answer","slide":0,"option":0}"#.into(),
+            r#"{"type":"answer","slide":0,"options":[0]}"#.into(),
         ))
         .await
         .unwrap();
@@ -371,7 +371,7 @@ async fn a_vote_after_the_reveal_is_refused() {
     let _ = next_json(&mut latecomer).await;
     latecomer
         .send(Message::Text(
-            r#"{"type":"answer","slide":0,"option":0}"#.into(),
+            r#"{"type":"answer","slide":0,"options":[0]}"#.into(),
         ))
         .await
         .unwrap();
@@ -833,13 +833,13 @@ async fn a_right_answer_scores_when_the_presenter_reveals() {
     // Right on slide 0, wrong on slide 1.
     player
         .send(Message::Text(
-            r#"{"type":"answer","slide":0,"option":1}"#.into(),
+            r#"{"type":"answer","slide":0,"options":[1]}"#.into(),
         ))
         .await
         .unwrap();
     player
         .send(Message::Text(
-            r#"{"type":"answer","slide":1,"option":1}"#.into(),
+            r#"{"type":"answer","slide":1,"options":[1]}"#.into(),
         ))
         .await
         .unwrap();
@@ -885,7 +885,7 @@ async fn an_unrevealed_question_scores_nobody() {
     let _ = next_scores(&mut player).await;
     player
         .send(Message::Text(
-            r#"{"type":"answer","slide":0,"option":1}"#.into(),
+            r#"{"type":"answer","slide":0,"options":[1]}"#.into(),
         ))
         .await
         .unwrap();
@@ -946,7 +946,7 @@ async fn editing_a_typo_keeps_the_votes_on_an_untouched_question() {
     let _ = next_json(&mut voter).await;
     voter
         .send(Message::Text(
-            r#"{"type":"answer","slide":1,"option":1}"#.into(),
+            r#"{"type":"answer","slide":1,"options":[1]}"#.into(),
         ))
         .await
         .unwrap();
@@ -986,7 +986,7 @@ async fn changing_the_options_drops_that_question_s_votes() {
     let _ = next_json(&mut voter).await;
     voter
         .send(Message::Text(
-            r#"{"type":"answer","slide":1,"option":1}"#.into(),
+            r#"{"type":"answer","slide":1,"options":[1]}"#.into(),
         ))
         .await
         .unwrap();
@@ -1198,7 +1198,7 @@ async fn a_presenter_joining_mid_round_is_told_the_tally() {
         let _ = next_json(&mut voter).await;
         voter
             .send(Message::Text(
-                r#"{"type":"answer","slide":0,"option":0}"#.into(),
+                r#"{"type":"answer","slide":0,"options":[0]}"#.into(),
             ))
             .await
             .unwrap();
@@ -1230,7 +1230,7 @@ async fn a_viewer_joining_mid_round_is_not_told_the_tally() {
     let _ = next_json(&mut voter).await;
     voter
         .send(Message::Text(
-            r#"{"type":"answer","slide":0,"option":0}"#.into(),
+            r#"{"type":"answer","slide":0,"options":[0]}"#.into(),
         ))
         .await
         .unwrap();
@@ -1257,7 +1257,7 @@ async fn a_viewer_arriving_after_a_reveal_is_shown_the_answer() {
     let _ = next_json(&mut early).await;
     early
         .send(Message::Text(
-            r#"{"type":"answer","slide":0,"option":1}"#.into(),
+            r#"{"type":"answer","slide":0,"options":[1]}"#.into(),
         ))
         .await
         .unwrap();
@@ -1293,7 +1293,7 @@ async fn an_unrevealed_question_is_still_withheld_from_an_arriving_viewer() {
     let _ = next_json(&mut voter).await;
     voter
         .send(Message::Text(
-            r#"{"type":"answer","slide":0,"option":1}"#.into(),
+            r#"{"type":"answer","slide":0,"options":[1]}"#.into(),
         ))
         .await
         .unwrap();

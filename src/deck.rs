@@ -13,6 +13,10 @@ pub struct Slide {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Question {
     pub options: Vec<String>,
+    /// Whether more than one answer is right. Unlike `correct` this reaches the
+    /// room, because a voter has to know they may pick several. It says how many
+    /// without saying which.
+    pub multi: bool,
     /// Indices of the right answers. Redacted for everyone but the presenter
     /// until the presenter reveals them.
     pub correct: Vec<usize>,
@@ -134,7 +138,15 @@ fn split_question(body: &str) -> (String, Option<Question>) {
     if options.len() < 2 {
         return (body.to_string(), None);
     }
-    (prompt.join("\n"), Some(Question { options, correct }))
+    let multi = correct.len() > 1;
+    (
+        prompt.join("\n"),
+        Some(Question {
+            options,
+            multi,
+            correct,
+        }),
+    )
 }
 
 fn task_item(line: &str) -> Option<(bool, String)> {

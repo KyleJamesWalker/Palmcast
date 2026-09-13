@@ -15,6 +15,7 @@ let slides = [];
 let current = 0;
 let rev = 0;
 const chosen = new Map();
+const sent = new Set();
 const revealed = new Map();
 
 function paint() {
@@ -31,8 +32,25 @@ function paint() {
     counts: answer?.counts,
     total: answer?.total,
     onPick(index) {
-      chosen.set(current, index);
-      socket.send({ type: 'answer', slide: current, option: index });
+      const picked = chosen.get(current) ?? [];
+      if (now?.question?.multi) {
+        // A selection is built up and sent when the voter says so.
+        const next = picked.includes(index)
+          ? picked.filter((i) => i !== index)
+          : [...picked, index].sort((a, b) => a - b);
+        chosen.set(current, next);
+        paint();
+        return;
+      }
+      chosen.set(current, [index]);
+      socket.send({ type: 'answer', slide: current, options: [index] });
+      paint();
+    },
+    onSend() {
+      const picked = chosen.get(current) ?? [];
+      if (!picked.length) return;
+      socket.send({ type: 'answer', slide: current, options: picked });
+      sent.add(current);
       paint();
     },
   });
@@ -47,6 +65,7 @@ const socket = connect(id, null, {
       // Keep what the server kept, and drop what it dropped.
       const keep = survivingSlides(slides, msg.slides);
       pruneBySlide(chosen, keep);
+      for (const slide of [...sent]) if (!keep.has(slide)) sent.delete(slide);
       pruneBySlide(revealed, keep);
       rev = msg.rev;
     }

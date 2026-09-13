@@ -125,6 +125,10 @@ right answer, and a question may have more than one.
 The room taps an option. The presenter watches the count fill, then presses
 **Reveal the answer**, which opens the answer and the split to everyone.
 
+Marking several answers makes it a pick-all question. The room selects every
+answer it wants and sends them together, and a point needs the whole set. The
+count still shows how many people answered, not how many boxes they ticked.
+
 Two things stay on the server until that moment. The right answer never reaches
 an audience socket, and neither does the running count. A room that watches the
 split form votes differently from a room that cannot see it.

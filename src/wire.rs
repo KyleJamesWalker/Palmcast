@@ -99,6 +99,7 @@ impl ServerMsg {
                         notes: String::new(),
                         question: s.question.as_ref().map(|q| Question {
                             options: q.options.clone(),
+                            multi: q.multi,
                             correct: Vec::new(),
                         }),
                     })
@@ -113,14 +114,32 @@ impl ServerMsg {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
-    Goto { index: usize },
-    Answer { slide: usize, option: usize },
-    Reveal { slide: usize },
-    React { kind: Reaction },
-    Ask { text: String },
-    Upvote { question: u64 },
-    Answered { question: u64 },
-    SetName { name: String },
+    Goto {
+        index: usize,
+    },
+    /// The whole selection, replacing whatever this voter chose before.
+    Answer {
+        slide: usize,
+        options: Vec<usize>,
+    },
+    Reveal {
+        slide: usize,
+    },
+    React {
+        kind: Reaction,
+    },
+    Ask {
+        text: String,
+    },
+    Upvote {
+        question: u64,
+    },
+    Answered {
+        question: u64,
+    },
+    SetName {
+        name: String,
+    },
 }
 
 /// One broadcast, serialized once for each audience it can reach.
@@ -172,6 +191,7 @@ mod tests {
                 notes: "the secret note".into(),
                 question: Some(Question {
                     options: vec!["a".into(), "b".into()],
+                    multi: false,
                     correct: vec![1],
                 }),
             }],

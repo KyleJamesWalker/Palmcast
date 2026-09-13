@@ -34,9 +34,9 @@ export function renderOptions(root, question, state) {
       item.append(tally);
     }
 
-    if (state.chosen === index) item.classList.add('chosen');
+    if (state.chosen?.includes(index)) item.classList.add('chosen');
     if (state.correct?.includes(index)) item.classList.add('correct');
-    if (state.correct && state.chosen === index && !state.correct.includes(index)) {
+    if (state.correct && state.chosen?.includes(index) && !state.correct.includes(index)) {
       item.classList.add('wrong');
     }
 
@@ -45,6 +45,10 @@ export function renderOptions(root, question, state) {
       // read, and a disabled control leaves the tab order and is skipped by
       // some screen readers. It stops accepting taps instead.
       if (state.locked) item.setAttribute('aria-disabled', 'true');
+      if (question.multi) {
+        item.setAttribute('role', 'checkbox');
+        item.setAttribute('aria-checked', String(Boolean(state.chosen?.includes(index))));
+      }
       item.addEventListener('click', () => {
         if (state.locked) return;
         state.onPick?.(index);
@@ -53,6 +57,25 @@ export function renderOptions(root, question, state) {
 
     root.append(item);
   });
+
+  // A question with several right answers is a selection, so it needs saying
+  // and it needs sending when the voter is done rather than on first tap.
+  if (question.multi && state.interactive && !state.locked) {
+    const hint = document.createElement('p');
+    hint.className = 'dim option-hint';
+    hint.textContent = 'Pick every answer you think is right, then send.';
+    root.append(hint);
+
+    const send = document.createElement('button');
+    send.type = 'button';
+    send.className = 'option-send primary';
+    const count = state.chosen?.length ?? 0;
+    send.textContent =
+      count === 1 ? 'Send 1 answer' : count ? `Send ${count} answers` : 'Pick an answer';
+    send.disabled = count === 0;
+    send.addEventListener('click', () => state.onSend?.());
+    root.append(send);
+  }
 
   returnFocus(root, 'data-index', held);
 }

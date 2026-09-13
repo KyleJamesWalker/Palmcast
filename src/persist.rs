@@ -21,7 +21,7 @@ pub struct PersistedSession {
     pub current: usize,
     pub rev: u64,
     #[serde(default)]
-    pub votes: HashMap<usize, HashMap<String, usize>>,
+    pub votes: HashMap<usize, HashMap<String, Choice>>,
     #[serde(default)]
     pub revealed: HashSet<usize>,
     #[serde(default)]
@@ -36,6 +36,33 @@ pub struct PersistedSession {
     /// not hand an expired room a fresh life, so the age travels with it.
     #[serde(default)]
     pub idle_seconds: u64,
+}
+
+/// What one voter chose on one slide.
+///
+/// A file written before answers could hold more than one option stores a bare
+/// number. Reading it as either shape means an upgrade keeps the votes instead
+/// of refusing the file or dropping the round.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Choice {
+    One(usize),
+    Several(Vec<usize>),
+}
+
+impl Choice {
+    pub fn into_vec(self) -> Vec<usize> {
+        match self {
+            Choice::One(option) => vec![option],
+            Choice::Several(options) => options,
+        }
+    }
+}
+
+impl From<Vec<usize>> for Choice {
+    fn from(options: Vec<usize>) -> Self {
+        Choice::Several(options)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
