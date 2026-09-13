@@ -28,12 +28,20 @@
 
   <div class="actions">
     <button id="start" class="primary">Start presenting</button>
+    <button id="preview-toggle" class="ghost" aria-expanded="false"
+      aria-controls="preview">Preview deck</button>
     <button id="deck-link" class="ghost">Copy deck link</button>
+    <button id="agent-prompt" class="ghost">Copy prompt for an agent</button>
     <span id="count" class="dim"></span>
   </div>
   <p id="loaded" class="dim" role="status" hidden></p>
   <input id="deck-link-url" class="url" readonly hidden
     aria-label="Shareable link to this deck">
+
+  <textarea id="agent-prompt-text" class="fallback" readonly hidden
+    aria-label="Prompt to paste into an agent"></textarea>
+
+  <section id="preview" class="preview" hidden aria-label="Deck preview"></section>
   <p id="error" class="error" hidden></p>
 </main>
 <script type="module" src="/new.js"></script>

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { agentPrompt } = await import('./deckstate.js');
+import { DECK_RULES, agentPrompt, starterPrompt } from './deckstate.js';
 
 const DECK = '# Round one\n\n---\n\n# Round two';
 
@@ -40,4 +40,24 @@ test('no questions reads sensibly', () => {
 test('the deck is fenced so an agent can tell it from the instructions', () => {
   const p = agentPrompt(DECK, []);
   assert.ok(p.includes('```markdown'));
+});
+
+test('the starter prompt carries the format rules and no deck', () => {
+  const prompt = starterPrompt();
+  assert.ok(prompt.includes(DECK_RULES), 'the rules are the point of this prompt');
+  assert.ok(prompt.includes('```') === false, 'nothing to quote: there is no deck yet');
+  assert.match(prompt, /paste your topic, your notes, or an existing deck/);
+});
+
+test('both prompts state the rules the same way', () => {
+  // One deck format. Two prompts that described it differently would send an
+  // agent two ways of writing the same thing.
+  assert.ok(starterPrompt().includes(DECK_RULES));
+  assert.ok(agentPrompt('# Deck').includes(DECK_RULES));
+});
+
+test('the rules cover every mark the parser treats specially', () => {
+  for (const mark of ['---', '???', '- [ ]', '- [x]', 'fenced code block']) {
+    assert.ok(DECK_RULES.includes(mark), `the rules never mention ${mark}`);
+  }
 });

@@ -28,6 +28,44 @@ export function pruneBySlide(map, keep) {
 ///
 /// The format rules travel with it, because an agent that does not know them
 /// writes markdown this application will not parse the way the author meant.
+/// The deck format, on its own.
+///
+/// Split out because it travels two ways: appended to a deck in progress from
+/// the presenter console, and handed to an agent cold from the start page by
+/// someone who has a topic and no slides yet.
+export const DECK_RULES = [
+  'The deck is Markdown with these rules:',
+  '- `---` alone on a line starts a new slide.',
+  '- `???` starts speaker notes, which only the presenter sees.',
+  '- A list of two or more `- [ ]` items makes the slide a question, and',
+  '  `- [x]` marks a correct answer.',
+  '- Marking several answers makes it a pick-all question. The room selects',
+  '  every answer it wants and scores only for getting the whole set right,',
+  '  so include a wrong option or two worth considering.',
+  'Neither `---` nor `???` applies inside a fenced code block.',
+].join('\n');
+
+/// For someone who has a topic, notes, or an existing deck and no Palmcast
+/// deck yet. It carries the rules and asks for the source, because the source
+/// is the thing this page cannot supply.
+export function starterPrompt() {
+  return [
+    'I am writing a slide deck for Palmcast, which puts live slides on every',
+    'phone in the room. Slides are read on a phone, so keep each one short:',
+    'a heading and a few lines, not a paragraph.',
+    '',
+    DECK_RULES,
+    '',
+    'Mix in a few questions for the room. A bar audience taps more than it reads.',
+    '',
+    'Here is what I want the deck to cover:',
+    '',
+    '<paste your topic, your notes, or an existing deck here>',
+    '',
+    'Reply with the complete deck, in that Markdown, and nothing else.',
+  ].join('\n');
+}
+
 export function agentPrompt(markdown, questions = []) {
   const open = questions.filter((q) => !q.answered);
   const asked = open.length
@@ -39,15 +77,7 @@ export function agentPrompt(markdown, questions = []) {
   return [
     'I am running a live slide deck and need help writing the next slides.',
     '',
-    'The deck is Markdown with three rules:',
-    '- `---` alone on a line starts a new slide.',
-    '- `???` starts speaker notes, which only the presenter sees.',
-    '- A list of two or more `- [ ]` items makes the slide a question, and',
-    '  `- [x]` marks a correct answer.',
-    '- Marking several answers makes it a pick-all question. The room selects',
-    '  every answer it wants and scores only for getting the whole set right,',
-    '  so include a wrong option or two worth considering.',
-    'Neither `---` nor `???` applies inside a fenced code block.',
+    DECK_RULES,
     '',
     'Questions from the audience, still open:',
     asked,

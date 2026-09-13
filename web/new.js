@@ -1,4 +1,14 @@
-import { copyText, deckLinkFor, deckTokenIn, packDeck, rememberToken, slideCount, unpackDeck } from '/shared.js';
+import {
+  copyText,
+  deckLinkFor,
+  deckTokenIn,
+  packDeck,
+  rememberToken,
+  slideCount,
+  unpackDeck,
+} from '/shared.js';
+import { previewDeck, renderPreview } from '/preview.js';
+import { starterPrompt } from '/deckstate.js';
 
 const SAMPLE = `# Why Rust
 
@@ -36,6 +46,40 @@ const error = document.getElementById('error');
 const deckLink = document.getElementById('deck-link');
 const loaded = document.getElementById('loaded');
 const linkBox = document.getElementById('deck-link-url');
+const previewToggle = document.getElementById('preview-toggle');
+const preview = document.getElementById('preview');
+const agentButton = document.getElementById('agent-prompt');
+const agentBox = document.getElementById('agent-prompt-text');
+
+async function paintPreview() {
+  try {
+    renderPreview(preview, await previewDeck(editor.value));
+    error.hidden = true;
+  } catch (e) {
+    error.textContent = `Could not preview the deck: ${e.message}`;
+    error.hidden = false;
+  }
+}
+
+// The parse belongs to the server, so an open preview follows the typing at a
+// distance. Without the wait this would be a request per keystroke.
+let pending;
+function repaintPreviewSoon() {
+  if (preview.hidden) return;
+  clearTimeout(pending);
+  pending = setTimeout(paintPreview, 250);
+}
+
+previewToggle.addEventListener('click', async () => {
+  const opening = preview.hidden;
+  preview.hidden = !opening;
+  previewToggle.setAttribute('aria-expanded', String(opening));
+  previewToggle.textContent = opening ? 'Hide preview' : 'Preview deck';
+  if (!opening) return;
+  await paintPreview();
+  // The editor fills the screen on a phone, so the preview opens out of sight.
+  preview.scrollIntoView({ block: 'start', behavior: 'smooth' });
+});
 
 const DRAFT = 'palmcast:draft';
 try {
@@ -47,6 +91,7 @@ try {
 function refresh() {
   const n = slideCount(editor.value);
   count.textContent = `${n} slide${n === 1 ? '' : 's'}`;
+  repaintPreviewSoon();
 }
 
 function keep() {
@@ -93,6 +138,25 @@ async function openShared() {
 
 addEventListener('hashchange', openShared);
 openShared();
+
+// The rules, not the deck. Someone arriving with a topic, a page of notes or
+// an existing deck has the source an agent needs and no idea what shape the
+// output has to take. This is that shape, and nothing else.
+agentButton.addEventListener('click', async () => {
+  const label = agentButton.textContent;
+  const prompt = starterPrompt();
+  if ((await copyText(prompt)) === 'copied') {
+    agentButton.textContent = 'Prompt copied';
+  } else {
+    agentBox.value = prompt;
+    agentBox.hidden = false;
+    agentBox.select();
+    agentButton.textContent = 'No clipboard \u2014 copy the prompt below';
+  }
+  setTimeout(() => {
+    agentButton.textContent = label;
+  }, 2000);
+});
 
 deckLink.addEventListener('click', async () => {
   const label = deckLink.textContent;

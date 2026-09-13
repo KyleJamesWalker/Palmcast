@@ -148,6 +148,19 @@ split form votes differently from a room that cannot see it.
 
 One vote per browser. A second tap replaces the first rather than adding one.
 
+## Preview before the room sees it
+
+**Preview deck** draws every slide as a card, in order, with speaker notes and
+quiz answers marked. It runs the same parser the room runs, so what you read is
+what the audience gets. It catches the mistakes that only show up once slides
+are slides: a break in the wrong place, a `---` inside a code fence, notes that
+leaked into the body, a list that was meant to be a question.
+
+**Copy prompt for an agent** on the start page copies the deck format and
+nothing else. Paste it into an agent with a topic, a page of notes, or a deck
+you already have, and paste the reply back into the editor. The presenter
+console has the same button, which adds the deck so far and the open questions.
+
 ## Save a deck for later
 
 A room is temporary. **Copy deck link** turns the deck itself into a link, on

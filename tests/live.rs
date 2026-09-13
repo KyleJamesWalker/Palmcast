@@ -1624,3 +1624,45 @@ async fn a_deck_link_carries_the_slides_and_nothing_the_room_added() {
     assert!(!shared.contains("who is buying"), "a question rode along");
     assert!(!shared.contains("guest"), "a participant rode along");
 }
+
+/// The preview exists to show the author what the room will get. If the two
+/// paths ever render differently, the preview is worse than not having one.
+#[tokio::test]
+async fn the_preview_renders_exactly_what_the_room_will_see() {
+    let host = spawn().await;
+    let deck = "# Hi <script>alert(1)</script>\n\n---\n\n```yaml\na: 1\n---\nb: 2\n```\n\n\
+                ---\n\n## Pick\n\n- [x] one\n- [x] two\n- [ ] three\n\n???\nNotes.\n";
+
+    let (_, body) = post_json(
+        &host,
+        "/api/preview",
+        serde_json::json!({ "markdown": deck }),
+    )
+    .await;
+    let previewed = serde_json::from_str::<Value>(&body).unwrap()["slides"].clone();
+
+    let (id, presenter) = create(&host, deck).await;
+    let mut socket = open(&host, &id, Some(&presenter)).await;
+    let presented = next_json(&mut socket).await["slides"].clone();
+
+    assert_eq!(previewed, presented);
+    // The fence holds, so the deck is three slides rather than four.
+    assert_eq!(previewed.as_array().unwrap().len(), 3);
+    assert!(
+        !previewed.to_string().contains("<script>"),
+        "the preview handed back live markup"
+    );
+}
+
+#[tokio::test]
+async fn a_deck_too_large_to_present_is_too_large_to_preview() {
+    let host = spawn().await;
+    let deck = "a".repeat(300 * 1024);
+    let (status, _) = post_json(
+        &host,
+        "/api/preview",
+        serde_json::json!({ "markdown": deck }),
+    )
+    .await;
+    assert_eq!(status, 413);
+}

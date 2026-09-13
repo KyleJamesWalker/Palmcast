@@ -11,6 +11,7 @@ use qrcode::render::svg;
 use serde::{Deserialize, Serialize};
 
 use crate::assets::{self, Web};
+use crate::deck;
 use crate::origin;
 use crate::session::{EditError, Registry};
 use crate::share;
@@ -73,6 +74,7 @@ pub fn router_with(app: App) -> Router {
         .route("/", get(|| async { page("new.html") }))
         .route("/healthz", get(health))
         .route("/api/sessions", post(create_session))
+        .route("/api/preview", post(preview_deck))
         .route("/api/pack", post(pack_deck))
         .route("/api/unpack", post(unpack_deck))
         .route(
@@ -136,6 +138,26 @@ async fn create_session(
             .into_response();
     };
     (StatusCode::CREATED, axum::Json(Created { id, token })).into_response()
+}
+
+#[derive(Serialize)]
+struct Preview {
+    slides: Vec<deck::Slide>,
+}
+
+/// Renders a deck without starting a room.
+///
+/// The same parser the room runs, so what the author reads here is what the
+/// audience gets. A preview that rendered Markdown separately would be a second
+/// place for the sanitizer to be wrong.
+async fn preview_deck(axum::Json(body): axum::Json<DeckBody>) -> Response {
+    if body.markdown.len() > MAX_DECK_BYTES {
+        return (StatusCode::PAYLOAD_TOO_LARGE, "deck too large").into_response();
+    }
+    axum::Json(Preview {
+        slides: deck::parse(&body.markdown),
+    })
+    .into_response()
 }
 
 #[derive(Serialize)]
