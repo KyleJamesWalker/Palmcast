@@ -1046,3 +1046,69 @@ async fn an_edit_reaches_every_viewer() {
         }
     }
 }
+
+#[tokio::test]
+async fn an_asset_revalidates_rather_than_caching_blind() {
+    let host = spawn().await;
+    let client = reqwest::Client::new();
+
+    let first = client
+        .get(format!("http://{host}/present.js"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(first.status(), 200);
+    assert_eq!(
+        first.headers().get("cache-control").unwrap(),
+        "no-cache",
+        "an asset without no-cache can outlive the binary that served it"
+    );
+    let tag = first
+        .headers()
+        .get("etag")
+        .expect("no etag")
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    let second = client
+        .get(format!("http://{host}/present.js"))
+        .header("if-none-match", &tag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(second.status(), 304, "a matching etag should not resend");
+
+    let changed = client
+        .get(format!("http://{host}/present.js"))
+        .header("if-none-match", "\"deadbeefdeadbeef\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(changed.status(), 200, "a stale etag must resend");
+}
+
+#[tokio::test]
+async fn different_assets_carry_different_tags() {
+    let host = spawn().await;
+    let client = reqwest::Client::new();
+    let mut tags = Vec::new();
+    for path in ["/present.js", "/watch.js", "/base.css"] {
+        let res = client
+            .get(format!("http://{host}{path}"))
+            .send()
+            .await
+            .unwrap();
+        tags.push(
+            res.headers()
+                .get("etag")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string(),
+        );
+    }
+    tags.sort();
+    tags.dedup();
+    assert_eq!(tags.len(), 3, "two assets shared an etag");
+}

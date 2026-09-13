@@ -10,7 +10,7 @@ use qrcode::QrCode;
 use qrcode::render::svg;
 use serde::{Deserialize, Serialize};
 
-use crate::assets::Web;
+use crate::assets::{self, Web};
 use crate::session::Registry;
 use crate::ws::{self, Join};
 
@@ -193,16 +193,55 @@ async fn qr(
     ([(header::CONTENT_TYPE, "image/svg+xml")], image).into_response()
 }
 
-async fn asset(uri: Uri) -> Response {
-    page(uri.path().trim_start_matches('/'))
+async fn asset(uri: Uri, headers: HeaderMap) -> Response {
+    serve(uri.path().trim_start_matches('/'), Some(&headers))
 }
 
 fn page(path: &str) -> Response {
-    match Web::get(path) {
-        Some(file) => {
-            let mime = mime_guess::from_path(path).first_or_octet_stream();
-            ([(header::CONTENT_TYPE, mime.as_ref())], file.data).into_response()
-        }
-        None => (StatusCode::NOT_FOUND, "not found").into_response(),
+    serve(path, None)
+}
+
+/// Assets change whenever the binary does, and a viewer who reloads after a
+/// redeploy must not keep running the code from before it. `no-cache` makes the
+/// browser revalidate every time, and the ETag keeps that revalidation a 304
+/// rather than a fresh download.
+fn serve(path: &str, request: Option<&HeaderMap>) -> Response {
+    let Some(file) = Web::get(path) else {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+
+    let tag = format!("\"{}\"", hex(&file.metadata.sha256_hash()[..8]));
+    if let Some(headers) = request
+        && headers
+            .get(header::IF_NONE_MATCH)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.split(',').any(|candidate| candidate.trim() == tag))
+    {
+        return (StatusCode::NOT_MODIFIED, [(header::ETAG, tag)]).into_response();
     }
+
+    let mime = mime_guess::from_path(path).first_or_octet_stream();
+    let rewrite = path.ends_with(".html") || path.ends_with(".js");
+    let body: Vec<u8> = if rewrite {
+        match std::str::from_utf8(&file.data) {
+            Ok(text) => assets::versioned(text).into_bytes(),
+            Err(_) => file.data.to_vec(),
+        }
+    } else {
+        file.data.to_vec()
+    };
+
+    (
+        [
+            (header::CONTENT_TYPE, mime.as_ref().to_string()),
+            (header::CACHE_CONTROL, "no-cache".to_string()),
+            (header::ETAG, tag),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }

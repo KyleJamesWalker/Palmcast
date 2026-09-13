@@ -25,6 +25,12 @@ const els = {
   denied: document.getElementById('denied'),
   watchLink: document.getElementById('watch-link'),
   handoff: document.getElementById('handoff'),
+  editToggle: document.getElementById('edit-toggle'),
+  editor: document.getElementById('editor'),
+  deckText: document.getElementById('deck-text'),
+  deckSave: document.getElementById('deck-save'),
+  deckCancel: document.getElementById('deck-cancel'),
+  deckStatus: document.getElementById('deck-status'),
   options: document.getElementById('options'),
   reveal: document.getElementById('reveal'),
   questions: document.getElementById('questions'),
@@ -188,4 +194,51 @@ els.copy.addEventListener('click', async () => {
   setTimeout(() => {
     els.copy.textContent = label;
   }, 1500);
+});
+
+async function openEditor() {
+  els.deckStatus.textContent = 'Loading\u2026';
+  els.editor.hidden = false;
+  try {
+    const res = await fetch(`/api/sessions/${id}/markdown?token=${encodeURIComponent(token)}`);
+    if (!res.ok) throw new Error(`server said ${res.status}`);
+    els.deckText.value = await res.text();
+    els.deckStatus.textContent = '';
+    els.deckText.focus();
+  } catch (error) {
+    els.deckStatus.textContent = `Could not load: ${error.message}`;
+  }
+}
+
+els.editToggle.addEventListener('click', () => {
+  if (els.editor.hidden) {
+    openEditor();
+  } else {
+    els.editor.hidden = true;
+  }
+});
+
+els.deckCancel.addEventListener('click', () => {
+  els.editor.hidden = true;
+  els.deckStatus.textContent = '';
+});
+
+els.deckSave.addEventListener('click', async () => {
+  els.deckSave.disabled = true;
+  els.deckStatus.textContent = 'Saving\u2026';
+  try {
+    const res = await fetch(`/api/sessions/${id}?token=${encodeURIComponent(token)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ markdown: els.deckText.value }),
+    });
+    if (!res.ok) throw new Error(`server said ${res.status}`);
+    // The new deck arrives over the socket, so there is nothing to apply here.
+    els.editor.hidden = true;
+    els.deckStatus.textContent = '';
+  } catch (error) {
+    els.deckStatus.textContent = `Could not save: ${error.message}`;
+  } finally {
+    els.deckSave.disabled = false;
+  }
 });

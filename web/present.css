@@ -118,3 +118,27 @@ button.ghost {
 .console .option { min-height: 44px; font-size: clamp(15px, 3.4vw, 18px); padding: 8px 12px; }
 
 .board .score { min-height: 38px; padding: 6px 10px; font-size: clamp(14px, 3.2vw, 17px); }
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+}
+.editor textarea {
+  min-height: 34vh;
+  resize: vertical;
+  background: var(--ground);
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 12px;
+  font: 400 15px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.editor textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.editor-actions { display: flex; align-items: center; gap: 10px; }
+.editor-actions button { min-height: 46px; }
+.editor-actions .dim { font-size: 13px; }
