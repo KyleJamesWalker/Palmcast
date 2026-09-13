@@ -47,7 +47,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(saved) if saved.is_empty() => {}
             Ok(saved) => {
                 let restored = registry.import(saved);
-                tracing::info!(restored, "restored rooms from {}", path.display());
+                // Whatever ran out while the process was down goes now, rather
+                // than occupying the instance until the first sweep is due.
+                let expired = registry.sweep();
+                tracing::info!(
+                    restored,
+                    expired,
+                    live = registry.len(),
+                    "restored rooms from {}",
+                    path.display()
+                );
             }
             // A bad state file must not stop the server: an empty instance
             // still works, a dead one does not.
@@ -87,9 +96,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         registry: registry.clone(),
         public_url: args.public_url.clone(),
     };
-    axum::serve(listener, routes::router_with(app))
+    // The result is held rather than propagated, because a server that fell over
+    // still has rooms worth keeping and `?` here would skip the save entirely.
+    let outcome = axum::serve(listener, routes::router_with(app))
         .with_graceful_shutdown(shutdown())
-        .await?;
+        .await;
 
     if let Some(path) = &args.state_file {
         let saved = registry.export();
@@ -98,6 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(error) => tracing::error!(%error, "could not save {}", path.display()),
         }
     }
+    outcome?;
     Ok(())
 }
 
