@@ -1,4 +1,4 @@
-import { clamp, connect, sessionId, tokenFor } from '/shared.js';
+import { clamp, connect, navIntent, sessionId, tokenFor } from '/shared.js';
 import { renderOptions } from '/quiz.js';
 import { burst } from '/reactions.js';
 import { renderQuestions } from '/questions.js';
@@ -173,18 +173,13 @@ els.prev.addEventListener('click', () => go(current - 1));
 els.nextBtn.addEventListener('click', () => go(current + 1));
 
 document.addEventListener('keydown', (event) => {
-  if (event.target.matches('input, textarea')) return;
-  if (['ArrowRight', 'PageDown', ' '].includes(event.key)) {
-    event.preventDefault();
-    go(current + 1);
-  } else if (['ArrowLeft', 'PageUp'].includes(event.key)) {
-    event.preventDefault();
-    go(current - 1);
-  } else if (event.key === 'Home') {
-    go(0);
-  } else if (event.key === 'End') {
-    go(slides.length - 1);
-  }
+  const intent = navIntent(event.key, event.target);
+  if (!intent) return;
+  event.preventDefault();
+  if (intent === 'next') go(current + 1);
+  else if (intent === 'prev') go(current - 1);
+  else if (intent === 'first') go(0);
+  else go(slides.length - 1);
 });
 
 els.shareToggle.addEventListener('click', () => {

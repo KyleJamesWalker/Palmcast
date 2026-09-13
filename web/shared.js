@@ -153,3 +153,30 @@ export function slideCount(text) {
     return fence && standalone ? n + 1 : n;
   }, 1);
 }
+
+/// Elements that already answer to a key press themselves. Space on a focused
+/// button activates it, so treating space as "next slide" would reveal an
+/// answer and jump off the question in the same keystroke.
+const SELF_HANDLING = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A', 'OPTION']);
+
+/// What a key press should do to the deck, or null to leave it alone.
+export function navIntent(key, target) {
+  if (target && SELF_HANDLING.has(target.tagName)) return null;
+  if (target && target.isContentEditable) return null;
+
+  switch (key) {
+    case 'ArrowRight':
+    case 'PageDown':
+    case ' ':
+      return 'next';
+    case 'ArrowLeft':
+    case 'PageUp':
+      return 'prev';
+    case 'Home':
+      return 'first';
+    case 'End':
+      return 'last';
+    default:
+      return null;
+  }
+}
