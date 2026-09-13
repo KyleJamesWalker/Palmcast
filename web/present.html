@@ -13,7 +13,7 @@
 
 <main class="console">
   <div class="topline">
-    <span id="position" class="position">—</span>
+    <button id="position" class="position" aria-label="Jump to a slide">—</button>
     <span id="viewers" class="dim viewers">0 watching</span>
     <button id="edit-toggle" class="ghost">Edit</button>
     <button id="share-toggle" class="ghost">Share</button>
@@ -28,6 +28,8 @@
       <p id="share-url" class="dim url"></p>
     </div>
   </section>
+
+  <nav id="jump" class="jump" hidden aria-label="Slides"></nav>
 
   <section id="editor" class="editor" hidden>
     <label class="label" for="deck-text">Deck</label>

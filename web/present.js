@@ -35,6 +35,7 @@ const els = {
   reveal: document.getElementById('reveal'),
   questions: document.getElementById('questions'),
   scores: document.getElementById('scores'),
+  jump: document.getElementById('jump'),
 };
 
 const audienceUrl = `${location.origin}/s/${id}`;
@@ -77,6 +78,7 @@ function paint() {
     total,
   });
 
+  paintJump();
   els.reveal.hidden = !question;
   els.reveal.disabled = Boolean(answer);
   els.reveal.textContent = answer
@@ -136,6 +138,26 @@ const socket = connect(id, token, {
     els.status.textContent = state;
   },
 });
+
+/// A grid of slide numbers, marking which ones are questions so an MC can find
+/// the round they want without stepping through the talk.
+function paintJump() {
+  if (els.jump.hidden) return;
+  els.jump.innerHTML = '';
+  slides.forEach((slide, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = String(index + 1);
+    if (index === current) button.classList.add('current');
+    if (slide.question) button.classList.add('quiz');
+    button.setAttribute('aria-label', `Slide ${index + 1}${slide.question ? ', a question' : ''}`);
+    button.addEventListener('click', () => {
+      go(index);
+      els.jump.hidden = true;
+    });
+    els.jump.append(button);
+  });
+}
 
 function go(index) {
   const target = clamp(index, 0, Math.max(0, slides.length - 1));
@@ -244,4 +266,9 @@ els.deckSave.addEventListener('click', async () => {
   } finally {
     els.deckSave.disabled = false;
   }
+});
+
+els.position.addEventListener('click', () => {
+  els.jump.hidden = !els.jump.hidden;
+  paintJump();
 });

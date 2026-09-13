@@ -70,6 +70,9 @@ Keep it to three minutes. They have drinks.
 Notes reach the presenter socket only. The server strips them from every message
 bound for an audience or stage view.
 
+Tapping the slide counter opens a grid of every slide, marking the questions, so
+an MC can reach round four without stepping through the talk.
+
 **Edit** in the presenter console opens the deck mid-talk. Save it and the new
 deck reaches every phone at once, so a typo spotted from the floor does not need
 a new session.

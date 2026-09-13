@@ -23,7 +23,13 @@ body {
   font-weight: 650;
   font-variant-numeric: tabular-nums;
   color: var(--accent);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  min-height: 40px;
+  padding: 0 8px;
 }
+.position:active { border-color: var(--edge); }
 .viewers { flex: 1; font-size: 14px; }
 
 button.ghost {
@@ -142,3 +148,30 @@ button.ghost {
 .editor-actions { display: flex; align-items: center; gap: 10px; }
 .editor-actions button { min-height: 46px; }
 .editor-actions .dim { font-size: 13px; }
+
+/* Stepping one slide at a time is fine going forward and miserable going back,
+   so the position doubles as a jump target. */
+.jump {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  gap: 8px;
+}
+.jump button {
+  min-height: 52px;
+  padding: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+}
+.jump button.current {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: 650;
+}
+.jump button.quiz::after {
+  content: "?";
+  margin-left: 3px;
+  color: var(--ink-dim);
+  font-size: .8em;
+}
+.jump button.current.quiz::after { color: var(--accent-ink); }
