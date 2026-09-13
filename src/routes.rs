@@ -84,6 +84,7 @@ pub fn router_with(app: App) -> Router {
         .route("/api/sessions/{id}/markdown", get(get_markdown))
         .route("/api/sessions/{id}/talks", post(submit_talk))
         .route("/api/sessions/{id}/talks/{talk}", get(read_talk))
+        .route("/api/sessions/{id}/export", get(export_evening))
         .route("/api/sessions/{id}/cohost", get(cohost_link))
         .route("/api/sessions/{id}/role", get(whoami))
         .route("/s/{id}", get(|| async { page("watch.html") }))
@@ -140,6 +141,35 @@ async fn create_session(
             .into_response();
     };
     (StatusCode::CREATED, axum::Json(Created { id, token })).into_response()
+}
+
+/// The whole evening as a zip: every deck, what the room asked, and a cue file
+/// timed against a recording. Host only, because it carries every talk.
+async fn export_evening(
+    State(registry): State<Registry>,
+    Path(id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    let built = registry.with(&id, |s| {
+        s.role_of(token).hosts().then(|| crate::export::bundle(s))
+    });
+    match built {
+        Some(Some(Ok(bytes))) => (
+            [
+                (header::CONTENT_TYPE, "application/zip".to_string()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"palmcast-{id}.zip\""),
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Some(Some(Err(_))) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Some(None) => StatusCode::FORBIDDEN.into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 #[derive(Deserialize)]

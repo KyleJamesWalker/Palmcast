@@ -50,6 +50,7 @@ const els = {
   lineupPanel: document.getElementById('lineup-panel'),
   lineup: document.getElementById('lineup'),
   submissions: document.getElementById('submissions'),
+  export: document.getElementById('export'),
   talkRead: document.getElementById('talk-read'),
   talkReadTitle: document.getElementById('talk-read-title'),
   talkReadClose: document.getElementById('talk-read-close'),
@@ -211,6 +212,9 @@ const socket = connect(id, token, {
 function paintLineup() {
   els.submissions.textContent = lineup.open ? 'Close submissions' : 'Open submissions';
   els.submissions.hidden = myRole !== 'mc';
+  // Every deck in the room, so it is the host's to take and nobody else's.
+  els.export.hidden = myRole !== 'mc';
+  els.export.href = `/api/sessions/${id}/export?token=${encodeURIComponent(token ?? '')}`;
   renderLineup(els.lineup, lineup, {
     role: myRole,
     baton,

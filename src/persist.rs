@@ -58,6 +58,23 @@ pub struct PersistedSession {
     /// survive the deck they were derived from, so they are banked.
     #[serde(default)]
     pub banked: HashMap<String, usize>,
+    /// What the room saw and when. A recording runs across a restart, so the
+    /// cues that line up against it have to as well. Unix milliseconds, which
+    /// survive a clock the process does not.
+    #[serde(default)]
+    pub opened_ms: u64,
+    #[serde(default)]
+    pub timeline: Vec<PersistedCue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedCue {
+    pub at_ms: u64,
+    #[serde(default)]
+    pub talk: Option<u64>,
+    pub slide: usize,
+    #[serde(default)]
+    pub title: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

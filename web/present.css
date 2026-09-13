@@ -232,3 +232,16 @@ body[data-role="cohost"] .reveal { display: none; }
 .lineup-button { min-height: 38px; padding: 0 12px; font-size: 13px; }
 .talk-read { margin-top: 16px; }
 .talk-read .preview { max-height: 50vh; overflow-y: auto; }
+.lineup-head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ghost-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 14px;
+  font-size: 13px;
+  color: var(--ink);
+  text-decoration: none;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+}

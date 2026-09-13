@@ -7,7 +7,7 @@ use subtle::ConstantTimeEq;
 use tokio::sync::broadcast;
 
 use crate::deck::{self, Slide};
-use crate::persist::{Choice, PersistedQuestion, PersistedSession, PersistedTalk};
+use crate::persist::{Choice, PersistedCue, PersistedQuestion, PersistedSession, PersistedTalk};
 use crate::wire::{AudienceQuestion, Frame, LineupEntry, Reaction, ScoreRow, ServerMsg};
 
 /// No vowels, so an id cannot spell a word, and no glyphs that look alike when
@@ -593,6 +593,14 @@ impl Session {
         self.emit(&self.score_table());
         Some(msg)
     }
+    /// The leaderboard as rows, for anything that is not a wire message.
+    pub fn board(&self) -> Vec<ScoreRow> {
+        match self.score_table() {
+            ServerMsg::Scores { items } => items,
+            _ => Vec::new(),
+        }
+    }
+
     fn lineup_msg(&self) -> ServerMsg {
         ServerMsg::Lineup {
             items: self
@@ -1029,6 +1037,17 @@ impl Registry {
                 parked: s.parked.as_ref().map(|p| p.markdown.clone()),
                 parked_current: s.parked.as_ref().map(|p| p.current).unwrap_or(0),
                 banked: s.banked.clone(),
+                opened_ms: millis(s.opened),
+                timeline: s
+                    .timeline
+                    .iter()
+                    .map(|cue| PersistedCue {
+                        at_ms: millis(cue.at),
+                        talk: cue.talk,
+                        slide: cue.slide,
+                        title: cue.title.clone(),
+                    })
+                    .collect(),
             })
             .collect()
     }
@@ -1143,9 +1162,22 @@ impl Registry {
                     baton: item.baton,
                     submissions_open: item.submissions_open,
                     banked: item.banked,
-                    // What the room saw belongs to the run that saw it.
-                    timeline: Vec::new(),
-                    opened: SystemTime::now(),
+                    timeline: item
+                        .timeline
+                        .into_iter()
+                        .map(|cue| Cue {
+                            at: from_millis(cue.at_ms),
+                            talk: cue.talk,
+                            slide: cue.slide,
+                            title: cue.title,
+                        })
+                        .collect(),
+                    // A file written before the timeline existed has no start,
+                    // and now is the only honest answer for one.
+                    opened: match item.opened_ms {
+                        0 => SystemTime::now(),
+                        ms => from_millis(ms),
+                    },
                 },
             );
             restored += 1;
@@ -1156,6 +1188,16 @@ impl Registry {
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Session>> {
         self.inner.lock().expect("session registry lock")
     }
+}
+
+fn millis(at: SystemTime) -> u64 {
+    at.duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn from_millis(ms: u64) -> SystemTime {
+    std::time::UNIX_EPOCH + Duration::from_millis(ms)
 }
 
 fn random_string(len: usize) -> String {
