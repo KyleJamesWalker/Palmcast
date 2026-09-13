@@ -271,11 +271,26 @@ impl Registry {
             return None;
         }
         session.markdown = markdown.to_string();
-        session.slides = deck::parse(markdown);
-        // The options may have changed under them, so old votes no longer mean
-        // anything.
-        session.votes.clear();
-        session.revealed.clear();
+        let rebuilt = deck::parse(markdown);
+        // A typo fixed on slide one must not throw away a quiz in progress, so
+        // only the questions whose options actually changed lose their votes.
+        let intact: HashSet<usize> = rebuilt
+            .iter()
+            .enumerate()
+            .filter(|(index, slide)| {
+                match (
+                    session.slides.get(*index).and_then(|s| s.question.as_ref()),
+                    slide.question.as_ref(),
+                ) {
+                    (Some(before), Some(after)) => before.options == after.options,
+                    _ => false,
+                }
+            })
+            .map(|(index, _)| index)
+            .collect();
+        session.votes.retain(|slide, _| intact.contains(slide));
+        session.revealed.retain(|slide| intact.contains(slide));
+        session.slides = rebuilt;
         session.rev += 1;
         session.current = session.current.min(session.slides.len() - 1);
         session.touched = Instant::now();

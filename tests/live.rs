@@ -924,3 +924,125 @@ async fn an_over_long_name_is_refused() {
         assert_ne!(msg["type"], "scores", "an over long name landed");
     }
 }
+
+async fn put_deck(host: &str, id: &str, token: &str, markdown: &str) -> reqwest::StatusCode {
+    reqwest::Client::new()
+        .put(format!("http://{host}/api/sessions/{id}?token={token}"))
+        .json(&serde_json::json!({ "markdown": markdown }))
+        .send()
+        .await
+        .unwrap()
+        .status()
+}
+
+const EDIT_DECK: &str = "# Intro\n\n---\n\n# Q one\n\n- [ ] a\n- [x] b";
+
+#[tokio::test]
+async fn editing_a_typo_keeps_the_votes_on_an_untouched_question() {
+    let host = spawn().await;
+    let (id, token) = create(&host, EDIT_DECK).await;
+
+    let mut voter = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut voter).await;
+    voter
+        .send(Message::Text(
+            r#"{"type":"answer","slide":1,"option":1}"#.into(),
+        ))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Fix the first slide only.
+    let status = put_deck(
+        &host,
+        &id,
+        &token,
+        "# Introduction\n\n---\n\n# Q one\n\n- [ ] a\n- [x] b",
+    )
+    .await;
+    assert_eq!(status, 204);
+
+    let mut mc = open_as(&host, &id, Some(&token), "mc").await;
+    let _ = next_json(&mut mc).await;
+    mc.send(Message::Text(r#"{"type":"reveal","slide":1}"#.into()))
+        .await
+        .unwrap();
+
+    loop {
+        let msg = next_json(&mut mc).await;
+        if msg["type"] == "reveal" {
+            assert_eq!(msg["total"], 1, "an unrelated edit dropped the vote");
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn changing_the_options_drops_that_question_s_votes() {
+    let host = spawn().await;
+    let (id, token) = create(&host, EDIT_DECK).await;
+
+    let mut voter = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut voter).await;
+    voter
+        .send(Message::Text(
+            r#"{"type":"answer","slide":1,"option":1}"#.into(),
+        ))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Same slide, different options.
+    let status = put_deck(
+        &host,
+        &id,
+        &token,
+        "# Intro\n\n---\n\n# Q one\n\n- [ ] x\n- [x] y\n- [ ] z",
+    )
+    .await;
+    assert_eq!(status, 204);
+
+    let mut mc = open_as(&host, &id, Some(&token), "mc").await;
+    let _ = next_json(&mut mc).await;
+    mc.send(Message::Text(r#"{"type":"reveal","slide":1}"#.into()))
+        .await
+        .unwrap();
+
+    loop {
+        let msg = next_json(&mut mc).await;
+        if msg["type"] == "reveal" {
+            assert_eq!(msg["total"], 0, "a vote survived an options change");
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_viewer_cannot_edit_the_deck() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, EDIT_DECK).await;
+    let status = put_deck(&host, &id, "not-the-token", "# Hijacked").await;
+    assert_eq!(status, 403);
+}
+
+#[tokio::test]
+async fn an_edit_reaches_every_viewer() {
+    let host = spawn().await;
+    let (id, token) = create(&host, EDIT_DECK).await;
+
+    let mut audience = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut audience).await;
+
+    put_deck(&host, &id, &token, "# Rewritten\n\n---\n\n# Also new").await;
+
+    loop {
+        let msg = next_json(&mut audience).await;
+        if msg["type"] == "deck" {
+            let raw = msg.to_string();
+            if raw.contains("Rewritten") {
+                assert!(msg["rev"].as_u64().unwrap() > 1, "rev did not advance");
+                break;
+            }
+        }
+    }
+}
