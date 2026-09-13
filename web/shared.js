@@ -73,11 +73,34 @@ export function connect(id, token, handlers) {
     socket.onclose = () => {
       if (stopped) return;
       handlers.status?.('offline');
-      setTimeout(open, backoff);
+      // A closed socket means the network went, or the room did. Those look
+      // identical on screen, so ask before reconnecting forever. The check runs
+      // alongside the retry rather than in front of it, so a slow answer never
+      // delays reconnecting.
+      gone(id).then((missing) => {
+        if (missing && !stopped) {
+          stopped = true;
+          socket?.close();
+          handlers.ended?.();
+        }
+      });
+      setTimeout(() => {
+        if (!stopped) open();
+      }, backoff);
       backoff = Math.min(backoff * 2, 10000);
     };
     socket.onerror = () => socket.close();
   };
+
+  // A link outliving its room is the common case, so check once on load rather
+  // than only after a socket gives up.
+  gone(id).then((missing) => {
+    if (missing && !stopped) {
+      stopped = true;
+      socket?.close();
+      handlers.ended?.();
+    }
+  });
 
   open();
 
@@ -92,6 +115,17 @@ export function connect(id, token, handlers) {
       socket?.close();
     },
   };
+}
+
+/// True only on a definite answer that the room is not there. An unreachable
+/// server is not a missing room, so it keeps reconnecting.
+async function gone(id) {
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`, { cache: 'no-store' });
+    return res.status === 404;
+  } catch {
+    return false;
+  }
 }
 
 export function clamp(n, lo, hi) {

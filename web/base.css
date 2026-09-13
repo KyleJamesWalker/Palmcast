@@ -315,3 +315,21 @@ a { color: var(--accent); }
   border-radius: 12px;
 }
 .name-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+
+/* A room that has ended. Better than a blank slide that never fills. */
+.ended {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: var(--pad);
+  text-align: center;
+  background: var(--ground);
+  z-index: 30;
+}
+.ended h2 { margin: 0; font-size: clamp(20px, 5vw, 30px); }
+.ended p { margin: 0; color: var(--ink-dim); }

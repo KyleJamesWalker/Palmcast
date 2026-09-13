@@ -5,7 +5,7 @@ use axum::extract::{DefaultBodyLimit, Path, Query, Request, State, WebSocketUpgr
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{get, post};
 use qrcode::QrCode;
 use qrcode::render::svg;
 use serde::{Deserialize, Serialize};
@@ -50,7 +50,10 @@ pub fn router(registry: Registry) -> Router {
         .route("/", get(|| async { page("new.html") }))
         .route("/healthz", get(health))
         .route("/api/sessions", post(create_session))
-        .route("/api/sessions/{id}", put(update_session))
+        .route(
+            "/api/sessions/{id}",
+            get(session_exists).put(update_session),
+        )
         .route("/api/sessions/{id}/markdown", get(get_markdown))
         .route("/s/{id}", get(|| async { page("watch.html") }))
         .route("/s/{id}/stage", get(|| async { page("stage.html") }))
@@ -124,6 +127,16 @@ async fn update_session(
             StatusCode::NO_CONTENT.into_response()
         }
         None => StatusCode::FORBIDDEN.into_response(),
+    }
+}
+
+/// Lets a view tell "the server is unreachable" from "this room is gone", which
+/// are the same blank screen otherwise.
+async fn session_exists(State(registry): State<Registry>, Path(id): Path<String>) -> Response {
+    if registry.exists(&id) {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        StatusCode::NOT_FOUND.into_response()
     }
 }
 

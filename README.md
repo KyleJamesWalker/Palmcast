@@ -70,6 +70,15 @@ Keep it to three minutes. They have drinks.
 Notes reach the presenter socket only. The server strips them from every message
 bound for an audience or stage view.
 
+**Edit** in the presenter console opens the deck mid-talk. Save it and the new
+deck reaches every phone at once, so a typo spotted from the floor does not need
+a new session.
+
+An edit keeps the votes on any question whose options come through unchanged. It
+drops them only where the options themselves changed, because a vote for an
+option that no longer exists means nothing. Changing which option is right keeps
+the votes and rescores the room.
+
 ## Run a quiz
 
 A slide holding two or more task list items becomes a question. `- [x]` marks a
@@ -114,6 +123,12 @@ asked and the board as it stands.
 | `--bind` | `PALMCAST_BIND` | `0.0.0.0` | Address to bind. |
 | `--ttl-hours` | `PALMCAST_TTL_HOURS` | `6` | Hours a session survives with no viewers. |
 | `--state-file` | `PALMCAST_STATE_FILE` | none | Carry live rooms across a restart. |
+
+A link that outlives its room says so. Every view asks the server whether the
+session is still there, once on load and again whenever the socket drops. A view
+that learns the room is gone says "This session has ended" instead of
+reconnecting at a blank screen forever. An unreachable server is not a missing room, so a failed check keeps
+retrying.
 
 The server drops a session with no viewers after the TTL, and keeps any session
 with viewers. This stops a public instance from collecting dead rooms.

@@ -1112,3 +1112,32 @@ async fn different_assets_carry_different_tags() {
     tags.dedup();
     assert_eq!(tags.len(), 3, "two assets shared an etag");
 }
+
+#[tokio::test]
+async fn a_client_can_tell_a_missing_room_from_a_missing_server() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, DECK).await;
+
+    let alive = reqwest::get(format!("http://{host}/api/sessions/{id}"))
+        .await
+        .unwrap();
+    assert_eq!(alive.status(), 204);
+
+    let gone = reqwest::get(format!("http://{host}/api/sessions/nosuchroom"))
+        .await
+        .unwrap();
+    assert_eq!(gone.status(), 404);
+}
+
+#[tokio::test]
+async fn the_existence_probe_leaks_nothing_about_the_room() {
+    let host = spawn().await;
+    let (id, token) = create(&host, "# Secret deck\n\n???\nprivate note").await;
+
+    let res = reqwest::get(format!("http://{host}/api/sessions/{id}"))
+        .await
+        .unwrap();
+    let body = res.text().await.unwrap();
+    assert!(body.is_empty(), "the probe returned a body: {body}");
+    assert!(!body.contains(&token));
+}

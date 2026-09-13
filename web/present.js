@@ -85,6 +85,9 @@ function paint() {
 }
 
 const socket = connect(id, token, {
+  ended() {
+    document.getElementById('ended').hidden = false;
+  },
   deck(msg) {
     slides = msg.slides;
     current = msg.current;
