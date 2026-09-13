@@ -1,5 +1,6 @@
 import { connect, sessionId } from '/shared.js';
 import { renderOptions } from '/quiz.js';
+import { burst } from '/reactions.js';
 
 const id = sessionId();
 const slide = document.getElementById('slide');
@@ -37,5 +38,8 @@ connect(id, null, {
   reveal(msg) {
     revealed.set(msg.slide, msg);
     paint();
+  },
+  react(msg) {
+    burst(msg.kind);
   },
 });

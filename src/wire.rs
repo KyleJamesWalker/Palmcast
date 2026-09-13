@@ -2,6 +2,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::deck::{Question, Slide};
 
+/// A closed set, so nothing a viewer types ever reaches another viewer's
+/// markup. The view picks the glyph from the variant.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reaction {
+    Clap,
+    Laugh,
+    Think,
+    Love,
+    Wow,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg {
@@ -22,6 +34,11 @@ pub enum ServerMsg {
         slide: usize,
         counts: Vec<usize>,
         total: usize,
+    },
+    /// Someone in the room reacting. Everyone sees it, because a room that can
+    /// see itself react is the point.
+    React {
+        kind: Reaction,
     },
     /// The presenter opening the answer to everyone.
     Reveal {
@@ -68,4 +85,5 @@ pub enum ClientMsg {
     Goto { index: usize },
     Answer { slide: usize, option: usize },
     Reveal { slide: usize },
+    React { kind: Reaction },
 }

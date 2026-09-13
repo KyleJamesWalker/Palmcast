@@ -72,6 +72,11 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
                 registry.broadcast(id, revealed);
             }
         }
+        ClientMsg::React { kind } => {
+            if let Some(react) = registry.react(id, who, kind) {
+                registry.broadcast(id, react);
+            }
+        }
         // Anyone in the room may vote, the presenter included.
         ClientMsg::Answer { slide, option } => {
             if let Some(tally) = registry.answer(id, slide, who, option) {

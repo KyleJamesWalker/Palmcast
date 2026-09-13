@@ -382,3 +382,87 @@ async fn a_vote_after_the_reveal_is_refused() {
         assert_ne!(msg["type"], "tally", "a vote landed after the reveal");
     }
 }
+
+#[tokio::test]
+async fn a_reaction_reaches_the_whole_room() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, DECK).await;
+
+    let mut watcher = open_as(&host, &id, None, "watcher").await;
+    let _ = next_json(&mut watcher).await;
+
+    let mut reactor = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut reactor).await;
+    reactor
+        .send(Message::Text(r#"{"type":"react","kind":"clap"}"#.into()))
+        .await
+        .unwrap();
+
+    loop {
+        let msg = next_json(&mut watcher).await;
+        if msg["type"] == "react" {
+            assert_eq!(msg["kind"], "clap");
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_reaction_is_rate_limited_per_viewer() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, DECK).await;
+
+    let mut watcher = open_as(&host, &id, None, "watcher").await;
+    let _ = next_json(&mut watcher).await;
+
+    let mut spammer = open_as(&host, &id, None, "spam").await;
+    let _ = next_json(&mut spammer).await;
+    for _ in 0..10 {
+        spammer
+            .send(Message::Text(r#"{"type":"react","kind":"laugh"}"#.into()))
+            .await
+            .unwrap();
+    }
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let mut seen = 0;
+    while let Ok(Some(Ok(Message::Text(text)))) =
+        tokio::time::timeout(Duration::from_millis(250), watcher.next()).await
+    {
+        let msg: Value = serde_json::from_str(&text).unwrap();
+        if msg["type"] == "react" {
+            seen += 1;
+        }
+    }
+    assert_eq!(
+        seen, 1,
+        "ten taps inside the gap produced {seen} broadcasts"
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_reaction_is_dropped() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, DECK).await;
+
+    let mut watcher = open_as(&host, &id, None, "watcher").await;
+    let _ = next_json(&mut watcher).await;
+
+    let mut sneak = open_as(&host, &id, None, "sneak").await;
+    let _ = next_json(&mut sneak).await;
+    sneak
+        .send(Message::Text(
+            r#"{"type":"react","kind":"<img src=x onerror=alert(1)>"}"#.into(),
+        ))
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    let pending = tokio::time::timeout(Duration::from_millis(250), watcher.next()).await;
+    if let Ok(Some(Ok(Message::Text(text)))) = pending {
+        let msg: Value = serde_json::from_str(&text).unwrap();
+        assert_ne!(msg["type"], "react", "an unknown reaction was broadcast");
+    }
+}

@@ -1,5 +1,6 @@
 import { connect, sessionId } from '/shared.js';
 import { renderOptions } from '/quiz.js';
+import { burst, reactionBar } from '/reactions.js';
 
 const id = sessionId();
 const slide = document.getElementById('slide');
@@ -47,6 +48,9 @@ const socket = connect(id, null, {
     revealed.set(msg.slide, msg);
     paint();
   },
+  react(msg) {
+    burst(msg.kind);
+  },
   status(state) {
     status.dataset.state = state;
     status.textContent = state;
@@ -56,4 +60,8 @@ const socket = connect(id, null, {
 // A phone that sleeps mid-talk comes back on the right slide, not a blank one.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') status.textContent = 'syncing';
+});
+
+reactionBar(document.getElementById('reactions'), (kind) => {
+  socket.send({ type: 'react', kind });
 });

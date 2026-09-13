@@ -7,12 +7,13 @@ use subtle::ConstantTimeEq;
 use tokio::sync::broadcast;
 
 use crate::deck::{self, Slide};
-use crate::wire::ServerMsg;
+use crate::wire::{Reaction, ServerMsg};
 
 /// No vowels, so an id cannot spell a word, and no glyphs that look alike when
 /// read off a phone screen in a dark room.
 const ALPHABET: &[u8] = b"23456789bcdfghjkmnpqrstvwxz";
 const ID_LEN: usize = 6;
+const REACTION_GAP: Duration = Duration::from_millis(400);
 const TOKEN_LEN: usize = 32;
 
 pub struct Session {
@@ -27,6 +28,7 @@ pub struct Session {
     /// slide index -> voter id -> chosen option. One vote each, last one wins.
     pub votes: HashMap<usize, HashMap<String, usize>>,
     pub revealed: HashSet<usize>,
+    pub last_reaction: HashMap<String, Instant>,
 }
 
 impl Session {
@@ -96,6 +98,7 @@ impl Registry {
                 tx,
                 votes: HashMap::new(),
                 revealed: HashSet::new(),
+                last_reaction: HashMap::new(),
             },
         );
         (id, token)
@@ -217,6 +220,23 @@ impl Registry {
             counts,
             total,
         })
+    }
+
+    /// One reaction per viewer per REACTION_GAP. A thumb can move faster than
+    /// a room can read, and an unthrottled tap is a denial of service on the
+    /// broadcast channel.
+    pub fn react(&self, id: &str, who: &str, kind: Reaction) -> Option<ServerMsg> {
+        let mut map = self.lock();
+        let session = map.get_mut(id)?;
+        let now = Instant::now();
+        if let Some(last) = session.last_reaction.get(who)
+            && now.duration_since(*last) < REACTION_GAP
+        {
+            return None;
+        }
+        session.last_reaction.insert(who.to_string(), now);
+        session.touched = now;
+        Some(ServerMsg::React { kind })
     }
 
     pub fn reveal(&self, id: &str, token: &str, slide: usize) -> Option<ServerMsg> {

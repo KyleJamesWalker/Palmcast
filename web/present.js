@@ -1,5 +1,6 @@
 import { clamp, connect, sessionId, tokenFor } from '/shared.js';
 import { renderOptions } from '/quiz.js';
+import { burst } from '/reactions.js';
 
 const id = sessionId();
 const token = tokenFor(id);
@@ -89,6 +90,9 @@ const socket = connect(id, token, {
   reveal(msg) {
     revealed.set(msg.slide, msg);
     paint();
+  },
+  react(msg) {
+    burst(msg.kind);
   },
   viewers(msg) {
     const n = msg.count;
