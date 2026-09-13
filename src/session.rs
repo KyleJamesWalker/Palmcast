@@ -484,6 +484,38 @@ impl Registry {
             .collect()
     }
 
+    /// Every answer the presenter has already opened.
+    ///
+    /// A phone that drops and comes back, or somebody arriving late, would
+    /// otherwise sit on a question the rest of the room has already been shown
+    /// the answer to. Unlike a tally this is for everyone, because the point of
+    /// a reveal is that the answer is now public.
+    pub fn reveals(&self, id: &str) -> Vec<ServerMsg> {
+        let map = self.lock();
+        let Some(session) = map.get(id) else {
+            return Vec::new();
+        };
+        let mut slides: Vec<usize> = session.revealed.iter().copied().collect();
+        slides.sort_unstable();
+        slides
+            .into_iter()
+            .filter_map(|slide| {
+                let correct = session
+                    .slides
+                    .get(slide)
+                    .and_then(|s| s.question.as_ref())
+                    .map(|q| q.correct.clone())?;
+                let (counts, total) = session.counts(slide);
+                Some(ServerMsg::Reveal {
+                    slide,
+                    correct,
+                    counts,
+                    total,
+                })
+            })
+            .collect()
+    }
+
     pub fn scores(&self, id: &str) -> Option<ServerMsg> {
         self.lock().get(id).map(Session::score_table)
     }

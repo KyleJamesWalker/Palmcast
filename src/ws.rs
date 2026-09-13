@@ -39,6 +39,13 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
     {
         return;
     }
+    // An answer the presenter already opened is public, so it goes to whoever
+    // has just arrived as well.
+    for reveal in registry.reveals(&id) {
+        if send(&mut sink, &reveal, is_owner).await.is_err() {
+            return;
+        }
+    }
     // A round can already be under way. Only the presenter is told, because the
     // room seeing the split form is the thing the tally is withheld for.
     if is_owner {
@@ -162,6 +169,9 @@ where
     }
     if let Some(scores) = registry.scores(id) {
         send(sink, &scores, is_owner).await?;
+    }
+    for reveal in registry.reveals(id) {
+        send(sink, &reveal, is_owner).await?;
     }
     if is_owner {
         for tally in registry.tallies(id) {

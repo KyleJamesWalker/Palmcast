@@ -1247,3 +1247,71 @@ async fn a_viewer_joining_mid_round_is_not_told_the_tally() {
         }
     }
 }
+
+#[tokio::test]
+async fn a_viewer_arriving_after_a_reveal_is_shown_the_answer() {
+    let host = spawn().await;
+    let (id, token) = create(&host, TWO_QUIZ).await;
+
+    let mut early = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut early).await;
+    early
+        .send(Message::Text(
+            r#"{"type":"answer","slide":0,"option":1}"#.into(),
+        ))
+        .await
+        .unwrap();
+
+    let mut mc = open_as(&host, &id, Some(&token), "mc").await;
+    let _ = next_json(&mut mc).await;
+    mc.send(Message::Text(r#"{"type":"reveal","slide":0}"#.into()))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    // Somebody's phone dropped and came back, or they walked in late.
+    let mut latecomer = open_as(&host, &id, None, "late").await;
+    let mut seen = None;
+    for _ in 0..12 {
+        let msg = next_json(&mut latecomer).await;
+        if msg["type"] == "reveal" && msg["slide"] == 0 {
+            seen = Some(msg);
+            break;
+        }
+    }
+    let reveal = seen.expect("a viewer who arrived after the reveal never saw the answer");
+    assert_eq!(reveal["correct"][0], 1);
+    assert_eq!(reveal["total"], 1);
+}
+
+#[tokio::test]
+async fn an_unrevealed_question_is_still_withheld_from_an_arriving_viewer() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, TWO_QUIZ).await;
+
+    let mut voter = open_as(&host, &id, None, "sam").await;
+    let _ = next_json(&mut voter).await;
+    voter
+        .send(Message::Text(
+            r#"{"type":"answer","slide":0,"option":1}"#.into(),
+        ))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut latecomer = open_as(&host, &id, None, "late").await;
+    let opening = next_json(&mut latecomer).await;
+    assert_eq!(opening["type"], "deck");
+    for slide in opening["slides"].as_array().unwrap() {
+        assert_eq!(slide["question"]["correct"].as_array().unwrap().len(), 0);
+    }
+    for _ in 0..6 {
+        match tokio::time::timeout(Duration::from_millis(350), latecomer.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => {
+                let msg: Value = serde_json::from_str(&text).unwrap();
+                assert_ne!(msg["type"], "reveal", "an unrevealed answer was handed out");
+            }
+            _ => break,
+        }
+    }
+}
