@@ -1,6 +1,6 @@
 /// The variant names come from the server. The glyphs live here, so nothing a
 /// viewer sends is ever used as markup.
-export const KINDS = {
+const KINDS = {
   clap: '\u{1F44F}',
   laugh: '\u{1F602}',
   think: '\u{1F914}',

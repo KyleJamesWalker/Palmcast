@@ -29,7 +29,7 @@ export function rememberToken(id, token) {
 
 /// Anonymous and per browser. It keeps one person from filling the tally and is
 /// not an identity.
-export function viewerId() {
+function viewerId() {
   try {
     let id = localStorage.getItem('palmcast:who');
     if (!id) {
