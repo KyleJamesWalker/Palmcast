@@ -1001,4 +1001,80 @@ mod tests {
         assert!(session.votes.contains_key(&0));
         assert!(session.revealed.contains(&0));
     }
+
+    #[test]
+    fn the_edit_conflict_guard_still_holds_after_a_restart() {
+        let before = Registry::new(Duration::from_secs(3600));
+        let (id, mc) = before.create("# First").unwrap();
+        before
+            .replace_deck(&id, Role::Mc, Some(1), "# Second")
+            .expect("the first edit should land");
+
+        let after = Registry::new(Duration::from_secs(3600));
+        after.import(before.export());
+
+        // Somebody who opened the deck before that edit still has revision 1.
+        assert!(
+            matches!(
+                after.replace_deck(&id, Role::Mc, Some(1), "# Stale"),
+                Err(EditError::Stale { current: 2 })
+            ),
+            "a stale save was accepted after a restart"
+        );
+        // And somebody current still saves.
+        assert!(
+            after
+                .replace_deck(&id, Role::Mc, Some(2), "# Current")
+                .is_ok()
+        );
+        let _ = mc;
+    }
+
+    #[test]
+    fn replacing_the_deck_leaves_the_questions_alone() {
+        // Question ids are their own sequence, unrelated to slide positions, so
+        // an edit has no business touching them.
+        let reg = Registry::new(Duration::from_secs(3600));
+        let (id, _mc) = reg.create("# One\n\n---\n\n# Two").unwrap();
+        reg.ask(&id, "sam", "Why not Go?").unwrap();
+        reg.ask(&id, "alex", "How fast is it?").unwrap();
+
+        let ServerMsg::Questions { items } = reg.questions(&id).unwrap() else {
+            panic!("no questions");
+        };
+        let ids: Vec<u64> = items.iter().map(|q| q.id).collect();
+
+        reg.replace_deck(&id, Role::Mc, None, "# Rewritten entirely")
+            .unwrap();
+
+        let ServerMsg::Questions { items } = reg.questions(&id).unwrap() else {
+            panic!("no questions after the edit");
+        };
+        assert_eq!(items.len(), 2, "an edit removed questions from the floor");
+        assert_eq!(
+            items.iter().map(|q| q.id).collect::<Vec<_>>(),
+            ids,
+            "an edit renumbered the questions"
+        );
+        assert!(items.iter().any(|q| q.text == "Why not Go?"));
+    }
+
+    #[test]
+    fn a_reaction_limit_is_per_person_and_not_carried_across_a_restart() {
+        let before = Registry::new(Duration::from_secs(3600));
+        let (id, _mc) = before.create("# Deck").unwrap();
+        assert!(before.react(&id, "sam", Reaction::Clap).is_some());
+        // Immediately again is too soon.
+        assert!(before.react(&id, "sam", Reaction::Clap).is_none());
+        // Somebody else is unaffected.
+        assert!(before.react(&id, "alex", Reaction::Clap).is_some());
+
+        let after = Registry::new(Duration::from_secs(3600));
+        after.import(before.export());
+        // A restart is not a punishment: the gap does not survive it.
+        assert!(
+            after.react(&id, "sam", Reaction::Clap).is_some(),
+            "a restart left somebody unable to react"
+        );
+    }
 }
