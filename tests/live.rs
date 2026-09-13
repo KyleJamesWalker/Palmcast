@@ -166,3 +166,33 @@ async fn an_out_of_range_index_is_refused() {
     let opening = next_json(&mut checker).await;
     assert_eq!(opening["current"], 0);
 }
+
+const QUIZ: &str = "# Year Rust 1.0 shipped?\n\n- [ ] 2012\n- [x] 2015\n- [ ] 2018";
+
+#[tokio::test]
+async fn the_audience_never_receives_the_right_answer() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, QUIZ).await;
+
+    let mut audience = open(&host, &id, None).await;
+    let opening = next_json(&mut audience).await;
+
+    let question = &opening["slides"][0]["question"];
+    assert_eq!(question["options"][1], "2015");
+    assert_eq!(
+        question["correct"].as_array().unwrap().len(),
+        0,
+        "the answer leaked to the audience: {question}"
+    );
+}
+
+#[tokio::test]
+async fn the_presenter_does_receive_the_right_answer() {
+    let host = spawn().await;
+    let (id, token) = create(&host, QUIZ).await;
+
+    let mut presenter = open(&host, &id, Some(&token)).await;
+    let opening = next_json(&mut presenter).await;
+
+    assert_eq!(opening["slides"][0]["question"]["correct"][0], 1);
+}

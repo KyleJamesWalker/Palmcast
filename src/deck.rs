@@ -5,6 +5,17 @@ use serde::Serialize;
 pub struct Slide {
     pub html: String,
     pub notes: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub question: Option<Question>,
+}
+
+/// A slide carrying a task list becomes a question. `- [x]` marks an answer.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Question {
+    pub options: Vec<String>,
+    /// Indices of the right answers. Redacted for everyone but the presenter
+    /// until the presenter reveals them.
+    pub correct: Vec<usize>,
 }
 
 /// Slides split on a `---` line, speaker notes split from the body by `???`.
@@ -13,18 +24,21 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
         .iter()
         .map(|raw| {
             let (body, notes) = split_notes(raw);
+            let (prompt, question) = split_question(body);
             Slide {
-                html: render(body),
+                html: render(&prompt),
                 notes: notes.trim().to_string(),
+                question,
             }
         })
-        .filter(|s| !(s.html.trim().is_empty() && s.notes.is_empty()))
+        .filter(|s| !(s.html.trim().is_empty() && s.notes.is_empty() && s.question.is_none()))
         .collect();
 
     if slides.is_empty() {
         return vec![Slide {
             html: String::new(),
             notes: String::new(),
+            question: None,
         }];
     }
     slides
@@ -49,6 +63,51 @@ fn split_slides(markdown: &str) -> Vec<String> {
     }
     out.push(current.join("\n"));
     out
+}
+
+/// Pulls `- [ ]` and `- [x]` lines out of the body so the view can draw them as
+/// buttons instead of a list, and so the answer can be held back.
+fn split_question(body: &str) -> (String, Option<Question>) {
+    let mut prompt = Vec::new();
+    let mut options = Vec::new();
+    let mut correct = Vec::new();
+
+    for line in body.lines() {
+        match task_item(line) {
+            Some((checked, text)) => {
+                if checked {
+                    correct.push(options.len());
+                }
+                options.push(text);
+            }
+            None => prompt.push(line),
+        }
+    }
+
+    if options.len() < 2 {
+        return (body.to_string(), None);
+    }
+    (prompt.join("\n"), Some(Question { options, correct }))
+}
+
+fn task_item(line: &str) -> Option<(bool, String)> {
+    let trimmed = line.trim_start();
+    let rest = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+        .or_else(|| trimmed.strip_prefix("+ "))?;
+    let rest = rest.trim_start();
+    let (marker, text) = if let Some(t) = rest.strip_prefix("[ ]") {
+        (false, t)
+    } else if let Some(t) = rest
+        .strip_prefix("[x]")
+        .or_else(|| rest.strip_prefix("[X]"))
+    {
+        (true, t)
+    } else {
+        return None;
+    };
+    Some((marker, text.trim().to_string()))
 }
 
 fn split_notes(raw: &str) -> (&str, &str) {
@@ -171,5 +230,40 @@ mod tests {
     fn ordinary_links_survive() {
         let slides = parse("[docs](https://example.com/x)");
         assert!(slides[0].html.contains("https://example.com/x"));
+    }
+
+    #[test]
+    fn a_task_list_becomes_a_question() {
+        let slides = parse("# Year Rust 1.0 shipped?\n\n- [ ] 2012\n- [x] 2015\n- [ ] 2018");
+        let question = slides[0].question.as_ref().expect("expected a question");
+        assert_eq!(question.options, vec!["2012", "2015", "2018"]);
+        assert_eq!(question.correct, vec![1]);
+    }
+
+    #[test]
+    fn the_options_leave_the_rendered_prompt() {
+        let slides = parse("# Pick one\n\n- [ ] a\n- [x] b");
+        assert!(slides[0].html.contains("Pick one"));
+        assert!(!slides[0].html.contains("[x]"));
+    }
+
+    #[test]
+    fn several_right_answers_are_allowed() {
+        let slides = parse("q\n\n- [x] a\n- [x] b\n- [ ] c");
+        let question = slides[0].question.as_ref().unwrap();
+        assert_eq!(question.correct, vec![0, 1]);
+    }
+
+    #[test]
+    fn an_ordinary_bullet_list_is_not_a_question() {
+        let slides = parse("# Points\n\n- one\n- two");
+        assert!(slides[0].question.is_none());
+        assert!(slides[0].html.contains("<ul>"));
+    }
+
+    #[test]
+    fn a_single_option_is_not_a_question() {
+        let slides = parse("# Nearly\n\n- [x] only one");
+        assert!(slides[0].question.is_none());
     }
 }

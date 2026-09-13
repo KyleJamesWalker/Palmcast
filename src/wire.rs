@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::deck::Slide;
+use crate::deck::{Question, Slide};
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -34,6 +34,12 @@ impl ServerMsg {
                     .map(|s| Slide {
                         html: s.html.clone(),
                         notes: String::new(),
+                        // The answer is the whole game, so it stays server side
+                        // until the presenter reveals it.
+                        question: s.question.as_ref().map(|q| Question {
+                            options: q.options.clone(),
+                            correct: Vec::new(),
+                        }),
                     })
                     .collect(),
             },
