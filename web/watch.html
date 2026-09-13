@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Palmcast</title>
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/watch.css">
+</head>
+<body>
+<span id="status" class="status" data-state="offline">connecting</span>
+<main id="stage" class="viewer">
+  <div id="slide" class="slide" aria-live="polite"></div>
+</main>
+<footer class="bar">
+  <span id="position" class="dim">—</span>
+  <span class="dim">Palmcast</span>
+</footer>
+<script type="module" src="/watch.js"></script>
+</body>
+</html>

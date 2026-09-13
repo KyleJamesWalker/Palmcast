@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Palmcast — presenting</title>
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/present.css">
+</head>
+<body>
+<span id="status" class="status" data-state="offline">connecting</span>
+
+<main class="console">
+  <div class="topline">
+    <span id="position" class="position">—</span>
+    <span id="viewers" class="dim viewers">0 watching</span>
+    <button id="share-toggle" class="ghost">Share</button>
+  </div>
+
+  <section id="share" class="share" hidden>
+    <img id="qr" alt="QR code linking to this session" width="180" height="180">
+    <div class="share-links">
+      <button id="copy" class="ghost">Copy audience link</button>
+      <a id="stage-link" href="#" target="_blank" rel="noopener">Open stage view</a>
+      <p id="share-url" class="dim url"></p>
+    </div>
+  </section>
+
+  <section class="now">
+    <h2 class="label">On screen</h2>
+    <div id="slide" class="slide"></div>
+  </section>
+
+  <section class="notes">
+    <h2 class="label">Notes</h2>
+    <div id="notes" class="notes-body dim"></div>
+  </section>
+
+  <section class="next">
+    <h2 class="label">Next</h2>
+    <div id="next" class="slide next-body dim"></div>
+  </section>
+</main>
+
+<nav class="controls">
+  <button id="prev" aria-label="Previous slide">←</button>
+  <button id="next-btn" class="primary" aria-label="Next slide">Next →</button>
+</nav>
+
+<div id="denied" class="denied" hidden>
+  <p>You are not the presenter for this session.</p>
+  <p class="dim">Open the audience view instead.</p>
+  <a id="watch-link" class="primary-link" href="#">Watch</a>
+</div>
+
+<script type="module" src="/present.js"></script>
+</body>
+</html>

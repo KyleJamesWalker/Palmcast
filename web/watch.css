@@ -1,0 +1,20 @@
+body { display: flex; flex-direction: column; min-height: 100dvh; }
+
+.viewer {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: max(32px, env(safe-area-inset-top)) var(--pad) 24px;
+}
+.viewer .slide { width: 100%; }
+
+.bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px var(--pad) max(10px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--edge);
+  font-size: 13px;
+}
+
+.waiting { color: var(--ink-dim); font-size: 18px; }

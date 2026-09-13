@@ -1,0 +1,69 @@
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: max(var(--pad), env(safe-area-inset-top)) var(--pad)
+           max(var(--pad), env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  gap: 14px;
+}
+
+header h1 {
+  margin: 0 0 4px;
+  font-size: 30px;
+  letter-spacing: -.02em;
+}
+header h1::after {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 4px;
+}
+header p { margin: 0; font-size: 15px; }
+
+.field { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.label {
+  font-size: 12px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin-bottom: 6px;
+}
+
+textarea {
+  flex: 1;
+  min-height: 44vh;
+  width: 100%;
+  resize: vertical;
+  background: var(--raised);
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: 14px;
+  font: 400 16px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.syntax { margin: 0; font-size: 13px; }
+.syntax code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  padding: .1em .3em;
+  color: var(--ink);
+}
+
+.actions { display: flex; align-items: center; gap: 14px; }
+.actions button { flex: 1; }
+
+.error {
+  margin: 0;
+  color: #e0564f;
+  font-size: 14px;
+}

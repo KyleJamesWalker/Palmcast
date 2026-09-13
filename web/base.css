@@ -1,0 +1,106 @@
+/* Dark ground, warm white text, one amber accent. Built to be read at
+   arm's length on a phone in a dim room without lighting up the table. */
+:root {
+  --ground: #0b0b0d;
+  --raised: #17171b;
+  --edge: #2a2a31;
+  --ink: #f4f1ea;
+  --ink-dim: #9a978f;
+  --accent: #f5a623;
+  --accent-ink: #1a1206;
+  --tap: 56px;
+  --pad: 20px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 17px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+
+button {
+  font: inherit;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  min-height: var(--tap);
+  padding: 0 20px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+button:active { background: var(--edge); }
+button.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: 650;
+}
+button[disabled] { opacity: .35; cursor: default; }
+
+a { color: var(--accent); }
+
+/* Rendered slide body. Sized so a phone at arm's length stays comfortable
+   and a TV across the room still works. */
+.slide {
+  font-size: clamp(20px, 5.2vw, 34px);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.slide :first-child { margin-top: 0; }
+.slide :last-child { margin-bottom: 0; }
+.slide h1 { font-size: 1.5em; line-height: 1.15; margin: 0 0 .5em; letter-spacing: -.02em; }
+.slide h2 { font-size: 1.25em; line-height: 1.2; margin: 0 0 .5em; }
+.slide h3 { font-size: 1.1em; margin: 0 0 .5em; }
+.slide p, .slide ul, .slide ol { margin: 0 0 .7em; }
+.slide li { margin-bottom: .35em; }
+.slide code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .85em;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  padding: .1em .35em;
+}
+.slide pre {
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 14px;
+  overflow-x: auto;
+  font-size: .62em;
+}
+.slide pre code { background: none; border: 0; padding: 0; font-size: 1em; }
+.slide blockquote {
+  margin: 0 0 .7em;
+  padding-left: .7em;
+  border-left: 3px solid var(--accent);
+  color: var(--ink-dim);
+}
+.slide img { max-width: 100%; height: auto; border-radius: 10px; }
+.slide table { border-collapse: collapse; width: 100%; font-size: .7em; }
+.slide th, .slide td { border: 1px solid var(--edge); padding: .4em .5em; text-align: left; }
+.slide hr { border: 0; border-top: 1px solid var(--edge); margin: 1em 0; }
+
+.dim { color: var(--ink-dim); }
+
+.status {
+  position: fixed;
+  top: 8px;
+  right: 10px;
+  font-size: 12px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.status[data-state="offline"] { color: #e0564f; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .slide { transition: opacity .12s ease; }
+}

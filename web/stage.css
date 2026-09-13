@@ -1,0 +1,28 @@
+/* The room's big screen. No chrome, no controls, nothing to tap. */
+body { cursor: none; }
+
+.stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: 6vmin 8vmin;
+}
+
+.stage .slide {
+  width: 100%;
+  max-width: 1600px;
+  font-size: clamp(28px, 4.4vw, 76px);
+}
+.stage .slide pre { font-size: .46em; }
+.stage .slide table { font-size: .55em; }
+
+.corner {
+  position: fixed;
+  right: 3vmin;
+  bottom: 3vmin;
+  font-size: clamp(14px, 1.6vw, 24px);
+  font-variant-numeric: tabular-nums;
+}
+
+.waiting { color: var(--ink-dim); }
