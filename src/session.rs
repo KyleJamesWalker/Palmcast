@@ -188,12 +188,330 @@ impl Session {
         (counts, total)
     }
 
-    fn snapshot(&self) -> ServerMsg {
+    /// What a token may do here.
+    ///
+    /// Constant time both ways, and both comparisons always run, so neither
+    /// which token matched nor whether any did can be read off the clock.
+    /// Every caller goes through this: a second hand-rolled comparison is a
+    /// second chance to get constant time wrong.
+    fn role_of(&self, token: &str) -> Role {
+        let mc: bool = self.owner_token.as_bytes().ct_eq(token.as_bytes()).into();
+        let cohost: bool = self.cohost_token.as_bytes().ct_eq(token.as_bytes()).into();
+        match (mc, cohost) {
+            (true, _) => Role::Mc,
+            (_, true) => Role::CoHost,
+            _ => Role::Viewer,
+        }
+    }
+
+    pub fn snapshot(&self) -> ServerMsg {
         ServerMsg::Deck {
             rev: self.rev,
             current: self.current,
             slides: self.slides.clone(),
         }
+    }
+    /// Serializes once and hands the same bytes to every socket in the room.
+    ///
+    /// Called with the registry lock held, so a change and the message that
+    /// announces it cannot be split by another writer.
+    fn emit(&self, msg: &ServerMsg) {
+        let _ = self.tx.send(Frame::new(msg));
+    }
+
+    /// Every slide that already holds votes, so a console opened part way
+    /// through a round knows where the room stands.
+    fn tallies(&self) -> Vec<ServerMsg> {
+        let mut slides: Vec<usize> = self.votes.keys().copied().collect();
+        slides.sort_unstable();
+        slides
+            .into_iter()
+            .filter_map(|slide| {
+                let (counts, total) = self.counts(slide);
+                (total > 0).then_some(ServerMsg::Tally {
+                    slide,
+                    counts,
+                    total,
+                })
+            })
+            .collect()
+    }
+
+    /// Every answer the presenter has already opened. Unlike a tally this is
+    /// for everyone, because the point of a reveal is that the answer is now
+    /// public.
+    fn reveals(&self) -> Vec<ServerMsg> {
+        let mut slides: Vec<usize> = self.revealed.iter().copied().collect();
+        slides.sort_unstable();
+        slides
+            .into_iter()
+            .filter_map(|slide| {
+                let correct = self
+                    .slides
+                    .get(slide)
+                    .and_then(|s| s.question.as_ref())
+                    .map(|q| q.correct.clone())?;
+                let (counts, total) = self.counts(slide);
+                Some(ServerMsg::Reveal {
+                    slide,
+                    correct,
+                    counts,
+                    total,
+                })
+            })
+            .collect()
+    }
+
+    /// Everything a socket needs to be correct: on arrival, and again after it
+    /// has fallen behind and missed messages.
+    ///
+    /// One list rather than one per caller, so the two paths cannot drift, and
+    /// one lock rather than five, so a socket cannot be hydrated from a mix of
+    /// states that never existed together. Tallies are staff only, because the
+    /// room seeing the split is the thing a tally is withheld for.
+    pub fn catch_up(&self, is_staff: bool) -> Vec<ServerMsg> {
+        let mut out = vec![self.snapshot(), self.question_list(), self.score_table()];
+        out.extend(self.reveals());
+        if is_staff {
+            out.extend(self.tallies());
+        }
+        out
+    }
+
+    /// `None` when the caller does not drive or the index is out of range.
+    pub fn goto(&mut self, token: &str, index: usize) -> Option<ServerMsg> {
+        if !self.role_of(token).drives() || index >= self.slides.len() {
+            return None;
+        }
+        self.current = index;
+        self.touched = Instant::now();
+        let msg = ServerMsg::Move { current: index };
+        self.emit(&msg);
+        Some(msg)
+    }
+
+    pub fn replace_deck(
+        &mut self,
+        role: Role,
+        base_rev: Option<u64>,
+        markdown: &str,
+    ) -> Result<ServerMsg, EditError> {
+        if !role.edits() {
+            return Err(EditError::Forbidden);
+        }
+        // Two people can be editing at once. Whoever saves second is told,
+        // rather than quietly writing over the first.
+        if let Some(base) = base_rev
+            && base != self.rev
+        {
+            return Err(EditError::Stale { current: self.rev });
+        }
+        self.markdown = markdown.to_string();
+        let rebuilt = deck::parse(markdown);
+        // A typo fixed on slide one must not throw away a quiz in progress, so
+        // only the questions whose options actually changed lose their votes.
+        let intact: HashSet<usize> = rebuilt
+            .iter()
+            .enumerate()
+            .filter(|(index, slide)| {
+                match (
+                    self.slides.get(*index).and_then(|s| s.question.as_ref()),
+                    slide.question.as_ref(),
+                ) {
+                    (Some(before), Some(after)) => before.options == after.options,
+                    _ => false,
+                }
+            })
+            .map(|(index, _)| index)
+            .collect();
+        self.votes.retain(|slide, _| intact.contains(slide));
+        self.revealed.retain(|slide| intact.contains(slide));
+        self.slides = rebuilt;
+        self.rev += 1;
+        self.current = self.current.min(self.slides.len() - 1);
+        self.touched = Instant::now();
+        let msg = self.snapshot();
+        self.emit(&msg);
+        Ok(msg)
+    }
+
+    /// `None` when the room is full, which the caller turns into a closed
+    /// socket rather than a silent viewer who sees nothing.
+    pub fn join(&mut self) -> Option<ServerMsg> {
+        if self.viewers >= MAX_VIEWERS {
+            return None;
+        }
+        self.viewers += 1;
+        self.touched = Instant::now();
+        let msg = ServerMsg::Viewers {
+            count: self.viewers,
+        };
+        self.emit(&msg);
+        Some(msg)
+    }
+
+    pub fn leave(&mut self) -> ServerMsg {
+        self.viewers = self.viewers.saturating_sub(1);
+        let msg = ServerMsg::Viewers {
+            count: self.viewers,
+        };
+        self.emit(&msg);
+        msg
+    }
+
+    /// Records one vote and returns the tally. A voter who answers twice
+    /// replaces their own vote rather than adding one.
+    pub fn answer(&mut self, slide: usize, who: &str, options: &[usize]) -> Option<ServerMsg> {
+        if self.revealed.contains(&slide) {
+            return None;
+        }
+        let question = self.slides.get(slide).and_then(|s| s.question.as_ref())?;
+        let width = question.options.len();
+        // A single answer question takes one pick however many arrive.
+        let limit = if question.multi { width } else { 1 };
+
+        let mut chosen: Vec<usize> = options.iter().copied().filter(|o| *o < width).collect();
+        chosen.sort_unstable();
+        chosen.dedup();
+        if chosen.is_empty() || chosen.len() > limit {
+            return None;
+        }
+        if !self.admit(who) {
+            return None;
+        }
+
+        self.votes
+            .entry(slide)
+            .or_default()
+            .insert(who.to_string(), chosen);
+        self.touched = Instant::now();
+        let (counts, total) = self.counts(slide);
+        let msg = ServerMsg::Tally {
+            slide,
+            counts,
+            total,
+        };
+        self.emit(&msg);
+        Some(msg)
+    }
+
+    pub fn react(&mut self, who: &str, kind: Reaction) -> Option<ServerMsg> {
+        let now = Instant::now();
+        if !self.admit(who) {
+            return None;
+        }
+        if let Some(last) = self.last_reaction.get(who)
+            && now.duration_since(*last) < REACTION_GAP
+        {
+            return None;
+        }
+        self.last_reaction.insert(who.to_string(), now);
+        self.touched = now;
+        let msg = ServerMsg::React { kind };
+        self.emit(&msg);
+        Some(msg)
+    }
+
+    pub fn ask(&mut self, who: &str, text: &str) -> Option<ServerMsg> {
+        let text = text.trim();
+        if text.is_empty() || text.chars().count() > MAX_QUESTION_CHARS {
+            return None;
+        }
+        if self.questions.len() >= MAX_QUESTIONS {
+            return None;
+        }
+        let now = Instant::now();
+        if !self.admit(who) {
+            return None;
+        }
+        if let Some(last) = self.last_ask.get(who)
+            && now.duration_since(*last) < ASK_GAP
+        {
+            return None;
+        }
+        self.last_ask.insert(who.to_string(), now);
+
+        let question_id = self.next_question_id;
+        self.next_question_id += 1;
+        // The asker's own vote, so a question starts at one rather than zero.
+        let voters = HashSet::from([who.to_string()]);
+        self.questions.push(StoredQuestion {
+            id: question_id,
+            text: text.to_string(),
+            answered: false,
+            voters,
+        });
+        self.touched = now;
+        let msg = self.question_list();
+        self.emit(&msg);
+        Some(msg)
+    }
+
+    pub fn upvote(&mut self, who: &str, question: u64) -> Option<ServerMsg> {
+        if !self.admit(who) {
+            return None;
+        }
+        let found = self.questions.iter_mut().find(|q| q.id == question)?;
+        // A set, so a second tap from the same browser is not a second vote.
+        if !found.voters.insert(who.to_string()) {
+            return None;
+        }
+        self.touched = Instant::now();
+        let msg = self.question_list();
+        self.emit(&msg);
+        Some(msg)
+    }
+
+    pub fn mark_answered(&mut self, role: Role, question: u64) -> Option<ServerMsg> {
+        if !role.edits() {
+            return None;
+        }
+        let found = self.questions.iter_mut().find(|q| q.id == question)?;
+        found.answered = true;
+        self.touched = Instant::now();
+        let msg = self.question_list();
+        self.emit(&msg);
+        Some(msg)
+    }
+
+    pub fn set_name(&mut self, who: &str, name: &str) -> Option<ServerMsg> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > MAX_NAME_CHARS {
+            return None;
+        }
+        if !self.admit(who) {
+            return None;
+        }
+        self.names.insert(who.to_string(), name.to_string());
+        self.touched = Instant::now();
+        let msg = self.score_table();
+        self.emit(&msg);
+        Some(msg)
+    }
+
+    pub fn reveal(&mut self, token: &str, slide: usize) -> Option<ServerMsg> {
+        if !self.role_of(token).drives() {
+            return None;
+        }
+        let correct = self
+            .slides
+            .get(slide)
+            .and_then(|s| s.question.as_ref())
+            .map(|q| q.correct.clone())?;
+        self.revealed.insert(slide);
+        self.touched = Instant::now();
+        let (counts, total) = self.counts(slide);
+        let msg = ServerMsg::Reveal {
+            slide,
+            correct,
+            counts,
+            total,
+        };
+        self.emit(&msg);
+        // The board only changes when an answer opens, so it rides along with
+        // the reveal rather than on a timer, and under the same lock.
+        self.emit(&self.score_table());
+        Some(msg)
     }
 }
 
@@ -219,6 +537,19 @@ impl Registry {
             inner: Arc::new(Mutex::new(HashMap::new())),
             ttl,
         }
+    }
+
+    /// Runs `act` against one room while the map is locked.
+    ///
+    /// The rules live on `Session`, so this is the only way in and the lock is
+    /// held for the whole of a change and the message announcing it. `None`
+    /// means no such room, which is a different answer from a rule refusing.
+    pub fn with<T>(&self, id: &str, act: impl FnOnce(&Session) -> T) -> Option<T> {
+        self.lock().get(id).map(act)
+    }
+
+    pub fn with_mut<T>(&self, id: &str, act: impl FnOnce(&mut Session) -> T) -> Option<T> {
+        self.lock().get_mut(id).map(act)
     }
 
     /// `None` when the instance is already holding MAX_SESSIONS.
@@ -270,378 +601,24 @@ impl Registry {
         self.lock().contains_key(id)
     }
 
-    pub fn snapshot(&self, id: &str) -> Option<ServerMsg> {
-        self.lock().get(id).map(Session::snapshot)
-    }
-
     pub fn markdown(&self, id: &str) -> Option<String> {
-        self.lock().get(id).map(|s| s.markdown.clone())
+        self.with(id, |s| s.markdown.clone())
     }
 
     pub fn subscribe(&self, id: &str) -> Option<broadcast::Receiver<Arc<Frame>>> {
-        self.lock().get(id).map(|s| s.tx.subscribe())
+        self.with(id, |s| s.tx.subscribe())
     }
 
-    /// Constant time both ways, so a wrong token cannot be narrowed by timing.
+    /// A room nobody has is a room nobody drives, so an unknown id is a viewer.
     pub fn role(&self, id: &str, token: &str) -> Role {
-        let map = self.lock();
-        let Some(session) = map.get(id) else {
-            return Role::Viewer;
-        };
-        let mc: bool = session
-            .owner_token
-            .as_bytes()
-            .ct_eq(token.as_bytes())
-            .into();
-        let cohost: bool = session
-            .cohost_token
-            .as_bytes()
-            .ct_eq(token.as_bytes())
-            .into();
-        match (mc, cohost) {
-            (true, _) => Role::Mc,
-            (_, true) => Role::CoHost,
-            _ => Role::Viewer,
-        }
+        self.with(id, |s| s.role_of(token)).unwrap_or(Role::Viewer)
     }
 
     pub fn cohost_token(&self, id: &str, token: &str) -> Option<String> {
-        let map = self.lock();
-        let session = map.get(id)?;
-        let mc: bool = session
-            .owner_token
-            .as_bytes()
-            .ct_eq(token.as_bytes())
-            .into();
-        mc.then(|| session.cohost_token.clone())
-    }
-
-    /// Returns the message to broadcast, or None when the caller is not the
-    /// owner or the index is out of range.
-    pub fn goto(&self, id: &str, token: &str, index: usize) -> Option<ServerMsg> {
-        let mut map = self.lock();
-        let session = map.get_mut(id)?;
-        let owns: bool = session
-            .owner_token
-            .as_bytes()
-            .ct_eq(token.as_bytes())
-            .into();
-        if !owns || index >= session.slides.len() {
-            return None;
-        }
-        session.current = index;
-        session.touched = Instant::now();
-        Some(ServerMsg::Move { current: index })
-    }
-
-    pub fn replace_deck(
-        &self,
-        id: &str,
-        role: Role,
-        base_rev: Option<u64>,
-        markdown: &str,
-    ) -> Result<ServerMsg, EditError> {
-        if !role.edits() {
-            return Err(EditError::Forbidden);
-        }
-        let mut map = self.lock();
-        let session = map.get_mut(id).ok_or(EditError::Gone)?;
-        // Two people can be editing at once. Whoever saves second is told,
-        // rather than quietly writing over the first.
-        if let Some(base) = base_rev
-            && base != session.rev
-        {
-            return Err(EditError::Stale {
-                current: session.rev,
-            });
-        }
-        session.markdown = markdown.to_string();
-        let rebuilt = deck::parse(markdown);
-        // A typo fixed on slide one must not throw away a quiz in progress, so
-        // only the questions whose options actually changed lose their votes.
-        let intact: HashSet<usize> = rebuilt
-            .iter()
-            .enumerate()
-            .filter(|(index, slide)| {
-                match (
-                    session.slides.get(*index).and_then(|s| s.question.as_ref()),
-                    slide.question.as_ref(),
-                ) {
-                    (Some(before), Some(after)) => before.options == after.options,
-                    _ => false,
-                }
-            })
-            .map(|(index, _)| index)
-            .collect();
-        session.votes.retain(|slide, _| intact.contains(slide));
-        session.revealed.retain(|slide| intact.contains(slide));
-        session.slides = rebuilt;
-        session.rev += 1;
-        session.current = session.current.min(session.slides.len() - 1);
-        session.touched = Instant::now();
-        Ok(session.snapshot())
-    }
-
-    /// `None` when the room is full, which the caller turns into a closed
-    /// socket rather than a silent viewer who sees nothing.
-    pub fn join(&self, id: &str) -> Option<ServerMsg> {
-        let mut map = self.lock();
-        let session = map.get_mut(id)?;
-        if session.viewers >= MAX_VIEWERS {
-            return None;
-        }
-        session.viewers += 1;
-        session.touched = Instant::now();
-        Some(ServerMsg::Viewers {
-            count: session.viewers,
+        self.with(id, |s| {
+            s.role_of(token).drives().then(|| s.cohost_token.clone())
         })
-    }
-
-    pub fn leave(&self, id: &str) -> Option<ServerMsg> {
-        let mut map = self.lock();
-        let session = map.get_mut(id)?;
-        session.viewers = session.viewers.saturating_sub(1);
-        Some(ServerMsg::Viewers {
-            count: session.viewers,
-        })
-    }
-
-    /// Serializes once for the whole room rather than once per socket.
-    pub fn broadcast(&self, id: &str, msg: ServerMsg) {
-        let frame = Frame::new(&msg);
-        if let Some(session) = self.lock().get(id) {
-            let _ = session.tx.send(frame);
-        }
-    }
-
-    /// Records one vote and returns the tally for the presenter. A voter who
-    /// answers twice replaces their own vote rather than adding one.
-    pub fn answer(
-        &self,
-        id: &str,
-        slide: usize,
-        who: &str,
-        options: &[usize],
-    ) -> Option<ServerMsg> {
-        let mut map = self.lock();
-        let session = map.get_mut(id)?;
-        if session.revealed.contains(&slide) {
-            return None;
-        }
-        let question = session
-            .slides
-            .get(slide)
-            .and_then(|s| s.question.as_ref())?;
-        let width = question.options.len();
-        // A single answer question takes one pick however many arrive.
-        let limit = if question.multi { width } else { 1 };
-
-        let mut chosen: Vec<usize> = options.iter().copied().filter(|o| *o < width).collect();
-        chosen.sort_unstable();
-        chosen.dedup();
-        if chosen.is_empty() || chosen.len() > limit {
-            return None;
-        }
-        if !session.admit(who) {
-            return None;
-        }
-
-        session
-            .votes
-            .entry(slide)
-            .or_default()
-            .insert(who.to_string(), chosen);
-        session.touched = Instant::now();
-        let (counts, total) = session.counts(slide);
-        Some(ServerMsg::Tally {
-            slide,
-            counts,
-            total,
-        })
-    }
-
-    pub fn react(&self, id: &str, who: &str, kind: Reaction) -> Option<ServerMsg> {
-        let mut map = self.lock();
-        let session = map.get_mut(id)?;
-        let now = Instant::now();
-        if !session.admit(who) {
-            return None;
-        }
-        if let Some(last) = session.last_reaction.get(who)
-            && now.duration_since(*last) < REACTION_GAP
-        {
-            return None;
-        }
-        session.last_reaction.insert(who.to_string(), now);
-        session.touched = now;
-        Some(ServerMsg::React { kind })
-    }
-
-    pub fn ask(&self, id: &str, who: &str, text: &str) -> Option<ServerMsg> {
-        let text = text.trim();
-        if text.is_empty() || text.chars().count() > MAX_QUESTION_CHARS {
-            return None;
-        }
-        let mut map = self.lock();
-        let session = map.get_mut(id)?;
-        if session.questions.len() >= MAX_QUESTIONS {
-            return None;
-        }
-        let now = Instant::now();
-        if !session.admit(who) {
-            return None;
-        }
-        if let Some(last) = session.last_ask.get(who)
-            && now.duration_since(*last) < ASK_GAP
-        {
-            return None;
-        }
-        session.last_ask.insert(who.to_string(), now);
-
-        let question_id = session.next_question_id;
-        session.next_question_id += 1;
-        // The asker's own vote, so a question starts at one rather than zero.
-        let voters = HashSet::from([who.to_string()]);
-        session.questions.push(StoredQuestion {
-            id: question_id,
-            text: text.to_string(),
-            answered: false,
-            voters,
-        });
-        session.touched = now;
-        Some(session.question_list())
-    }
-
-    pub fn upvote(&self, id: &str, who: &str, question: u64) -> Option<ServerMsg> {
-        let mut map = self.lock();
-        let session = map.get_mut(id)?;
-        if !session.admit(who) {
-            return None;
-        }
-        let found = session.questions.iter_mut().find(|q| q.id == question)?;
-        // A set, so a second tap from the same browser is not a second vote.
-        if !found.voters.insert(who.to_string()) {
-            return None;
-        }
-        session.touched = Instant::now();
-        Some(session.question_list())
-    }
-
-    pub fn mark_answered(&self, id: &str, role: Role, question: u64) -> Option<ServerMsg> {
-        if !role.edits() {
-            return None;
-        }
-        let mut map = self.lock();
-        let session = map.get_mut(id)?;
-        let found = session.questions.iter_mut().find(|q| q.id == question)?;
-        found.answered = true;
-        session.touched = Instant::now();
-        Some(session.question_list())
-    }
-
-    pub fn set_name(&self, id: &str, who: &str, name: &str) -> Option<ServerMsg> {
-        let name = name.trim();
-        if name.is_empty() || name.chars().count() > MAX_NAME_CHARS {
-            return None;
-        }
-        let mut map = self.lock();
-        let session = map.get_mut(id)?;
-        if !session.admit(who) {
-            return None;
-        }
-        session.names.insert(who.to_string(), name.to_string());
-        session.touched = Instant::now();
-        Some(session.score_table())
-    }
-
-    /// Every slide that already holds votes, so a console opened part way
-    /// through a round knows where the room stands. Presenter only, on the same
-    /// footing as a live tally.
-    pub fn tallies(&self, id: &str) -> Vec<ServerMsg> {
-        let map = self.lock();
-        let Some(session) = map.get(id) else {
-            return Vec::new();
-        };
-        let mut slides: Vec<usize> = session.votes.keys().copied().collect();
-        slides.sort_unstable();
-        slides
-            .into_iter()
-            .filter_map(|slide| {
-                let (counts, total) = session.counts(slide);
-                (total > 0).then_some(ServerMsg::Tally {
-                    slide,
-                    counts,
-                    total,
-                })
-            })
-            .collect()
-    }
-
-    /// Every answer the presenter has already opened.
-    ///
-    /// A phone that drops and comes back, or somebody arriving late, would
-    /// otherwise sit on a question the rest of the room has already been shown
-    /// the answer to. Unlike a tally this is for everyone, because the point of
-    /// a reveal is that the answer is now public.
-    pub fn reveals(&self, id: &str) -> Vec<ServerMsg> {
-        let map = self.lock();
-        let Some(session) = map.get(id) else {
-            return Vec::new();
-        };
-        let mut slides: Vec<usize> = session.revealed.iter().copied().collect();
-        slides.sort_unstable();
-        slides
-            .into_iter()
-            .filter_map(|slide| {
-                let correct = session
-                    .slides
-                    .get(slide)
-                    .and_then(|s| s.question.as_ref())
-                    .map(|q| q.correct.clone())?;
-                let (counts, total) = session.counts(slide);
-                Some(ServerMsg::Reveal {
-                    slide,
-                    correct,
-                    counts,
-                    total,
-                })
-            })
-            .collect()
-    }
-
-    pub fn scores(&self, id: &str) -> Option<ServerMsg> {
-        self.lock().get(id).map(Session::score_table)
-    }
-
-    pub fn questions(&self, id: &str) -> Option<ServerMsg> {
-        self.lock().get(id).map(Session::question_list)
-    }
-
-    pub fn reveal(&self, id: &str, token: &str, slide: usize) -> Option<ServerMsg> {
-        let mut map = self.lock();
-        let session = map.get_mut(id)?;
-        let owns: bool = session
-            .owner_token
-            .as_bytes()
-            .ct_eq(token.as_bytes())
-            .into();
-        if !owns {
-            return None;
-        }
-        let correct = session
-            .slides
-            .get(slide)
-            .and_then(|s| s.question.as_ref())
-            .map(|q| q.correct.clone())?;
-        session.revealed.insert(slide);
-        session.touched = Instant::now();
-        let (counts, total) = session.counts(slide);
-        Some(ServerMsg::Reveal {
-            slide,
-            correct,
-            counts,
-            total,
-        })
+        .flatten()
     }
 
     /// Drops sessions nobody has touched inside the TTL. Returns how many went.
@@ -819,6 +796,59 @@ mod tests {
         Registry::new(Duration::from_secs(3600))
     }
 
+    /// A tally may never go backwards.
+    ///
+    /// Every vote is applied under the lock and then broadcast under a second
+    /// one. Two voters landing together can have the later tally sent first,
+    /// leaving the room showing a count the room has already passed.
+    #[test]
+    fn concurrent_votes_are_broadcast_in_the_order_they_were_applied() {
+        use std::sync::Arc as StdArc;
+
+        let reg = registry();
+        let (id, _) = reg.create("# q\n\n- [ ] a\n- [x] b").unwrap();
+        let mut rx = reg.subscribe(&id).unwrap();
+
+        let voters = 64;
+        let reg = StdArc::new(reg);
+        let gate = StdArc::new(std::sync::Barrier::new(voters));
+        let hands: Vec<_> = (0..voters)
+            .map(|n| {
+                let reg = StdArc::clone(&reg);
+                let gate = StdArc::clone(&gate);
+                let id = id.clone();
+                std::thread::spawn(move || {
+                    gate.wait();
+                    reg.with_mut(&id, |s| s.answer(0, &format!("who{n}"), &[0]));
+                })
+            })
+            .collect();
+        for hand in hands {
+            hand.join().unwrap();
+        }
+
+        let mut high = 0usize;
+        let mut totals = Vec::new();
+        while let Ok(frame) = rx.try_recv() {
+            let value: serde_json::Value = serde_json::from_str(&frame.owner).unwrap();
+            if value["type"] == "tally" {
+                totals.push(value["total"].as_u64().unwrap() as usize);
+            }
+        }
+        for (nth, total) in totals.iter().enumerate() {
+            assert!(
+                *total >= high,
+                "tally {nth} went backwards: {total} after {high} (order {totals:?})"
+            );
+            high = *total;
+        }
+        assert_eq!(
+            totals.last().copied(),
+            Some(voters),
+            "the room ended on a stale count"
+        );
+    }
+
     #[test]
     fn a_participant_cap_bounds_a_room() {
         let reg = registry();
@@ -826,16 +856,24 @@ mod tests {
 
         for n in 0..MAX_PARTICIPANTS {
             assert!(
-                reg.answer(&id, 0, &format!("who{n}"), &[0]).is_some(),
+                reg.with_mut(&id, |s| s.answer(0, &format!("who{n}"), &[0]))
+                    .flatten()
+                    .is_some(),
                 "voter {n} inside the cap was turned away"
             );
         }
         assert!(
-            reg.answer(&id, 0, "one-too-many", &[0]).is_none(),
+            reg.with_mut(&id, |s| s.answer(0, "one-too-many", &[0]))
+                .flatten()
+                .is_none(),
             "a fresh id past the cap still voted"
         );
         // Someone already admitted keeps taking part.
-        assert!(reg.answer(&id, 0, "who0", &[1]).is_some());
+        assert!(
+            reg.with_mut(&id, |s| s.answer(0, "who0", &[1]))
+                .flatten()
+                .is_some()
+        );
     }
 
     #[test]
@@ -843,7 +881,9 @@ mod tests {
         let reg = registry();
         let (id, _) = reg.create("# hi").unwrap();
         for n in 0..(MAX_PARTICIPANTS + 50) {
-            let _ = reg.react(&id, &format!("who{n}"), Reaction::Clap);
+            let _ = reg
+                .with_mut(&id, |s| s.react(&format!("who{n}"), Reaction::Clap))
+                .flatten();
         }
         let map = reg.lock();
         let session = map.get(&id).unwrap();
@@ -944,19 +984,37 @@ mod tests {
             .unwrap();
 
         // Two players, one right and one wrong on the first question.
-        before.set_name(&id, "sam", "Sam").unwrap();
-        before.set_name(&id, "alex", "Alex").unwrap();
-        before.answer(&id, 0, "sam", &[1]).unwrap();
-        before.answer(&id, 0, "alex", &[0]).unwrap();
-        before.reveal(&id, &mc, 0).unwrap();
+        before
+            .with_mut(&id, |s| s.set_name("sam", "Sam"))
+            .flatten()
+            .unwrap();
+        before
+            .with_mut(&id, |s| s.set_name("alex", "Alex"))
+            .flatten()
+            .unwrap();
+        before
+            .with_mut(&id, |s| s.answer(0, "sam", &[1]))
+            .flatten()
+            .unwrap();
+        before
+            .with_mut(&id, |s| s.answer(0, "alex", &[0]))
+            .flatten()
+            .unwrap();
+        before
+            .with_mut(&id, |s| s.reveal(&mc, 0))
+            .flatten()
+            .unwrap();
         // A vote on a question the mc has not opened yet.
-        before.answer(&id, 1, "sam", &[0]).unwrap();
+        before
+            .with_mut(&id, |s| s.answer(1, "sam", &[0]))
+            .flatten()
+            .unwrap();
 
         let after = Registry::new(Duration::from_secs(3600));
         after.import(before.export());
 
         // The opened answer is still open.
-        let reveals = after.reveals(&id);
+        let reveals = after.with(&id, Session::reveals).unwrap();
         assert_eq!(reveals.len(), 1, "the reveal did not survive");
         match &reveals[0] {
             ServerMsg::Reveal {
@@ -973,11 +1031,11 @@ mod tests {
         }
 
         // The unopened question kept its vote and stayed shut.
-        let tallies = after.tallies(&id);
+        let tallies = after.with(&id, Session::tallies).unwrap();
         assert_eq!(tallies.len(), 2, "a slide with votes lost its tally");
 
         // Scores recompute from the votes, so only the opened question counts.
-        let ServerMsg::Scores { items } = after.scores(&id).unwrap() else {
+        let ServerMsg::Scores { items } = after.with(&id, Session::score_table).unwrap() else {
             panic!("no scores");
         };
         let sam = items.iter().find(|r| r.name == "Sam").expect("Sam is gone");
@@ -996,17 +1054,24 @@ mod tests {
     fn opening_an_answer_after_a_restart_scores_the_votes_cast_before_it() {
         let before = Registry::new(Duration::from_secs(3600));
         let (id, mc) = before.create("# Q\n\n- [ ] a\n- [x] b").unwrap();
-        before.set_name(&id, "sam", "Sam").unwrap();
-        before.answer(&id, 0, "sam", &[1]).unwrap();
+        before
+            .with_mut(&id, |s| s.set_name("sam", "Sam"))
+            .flatten()
+            .unwrap();
+        before
+            .with_mut(&id, |s| s.answer(0, "sam", &[1]))
+            .flatten()
+            .unwrap();
 
         let after = Registry::new(Duration::from_secs(3600));
         after.import(before.export());
 
         // The same mc token still opens it, and the vote from before counts.
         after
-            .reveal(&id, &mc, 0)
+            .with_mut(&id, |s| s.reveal(&mc, 0))
+            .flatten()
             .expect("the mc token stopped working");
-        let ServerMsg::Scores { items } = after.scores(&id).unwrap() else {
+        let ServerMsg::Scores { items } = after.with(&id, Session::score_table).unwrap() else {
             panic!("no scores");
         };
         assert_eq!(
@@ -1077,7 +1142,8 @@ mod tests {
         let before = Registry::new(Duration::from_secs(3600));
         let (id, mc) = before.create("# First").unwrap();
         before
-            .replace_deck(&id, Role::Mc, Some(1), "# Second")
+            .with_mut(&id, |s| s.replace_deck(Role::Mc, Some(1), "# Second"))
+            .expect("the room is gone")
             .expect("the first edit should land");
 
         let after = Registry::new(Duration::from_secs(3600));
@@ -1086,16 +1152,16 @@ mod tests {
         // Somebody who opened the deck before that edit still has revision 1.
         assert!(
             matches!(
-                after.replace_deck(&id, Role::Mc, Some(1), "# Stale"),
-                Err(EditError::Stale { current: 2 })
+                after.with_mut(&id, |s| s.replace_deck(Role::Mc, Some(1), "# Stale")),
+                Some(Err(EditError::Stale { current: 2 }))
             ),
             "a stale save was accepted after a restart"
         );
         // And somebody current still saves.
         assert!(
             after
-                .replace_deck(&id, Role::Mc, Some(2), "# Current")
-                .is_ok()
+                .with_mut(&id, |s| s.replace_deck(Role::Mc, Some(2), "# Current"))
+                .is_some_and(|saved| saved.is_ok())
         );
         let _ = mc;
     }
@@ -1106,18 +1172,25 @@ mod tests {
         // an edit has no business touching them.
         let reg = Registry::new(Duration::from_secs(3600));
         let (id, _mc) = reg.create("# One\n\n---\n\n# Two").unwrap();
-        reg.ask(&id, "sam", "Why not Go?").unwrap();
-        reg.ask(&id, "alex", "How fast is it?").unwrap();
+        reg.with_mut(&id, |s| s.ask("sam", "Why not Go?"))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.ask("alex", "How fast is it?"))
+            .flatten()
+            .unwrap();
 
-        let ServerMsg::Questions { items } = reg.questions(&id).unwrap() else {
+        let ServerMsg::Questions { items } = reg.with(&id, Session::question_list).unwrap() else {
             panic!("no questions");
         };
         let ids: Vec<u64> = items.iter().map(|q| q.id).collect();
 
-        reg.replace_deck(&id, Role::Mc, None, "# Rewritten entirely")
-            .unwrap();
+        reg.with_mut(&id, |s| {
+            s.replace_deck(Role::Mc, None, "# Rewritten entirely")
+        })
+        .unwrap_or(Err(EditError::Gone))
+        .unwrap();
 
-        let ServerMsg::Questions { items } = reg.questions(&id).unwrap() else {
+        let ServerMsg::Questions { items } = reg.with(&id, Session::question_list).unwrap() else {
             panic!("no questions after the edit");
         };
         assert_eq!(items.len(), 2, "an edit removed questions from the floor");
@@ -1133,17 +1206,35 @@ mod tests {
     fn a_reaction_limit_is_per_person_and_not_carried_across_a_restart() {
         let before = Registry::new(Duration::from_secs(3600));
         let (id, _mc) = before.create("# Deck").unwrap();
-        assert!(before.react(&id, "sam", Reaction::Clap).is_some());
+        assert!(
+            before
+                .with_mut(&id, |s| s.react("sam", Reaction::Clap))
+                .flatten()
+                .is_some()
+        );
         // Immediately again is too soon.
-        assert!(before.react(&id, "sam", Reaction::Clap).is_none());
+        assert!(
+            before
+                .with_mut(&id, |s| s.react("sam", Reaction::Clap))
+                .flatten()
+                .is_none()
+        );
         // Somebody else is unaffected.
-        assert!(before.react(&id, "alex", Reaction::Clap).is_some());
+        assert!(
+            before
+                .with_mut(&id, |s| s.react("alex", Reaction::Clap))
+                .flatten()
+                .is_some()
+        );
 
         let after = Registry::new(Duration::from_secs(3600));
         after.import(before.export());
         // A restart is not a punishment: the gap does not survive it.
         assert!(
-            after.react(&id, "sam", Reaction::Clap).is_some(),
+            after
+                .with_mut(&id, |s| s.react("sam", Reaction::Clap))
+                .flatten()
+                .is_some(),
             "a restart left somebody unable to react"
         );
     }
@@ -1155,16 +1246,26 @@ mod tests {
         let reg = Registry::new(Duration::from_secs(3600));
         let (id, mc) = reg.create(MULTI).unwrap();
         for who in ["ada", "bo", "cy", "di"] {
-            reg.set_name(&id, who, who).unwrap();
+            reg.with_mut(&id, |s| s.set_name(who, who))
+                .flatten()
+                .unwrap();
         }
 
-        reg.answer(&id, 0, "ada", &[0, 1, 2]).unwrap(); // exactly right
-        reg.answer(&id, 0, "bo", &[0]).unwrap(); // one of three
-        reg.answer(&id, 0, "cy", &[0, 1, 2, 3]).unwrap(); // all four
-        reg.answer(&id, 0, "di", &[3]).unwrap(); // the joke answer
-        reg.reveal(&id, &mc, 0).unwrap();
+        reg.with_mut(&id, |s| s.answer(0, "ada", &[0, 1, 2]))
+            .flatten()
+            .unwrap(); // exactly right
+        reg.with_mut(&id, |s| s.answer(0, "bo", &[0]))
+            .flatten()
+            .unwrap(); // one of three
+        reg.with_mut(&id, |s| s.answer(0, "cy", &[0, 1, 2, 3]))
+            .flatten()
+            .unwrap(); // all four
+        reg.with_mut(&id, |s| s.answer(0, "di", &[3]))
+            .flatten()
+            .unwrap(); // the joke answer
+        reg.with_mut(&id, |s| s.reveal(&mc, 0)).flatten().unwrap();
 
-        let ServerMsg::Scores { items } = reg.scores(&id).unwrap() else {
+        let ServerMsg::Scores { items } = reg.with(&id, Session::score_table).unwrap() else {
             panic!("no scores");
         };
         let score = |name: &str| items.iter().find(|r| r.name == name).unwrap().score;
@@ -1178,11 +1279,15 @@ mod tests {
     fn the_order_options_are_picked_in_does_not_matter() {
         let reg = Registry::new(Duration::from_secs(3600));
         let (id, mc) = reg.create(MULTI).unwrap();
-        reg.set_name(&id, "ada", "Ada").unwrap();
-        reg.answer(&id, 0, "ada", &[2, 0, 1]).unwrap();
-        reg.reveal(&id, &mc, 0).unwrap();
+        reg.with_mut(&id, |s| s.set_name("ada", "Ada"))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.answer(0, "ada", &[2, 0, 1]))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.reveal(&mc, 0)).flatten().unwrap();
 
-        let ServerMsg::Scores { items } = reg.scores(&id).unwrap() else {
+        let ServerMsg::Scores { items } = reg.with(&id, Session::score_table).unwrap() else {
             panic!("no scores");
         };
         assert_eq!(
@@ -1197,9 +1302,15 @@ mod tests {
         let (id, _mc) = reg
             .create("# One right\n\n- [ ] a\n- [x] b\n- [ ] c")
             .unwrap();
-        assert!(reg.answer(&id, 0, "ada", &[1]).is_some());
         assert!(
-            reg.answer(&id, 0, "bo", &[0, 1]).is_none(),
+            reg.with_mut(&id, |s| s.answer(0, "ada", &[1]))
+                .flatten()
+                .is_some()
+        );
+        assert!(
+            reg.with_mut(&id, |s| s.answer(0, "bo", &[0, 1]))
+                .flatten()
+                .is_none(),
             "two picks landed on a single answer question"
         );
     }
@@ -1208,8 +1319,12 @@ mod tests {
     fn a_tally_counts_people_once_however_many_they_pick() {
         let reg = Registry::new(Duration::from_secs(3600));
         let (id, _mc) = reg.create(MULTI).unwrap();
-        reg.answer(&id, 0, "ada", &[0, 1, 2]).unwrap();
-        reg.answer(&id, 0, "bo", &[0]).unwrap();
+        reg.with_mut(&id, |s| s.answer(0, "ada", &[0, 1, 2]))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.answer(0, "bo", &[0]))
+            .flatten()
+            .unwrap();
 
         let map = reg.lock();
         let (counts, total) = map.get(&id).unwrap().counts(0);
@@ -1223,15 +1338,23 @@ mod tests {
         let reg = Registry::new(Duration::from_secs(3600));
         let (id, _mc) = reg.create(MULTI).unwrap();
         assert!(
-            reg.answer(&id, 0, "ada", &[]).is_none(),
+            reg.with_mut(&id, |s| s.answer(0, "ada", &[]))
+                .flatten()
+                .is_none(),
             "an empty pick landed"
         );
         assert!(
-            reg.answer(&id, 0, "ada", &[9]).is_none(),
+            reg.with_mut(&id, |s| s.answer(0, "ada", &[9]))
+                .flatten()
+                .is_none(),
             "a pick past the options landed"
         );
         // A repeated option is one option, not two.
-        assert!(reg.answer(&id, 0, "ada", &[1, 1, 1]).is_some());
+        assert!(
+            reg.with_mut(&id, |s| s.answer(0, "ada", &[1, 1, 1]))
+                .flatten()
+                .is_some()
+        );
         let map = reg.lock();
         assert_eq!(map.get(&id).unwrap().votes[&0]["ada"], vec![1]);
     }
@@ -1240,7 +1363,7 @@ mod tests {
     fn a_question_says_whether_several_answers_are_right() {
         let reg = Registry::new(Duration::from_secs(3600));
         let (id, _mc) = reg.create(MULTI).unwrap();
-        let ServerMsg::Deck { slides, .. } = reg.snapshot(&id).unwrap() else {
+        let ServerMsg::Deck { slides, .. } = reg.with(&id, Session::snapshot).unwrap() else {
             panic!("no deck");
         };
         let q = slides[0].question.as_ref().unwrap();
@@ -1287,7 +1410,7 @@ mod tests {
         let reg = Registry::new(Duration::from_secs(3600));
         assert_eq!(reg.import(saved), 1);
 
-        let ServerMsg::Scores { items } = reg.scores("abc123").unwrap() else {
+        let ServerMsg::Scores { items } = reg.with("abc123", Session::score_table).unwrap() else {
             panic!("no scores");
         };
         assert_eq!(

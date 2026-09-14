@@ -203,11 +203,14 @@ async fn update_session(
     let token = params.get("token").map(String::as_str).unwrap_or_default();
     let base_rev = params.get("rev").and_then(|r| r.parse::<u64>().ok());
 
-    match registry.replace_deck(&id, registry.role(&id, token), base_rev, &body.markdown) {
-        Ok(snapshot) => {
-            registry.broadcast(&id, snapshot);
-            StatusCode::NO_CONTENT.into_response()
-        }
+    let role = registry.role(&id, token);
+    // The save and the broadcast that announces it happen under one lock, so
+    // the room cannot be told about revisions out of the order they landed.
+    let outcome = registry
+        .with_mut(&id, |s| s.replace_deck(role, base_rev, &body.markdown))
+        .unwrap_or(Err(EditError::Gone));
+    match outcome {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(EditError::Forbidden) => StatusCode::FORBIDDEN.into_response(),
         Err(EditError::Gone) => StatusCode::NOT_FOUND.into_response(),
         // The other editor got there first. The revision to rebase on comes

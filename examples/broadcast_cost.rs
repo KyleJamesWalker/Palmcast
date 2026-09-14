@@ -1,7 +1,7 @@
 //! What one broadcast costs a full room, before and after serializing once.
 use std::time::{Duration, Instant};
 
-use palmcast::session::Registry;
+use palmcast::session::{Registry, Session};
 use palmcast::wire::Frame;
 
 const VIEWERS: usize = 400;
@@ -11,7 +11,7 @@ fn main() {
     let markdown = slide.repeat(400);
     let reg = Registry::new(Duration::from_secs(3600));
     let (id, _tok) = reg.create(&markdown).unwrap();
-    let snapshot = reg.snapshot(&id).unwrap();
+    let snapshot = reg.with(&id, Session::snapshot).unwrap();
     let bytes = serde_json::to_string(&snapshot).unwrap().len();
     println!("deck payload: {} KB, room of {VIEWERS}\n", bytes / 1024);
 
