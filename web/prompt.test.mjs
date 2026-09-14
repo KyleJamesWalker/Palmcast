@@ -100,3 +100,11 @@ test('the rules cover what a deck can and cannot draw', () => {
 test('a setext heading is called out, because it silently splits nothing', () => {
   assert.match(DECK_RULES, /setext/);
 });
+
+test('the starter prompt shows what a topic looks like', () => {
+  // A topic with no size to it gets a deck of whatever length the agent felt
+  // like. The example asks for a count without spelling out a rule, and the
+  // opossum is not negotiable.
+  const prompt = starterPrompt();
+  assert.match(prompt, /50 question quiz on opossum facts/);
+});
