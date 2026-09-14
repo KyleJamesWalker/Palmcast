@@ -8,6 +8,7 @@ import {
   starterDeck,
   unpackDeck,
 } from '/shared.js';
+import { smartEditor } from '/editing.js';
 import { previewDeck, renderPreview } from '/preview.js';
 import { starterPrompt } from '/deckstate.js';
 import { SAMPLE } from '/sample.js';
@@ -86,6 +87,8 @@ editor.addEventListener('input', () => {
   keep();
 });
 refresh();
+
+smartEditor(editor, document.getElementById('toolbar'));
 
 // A shared link beats whatever draft is in this browser, and then becomes the
 // draft. Dropping the token from the address bar is what makes that stick: a

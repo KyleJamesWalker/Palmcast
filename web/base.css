@@ -52,6 +52,20 @@ button.primary {
 }
 button[disabled] { opacity: .35; cursor: default; }
 
+/* The format's own characters, as buttons. A phone keyboard keeps brackets and
+   dashes two taps deep, and this is a deck written on a phone. */
+.toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.toolbar button {
+  flex: 0 0 auto;
+  min-height: 44px;
+  min-width: 46px;
+  padding: 0 10px;
+  border-radius: 10px;
+  color: var(--ink-dim);
+  font: 400 15px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.toolbar button:active { color: var(--ink); }
+
 a { color: var(--accent); }
 
 /* Rendered slide body. Sized so a phone at arm's length stays comfortable

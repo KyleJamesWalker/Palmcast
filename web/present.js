@@ -9,6 +9,7 @@ import {
   shareLink,
   tokenFor,
 } from '/shared.js';
+import { smartEditor } from '/editing.js';
 import { renderOptions } from '/quiz.js';
 import { agentPrompt, pruneBySlide, survivingSlides } from '/deckstate.js';
 import { renderLineup } from '/lineup.js';
@@ -64,7 +65,10 @@ const els = {
   questions: document.getElementById('questions'),
   scores: document.getElementById('scores'),
   jump: document.getElementById('jump'),
+  deckToolbar: document.getElementById('deck-toolbar'),
 };
+
+smartEditor(els.deckText, els.deckToolbar);
 
 const audienceUrl = `${location.origin}/s/${id}`;
 const presenterUrl = `${location.origin}/s/${id}/present#t=${encodeURIComponent(token ?? '')}`;
