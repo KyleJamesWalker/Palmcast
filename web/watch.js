@@ -7,6 +7,7 @@ import { burst, reactionBar } from '/reactions.js';
 import { previewDeck, renderPreview } from '/preview.js';
 import { renderQuestions } from '/questions.js';
 import { renderScores } from '/scores.js';
+import { applySteps } from '/steps.js';
 
 const id = sessionId();
 const slide = document.getElementById('slide');
@@ -32,6 +33,7 @@ let editing = null;
 
 let slides = [];
 let current = 0;
+let step = 0;
 let rev = 0;
 const chosen = new Map();
 const sent = new Set();
@@ -40,6 +42,7 @@ const revealed = new Map();
 function paint() {
   const now = slides[current];
   slide.innerHTML = now ? now.html : '<p class="waiting">Waiting for the presenter\u2026</p>';
+  applySteps(slide, step);
   position.textContent = slides.length ? `${current + 1} / ${slides.length}` : '\u2014';
 
   const answer = revealed.get(current);
@@ -90,10 +93,12 @@ const socket = connect(id, null, {
     }
     slides = msg.slides;
     current = msg.current;
+    step = msg.step;
     paint();
   },
   move(msg) {
     current = msg.current;
+    step = msg.step;
     paint();
   },
   reveal(msg) {

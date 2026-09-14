@@ -68,10 +68,14 @@ pub enum ServerMsg {
     Deck {
         rev: u64,
         current: usize,
+        /// How much of the current slide has come in. Zero is the slide as it
+        /// first lands, before any of its staged items.
+        step: usize,
         slides: Vec<Slide>,
     },
     Move {
         current: usize,
+        step: usize,
     },
     Viewers {
         count: usize,
@@ -135,15 +139,18 @@ impl ServerMsg {
             ServerMsg::Deck {
                 rev,
                 current,
+                step,
                 slides,
             } => Some(ServerMsg::Deck {
                 rev: *rev,
                 current: *current,
+                step: *step,
                 slides: slides
                     .iter()
                     .map(|s| Slide {
                         html: s.html.clone(),
                         notes: String::new(),
+                        steps: s.steps,
                         question: s.question.as_ref().map(|q| Question {
                             options: q.options.clone(),
                             multi: q.multi,
@@ -174,6 +181,10 @@ impl ServerMsg {
 pub enum ClientMsg {
     Goto {
         index: usize,
+        /// How much of that slide to show. Absent means the whole of it, which
+        /// is what a jump to another slide means.
+        #[serde(default)]
+        step: usize,
     },
     /// The host putting a talk on stage, or clearing the stage with None.
     Stage {
@@ -286,9 +297,11 @@ mod tests {
         ServerMsg::Deck {
             rev: 1,
             current: 0,
+            step: 0,
             slides: vec![Slide {
                 html: "<h1>Hi</h1>".into(),
                 notes: "the secret note".into(),
+                steps: 0,
                 question: Some(Question {
                     options: vec!["a".into(), "b".into()],
                     multi: false,
@@ -312,7 +325,10 @@ mod tests {
 
     #[test]
     fn an_identical_message_is_not_serialized_twice() {
-        let frame = Frame::new(&ServerMsg::Move { current: 2 });
+        let frame = Frame::new(&ServerMsg::Move {
+            current: 2,
+            step: 0,
+        });
         assert_eq!(frame.for_socket(true), frame.for_socket(false));
     }
 

@@ -146,6 +146,35 @@ drops them only where the options themselves changed, because a vote for an
 option that no longer exists means nothing. Changing which option is right keeps
 the votes and rescores the room.
 
+## Bring a list in one line at a time
+
+A list written with `*` arrives one item per press. A list written with `-`
+arrives whole when the slide does. This is Marp's rule, so a deck written for
+Marp behaves the same here.
+
+```markdown
+# Why Rust
+
+* No garbage collector
+* No data races
+* Fearless concurrency
+```
+
+Ordered lists follow the same split: `1)` comes in one at a time and `1.` comes
+in whole.
+
+The room walks together. A press moves every phone to the same item, the stage
+screen included, and nothing arrives on a viewer's phone before the presenter
+sends it. The console counts the slide and the item, `3 / 8 · 1 / 3`, and its
+button reads **Next item** while the press stays on this slide.
+
+Stepping back onto an earlier slide shows that slide whole. The room has already
+read it, and walking a list backwards item by item helps nobody. Tapping the
+slide counter to jump opens the slide it lands on from the start.
+
+**Preview deck** draws every staged item, dimmed, so the author reads the whole
+slide before the room reads any of it.
+
 ## Run a quiz
 
 A slide holding two or more task list items becomes a question. `- [x]` marks a

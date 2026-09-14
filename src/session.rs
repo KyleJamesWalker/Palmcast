@@ -112,6 +112,9 @@ pub struct Session {
     pub slides: Vec<Slide>,
     pub rev: u64,
     pub current: usize,
+    /// How much of the current slide the room has been shown. A slide holding
+    /// no staged items has one step, zero, and never leaves it.
+    pub step: usize,
     pub viewers: usize,
     pub touched: Instant,
     pub tx: broadcast::Sender<Arc<Frame>>,
@@ -290,8 +293,14 @@ impl Session {
         ServerMsg::Deck {
             rev: self.rev,
             current: self.current,
+            step: self.step,
             slides: self.slides.clone(),
         }
+    }
+
+    /// How many presses the slide at `index` takes before the next slide.
+    fn steps_at(&self, index: usize) -> usize {
+        self.slides.get(index).map(|s| s.steps).unwrap_or(0)
     }
     /// Serializes once and hands the same bytes to every socket in the room.
     ///
@@ -367,14 +376,22 @@ impl Session {
     }
 
     /// `None` when the caller does not drive or the index is out of range.
-    pub fn goto(&mut self, token: &str, index: usize) -> Option<ServerMsg> {
+    ///
+    /// A step past the end of the slide is clamped rather than refused. The
+    /// console sends the position it can see, and a deck edited under it can
+    /// leave that one item further on than the slide now goes.
+    pub fn goto(&mut self, token: &str, index: usize, step: usize) -> Option<ServerMsg> {
         if !self.role_of(token).drives() || index >= self.slides.len() {
             return None;
         }
         self.current = index;
+        self.step = step.min(self.steps_at(index));
         self.touched = Instant::now();
         self.mark();
-        let msg = ServerMsg::Move { current: index };
+        let msg = ServerMsg::Move {
+            current: index,
+            step: self.step,
+        };
         self.emit(&msg);
         Some(msg)
     }
@@ -418,6 +435,7 @@ impl Session {
         self.slides = rebuilt;
         self.rev += 1;
         self.current = self.current.min(self.slides.len() - 1);
+        self.step = self.step.min(self.steps_at(self.current));
         self.touched = Instant::now();
         let msg = self.snapshot();
         self.emit(&msg);
@@ -949,6 +967,7 @@ impl Session {
 
         self.staged = talk;
         self.baton = talk;
+        self.step = 0;
         self.rev += 1;
         // Nothing held against a slide position survives a different deck.
         self.votes.clear();
@@ -1077,6 +1096,7 @@ impl Registry {
                 slides: deck::parse(markdown),
                 rev: 1,
                 current: 0,
+                step: 0,
                 viewers: 0,
                 touched: Instant::now(),
                 tx,
@@ -1157,6 +1177,7 @@ impl Registry {
                 cohost_token: s.cohost_token.clone(),
                 markdown: s.markdown.clone(),
                 current: s.current,
+                step: s.step,
                 rev: s.rev,
                 votes: s
                     .votes
@@ -1232,6 +1253,9 @@ impl Registry {
             // back, or it describes a slide that is no longer there.
             let slides = deck::parse(&item.markdown);
             let current = item.current.min(slides.len().saturating_sub(1));
+            let step = item
+                .step
+                .min(slides.get(current).map(|s| s.steps).unwrap_or(0));
             let mut votes: HashMap<usize, HashMap<String, Vec<usize>>> = item
                 .votes
                 .into_iter()
@@ -1284,6 +1308,7 @@ impl Registry {
                     slides,
                     rev: item.rev,
                     current,
+                    step,
                     viewers: 0,
                     touched,
                     tx,
@@ -1579,7 +1604,7 @@ mod tests {
             .unwrap();
         assert_eq!(reg.role(&id, &speaker), Role::Driver);
         assert!(
-            reg.with_mut(&id, |s| s.goto(&speaker, 1))
+            reg.with_mut(&id, |s| s.goto(&speaker, 1, 0))
                 .flatten()
                 .is_some(),
             "the speaker could not drive their own talk"
@@ -1590,12 +1615,12 @@ mod tests {
         reg.with_mut(&id, |s| s.hand(Role::Mc, None)).unwrap();
         assert_eq!(reg.role(&id, &speaker), Role::Viewer);
         assert!(
-            reg.with_mut(&id, |s| s.goto(&speaker, 0))
+            reg.with_mut(&id, |s| s.goto(&speaker, 0, 0))
                 .flatten()
                 .is_none(),
             "the speaker still drove after the host took over"
         );
-        assert!(reg.with_mut(&id, |s| s.goto(&mc, 0)).flatten().is_some());
+        assert!(reg.with_mut(&id, |s| s.goto(&mc, 0, 0)).flatten().is_some());
     }
 
     #[test]
@@ -1638,7 +1663,7 @@ mod tests {
         assert_eq!(reg.role(&id, &helper), Role::Driver);
         assert_eq!(reg.role(&id, &speaker), Role::Viewer);
         assert!(
-            reg.with_mut(&id, |s| s.goto(&helper, 1))
+            reg.with_mut(&id, |s| s.goto(&helper, 1, 0))
                 .flatten()
                 .is_some()
         );
@@ -1956,9 +1981,9 @@ mod tests {
         let (talk, _) = submit(&reg, &id, "ada", "# Ada\n\n---\n\n# Two");
         reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
             .unwrap();
-        reg.with_mut(&id, |s| s.goto(&mc, 1)).flatten().unwrap();
+        reg.with_mut(&id, |s| s.goto(&mc, 1, 0)).flatten().unwrap();
         // Driving to the slide the room is already on is not a new moment.
-        reg.with_mut(&id, |s| s.goto(&mc, 1)).flatten().unwrap();
+        reg.with_mut(&id, |s| s.goto(&mc, 1, 0)).flatten().unwrap();
 
         let cues = reg.with(&id, |s| {
             s.timeline
@@ -2008,7 +2033,7 @@ mod tests {
         assert_eq!(after.role(&id, &speaker), Role::Driver);
         assert!(
             after
-                .with_mut(&id, |s| s.goto(&speaker, 1))
+                .with_mut(&id, |s| s.goto(&speaker, 1, 0))
                 .flatten()
                 .is_some()
         );
@@ -2580,6 +2605,7 @@ mod tests {
         let hidden = ServerMsg::Deck {
             rev: 1,
             current: 0,
+            step: 0,
             slides: slides.clone(),
         }
         .redacted()

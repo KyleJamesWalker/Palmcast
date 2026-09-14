@@ -102,8 +102,8 @@ fn staff_now(registry: &Registry, id: &str, token: Option<&str>) -> bool {
 fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: ClientMsg) {
     let token = token.unwrap_or("");
     match msg {
-        ClientMsg::Goto { index } => {
-            registry.with_mut(id, |s| s.goto(token, index));
+        ClientMsg::Goto { index, step } => {
+            registry.with_mut(id, |s| s.goto(token, index, step));
         }
         // The reveal also moves the board, and both leave under the one lock.
         ClientMsg::Reveal { slide } => {

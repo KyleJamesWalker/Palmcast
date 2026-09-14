@@ -7,6 +7,10 @@ pub struct Slide {
     pub notes: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub question: Option<Question>,
+    /// How many presses this slide takes before the next one. Zero for a slide
+    /// that arrives whole, which is every slide that holds no `*` list.
+    #[serde(default)]
+    pub steps: usize,
 }
 
 /// A slide carrying a task list becomes a question. `- [x]` marks an answer.
@@ -29,10 +33,12 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
         .map(|raw| {
             let (body, notes) = split_notes(raw);
             let (prompt, question) = split_question(&body);
+            let (html, steps) = stage_items(&render(&prompt), &fragments(&prompt));
             Slide {
-                html: render(&prompt),
+                html,
                 notes: notes.trim().to_string(),
                 question,
+                steps,
             }
         })
         .filter(|s| !(s.html.trim().is_empty() && s.notes.is_empty() && s.question.is_none()))
@@ -43,6 +49,7 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
             html: String::new(),
             notes: String::new(),
             question: None,
+            steps: 0,
         }];
     }
     slides
@@ -202,6 +209,81 @@ fn split_notes(raw: &str) -> (String, String) {
     (raw.to_string(), String::new())
 }
 
+/// Which list items in this body come in one at a time, in the order the
+/// renderer will emit them.
+///
+/// Marp's rule, because a deck written for Marp should behave the same here:
+/// `*` and `1)` fragment, `-` and `1.` do not. One entry per list item line,
+/// so the marker a line was written with is what decides.
+fn fragments(body: &str) -> Vec<bool> {
+    let mut out = Vec::new();
+    let mut fence = Fence::default();
+    for line in body.lines() {
+        if fence.consume(line) {
+            continue;
+        }
+        if let Some(marker) = list_marker(line) {
+            out.push(marker == '*' || marker == ')');
+        }
+    }
+    out
+}
+
+/// The character a list item was written with, or `)` for an ordered item that
+/// used a bracket. `None` for a line that starts no item.
+fn list_marker(line: &str) -> Option<char> {
+    let trimmed = line.trim_start();
+    let mut chars = trimmed.chars();
+    let first = chars.next()?;
+    if matches!(first, '-' | '*' | '+') {
+        // A marker needs a space after it, or `*emphasis*` opens a list.
+        return chars
+            .next()
+            .filter(|c| *c == ' ' || *c == '\t')
+            .map(|_| first);
+    }
+    if !first.is_ascii_digit() {
+        return None;
+    }
+    let digits = trimmed.chars().take_while(char::is_ascii_digit).count();
+    let rest = &trimmed[digits..];
+    let delimiter = rest.chars().next().filter(|c| *c == '.' || *c == ')')?;
+    rest[1..]
+        .chars()
+        .next()
+        .filter(|c| *c == ' ' || *c == '\t')
+        .map(|_| delimiter)
+}
+
+/// Numbers the items that come in one at a time, and says how many there are.
+///
+/// The renderer emits one `<li>` per item in source order, so the nth opening
+/// tag is the nth item the scan saw. Nothing else in the html can be a literal
+/// `<li>`: a deck's own markup is escaped to text before it gets here.
+fn stage_items(html: &str, fragments: &[bool]) -> (String, usize) {
+    if !fragments.iter().any(|f| *f) {
+        return (html.to_string(), 0);
+    }
+    let mut out = String::with_capacity(html.len() + fragments.len() * 24);
+    let mut rest = html;
+    let mut item = 0;
+    let mut step = 0;
+
+    while let Some(at) = rest.find("<li>") {
+        out.push_str(&rest[..at]);
+        if fragments.get(item).copied().unwrap_or(false) {
+            step += 1;
+            out.push_str(&format!("<li class=\"step\" data-step=\"{step}\">"));
+        } else {
+            out.push_str("<li>");
+        }
+        item += 1;
+        rest = &rest[at + 4..];
+    }
+    out.push_str(rest);
+    (out, step)
+}
+
 fn render(body: &str) -> String {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
@@ -249,6 +331,84 @@ fn is_safe_url(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_star_list_comes_in_one_item_at_a_time() {
+        let slides = parse("# Why\n\n* First\n* Second\n* Third");
+        assert_eq!(slides[0].steps, 3);
+        assert!(
+            slides[0]
+                .html
+                .contains(r#"<li class="step" data-step="1">"#)
+        );
+        assert!(
+            slides[0]
+                .html
+                .contains(r#"<li class="step" data-step="3">"#)
+        );
+    }
+
+    #[test]
+    fn a_dash_list_arrives_whole() {
+        let slides = parse("# Why\n\n- First\n- Second");
+        assert_eq!(slides[0].steps, 0);
+        assert!(!slides[0].html.contains("data-step"));
+        assert!(slides[0].html.contains("<li>First</li>"));
+    }
+
+    /// Marp's rule for ordered lists: a bracket stages, a full stop does not.
+    #[test]
+    fn an_ordered_list_stages_on_a_bracket_and_not_on_a_stop() {
+        assert_eq!(parse("1) One\n2) Two").pop().unwrap().steps, 2);
+        assert_eq!(parse("1. One\n2. Two").pop().unwrap().steps, 0);
+    }
+
+    #[test]
+    fn a_slide_mixing_both_stages_only_the_stars() {
+        let slides = parse("- Always\n\n* Then this\n* Then that");
+        assert_eq!(slides[0].steps, 2);
+        assert!(slides[0].html.contains("<li>Always</li>"));
+    }
+
+    #[test]
+    fn a_list_inside_a_fence_stages_nothing() {
+        let slides = parse("# Code\n\n```md\n* one\n* two\n```");
+        assert_eq!(slides[0].steps, 0, "a list in a fence is an example");
+        assert!(!slides[0].html.contains("data-step"));
+    }
+
+    #[test]
+    fn emphasis_is_not_a_list() {
+        let slides = parse("*just emphasis* on its own line");
+        assert_eq!(slides[0].steps, 0);
+        assert!(slides[0].html.contains("<em>"));
+    }
+
+    #[test]
+    fn a_nested_star_list_keeps_counting() {
+        let slides = parse("* One\n  * Under one\n* Two");
+        assert_eq!(slides[0].steps, 3);
+        // Source order, so the nested item is the second step.
+        let at = |n: u32| slides[0].html.find(&format!(r#"data-step="{n}""#)).unwrap();
+        assert!(at(1) < at(2) && at(2) < at(3));
+    }
+
+    #[test]
+    fn each_slide_counts_its_own_staging() {
+        let slides = parse("* One\n* Two\n\n---\n\n# Plain\n\n---\n\n* Only one");
+        assert_eq!(slides[0].steps, 2);
+        assert_eq!(slides[1].steps, 0);
+        assert_eq!(slides[2].steps, 1);
+    }
+
+    /// A question is drawn from its own list of options, not from the body, so
+    /// the marker that makes a quiz cannot also stage it.
+    #[test]
+    fn a_question_is_not_staged_by_its_markers() {
+        let slides = parse("# Pick\n\n* [ ] One\n* [x] Two");
+        assert_eq!(slides[0].steps, 0);
+        assert!(slides[0].question.is_some());
+    }
 
     #[test]
     fn splits_on_a_separator_line() {

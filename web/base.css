@@ -473,3 +473,7 @@ input.url:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+
+/* A staged list item, before the room has been walked to it. Marked so an
+   author reading a preview can see what is staged, and the room never can. */
+.preview-card .step { opacity: .55; }

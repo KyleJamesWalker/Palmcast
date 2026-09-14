@@ -50,6 +50,13 @@ export function renderPreview(root, slides) {
       card.append(kind);
     }
 
+    if (slide.steps) {
+      const staged = document.createElement('p');
+      staged.className = 'preview-note dim';
+      staged.textContent = `Comes in ${slide.steps} step${slide.steps === 1 ? '' : 's'}`;
+      card.append(staged);
+    }
+
     if (slide.notes) {
       const notes = document.createElement('p');
       notes.className = 'preview-note dim';

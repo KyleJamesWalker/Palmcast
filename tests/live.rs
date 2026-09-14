@@ -2074,3 +2074,96 @@ async fn a_deleted_talk_reads_as_gone_to_the_phone_that_wrote_it() {
         .unwrap();
     assert_eq!(res.status(), 404);
 }
+
+/// A staged list is a slide that arrives in pieces, and every phone in the room
+/// has to arrive at the same piece at the same time.
+#[tokio::test]
+async fn the_room_follows_the_presenter_through_a_staged_list() {
+    let host = spawn().await;
+    let (id, token) = create(
+        &host,
+        "# Why Rust\n\n* No garbage collector\n* No data races",
+    )
+    .await;
+
+    let mut phone = open(&host, &id, None).await;
+    let deck = loop {
+        let msg = next_json(&mut phone).await;
+        if msg["type"] == "deck" {
+            break msg;
+        }
+    };
+    assert_eq!(
+        deck["slides"][0]["steps"], 2,
+        "the room was not told the staging"
+    );
+    assert_eq!(deck["step"], 0, "the room opened part way into the slide");
+    let html = deck["slides"][0]["html"].as_str().unwrap();
+    assert!(html.contains(r#"data-step="1""#), "{html}");
+
+    let mut console = open(&host, &id, Some(&token)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "goto", "index": 0, "step": 1 }),
+    )
+    .await;
+
+    let moved = loop {
+        let msg = next_json(&mut phone).await;
+        if msg["type"] == "move" {
+            break msg;
+        }
+    };
+    assert_eq!(
+        moved["current"], 0,
+        "the room changed slide rather than step"
+    );
+    assert_eq!(moved["step"], 1);
+}
+
+/// A step past the end of the slide is clamped. The console sends the position
+/// it can see, and an edit under it can leave that past the end.
+#[tokio::test]
+async fn a_step_past_the_end_of_a_slide_is_clamped() {
+    let host = spawn().await;
+    let (id, token) = create(&host, "# Plain\n\n- One\n- Two").await;
+    let mut phone = open(&host, &id, None).await;
+    let mut console = open(&host, &id, Some(&token)).await;
+
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "goto", "index": 0, "step": 9 }),
+    )
+    .await;
+
+    let moved = loop {
+        let msg = next_json(&mut phone).await;
+        if msg["type"] == "move" {
+            break msg;
+        }
+    };
+    assert_eq!(moved["step"], 0, "a slide that stages nothing took a step");
+}
+
+/// A viewer cannot step the room any more than they can move it.
+#[tokio::test]
+async fn a_viewer_cannot_step_the_slide() {
+    let host = spawn().await;
+    let (id, _) = create(&host, "* One\n* Two").await;
+    let mut phone = open(&host, &id, None).await;
+    ws_send(
+        &mut phone,
+        serde_json::json!({ "type": "goto", "index": 0, "step": 1 }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut later = open(&host, &id, None).await;
+    let deck = loop {
+        let msg = next_json(&mut later).await;
+        if msg["type"] == "deck" {
+            break msg;
+        }
+    };
+    assert_eq!(deck["step"], 0, "a viewer walked the room through a list");
+}
