@@ -1,9 +1,10 @@
 import { connect, copyText, sessionId, viewerId } from '/shared.js';
-import { renderLineup, rememberTalk, talkHeld } from '/lineup.js';
+import { renderLineup, rememberTalk, talksHeld, forgetTalk } from '/lineup.js';
 import { starterPrompt } from '/deckstate.js';
 import { renderOptions } from '/quiz.js';
 import { pruneBySlide, survivingSlides } from '/deckstate.js';
 import { burst, reactionBar } from '/reactions.js';
+import { previewDeck, renderPreview } from '/preview.js';
 import { renderQuestions } from '/questions.js';
 import { renderScores } from '/scores.js';
 
@@ -19,11 +20,15 @@ const talkTitle = document.getElementById('talk-title');
 const talkDeck = document.getElementById('talk-deck');
 const talkRules = document.getElementById('talk-rules');
 const talkCancel = document.getElementById('talk-cancel');
+const talkSubmit = document.getElementById('talk-submit');
 const talkError = document.getElementById('talk-error');
+const mineBox = document.getElementById('mine');
 const yours = document.getElementById('yours');
 const yoursLink = document.getElementById('yours-link');
 
-let lineup = { items: [], staged: null, open: false };
+let lineup = { items: [], dropped: [], staged: null, open: false };
+// The talk this form is rewriting, or null while it is putting a new one up.
+let editing = null;
 
 let slides = [];
 let current = 0;
@@ -114,14 +119,16 @@ const socket = connect(id, null, {
     // A talk already up cannot be submitted again, and a closed room takes
     // none, so the button only offers what the room will actually accept.
     submitTalk.hidden = !lineup.open || !talkForm.hidden;
+    // Every change to the running order is a change to where this phone's own
+    // talks stand in it, the host taking one off included.
+    refreshMine();
   },
   baton(msg) {
-    // The host just handed the controls somewhere. If it was to the talk this
+    // The host just handed the controls somewhere. If it was to a talk this
     // browser put up, this is the speaker, and they need their own console.
-    const mine = talkHeld(id);
-    const up = Boolean(mine) && msg.talk === mine.talk;
-    yours.hidden = !up;
-    if (up) yoursLink.href = `/s/${id}/present#t=${encodeURIComponent(mine.token)}`;
+    const mine = talksHeld(id).find((t) => t.talk === msg.talk);
+    yours.hidden = !mine;
+    if (mine) yoursLink.href = `/s/${id}/present#t=${encodeURIComponent(mine.token)}`;
   },
   status(state) {
     status.dataset.state = state;
@@ -202,15 +209,134 @@ nameForm.addEventListener('submit', (event) => {
 
 
 submitTalk.addEventListener('click', () => {
-  talkForm.hidden = false;
-  submitTalk.hidden = true;
-  talkDeck.focus();
+  openForm();
 });
 
 talkCancel.addEventListener('click', () => {
+  closeForm();
+});
+
+function openForm(detail = null) {
+  editing = detail?.id ?? null;
+  talkTitle.value = detail?.title ?? '';
+  talkDeck.value = detail?.markdown ?? '';
+  talkSubmit.textContent = detail ? 'Save changes' : 'Put it up';
+  talkError.hidden = true;
+  talkForm.hidden = false;
+  submitTalk.hidden = true;
+  talkDeck.focus();
+}
+
+function closeForm() {
+  editing = null;
+  talkTitle.value = '';
+  talkDeck.value = '';
+  talkSubmit.textContent = 'Put it up';
   talkForm.hidden = true;
   submitTalk.hidden = !lineup.open;
-});
+}
+
+function tokenFor(talk) {
+  return talksHeld(id).find((t) => t.talk === talk)?.token ?? '';
+}
+
+/// What this phone put up, as it stands in the running order right now.
+///
+/// The server answers a talk's own token, so the host's note comes back here
+/// rather than over the socket that reaches the whole room.
+async function refreshMine() {
+  const held = talksHeld(id);
+  const found = await Promise.all(
+    held.map(async ({ talk, token }) => {
+      try {
+        const res = await fetch(
+          `/api/sessions/${id}/talks/${talk}?token=${encodeURIComponent(token)}`,
+        );
+        if (res.status === 404) forgetTalk(id, talk);
+        return res.ok ? await res.json() : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  const mine = found.filter(Boolean);
+  mineBox.innerHTML = '';
+  mineBox.hidden = !mine.length;
+  if (!mine.length) return;
+
+  const label = document.createElement('h2');
+  label.className = 'label label-spaced';
+  label.textContent = mine.length === 1 ? 'Your talk' : 'Your talks';
+  mineBox.append(label, ...mine.map(mineCard));
+}
+
+function mineCard(detail) {
+  const card = document.createElement('article');
+  card.className = 'mine-card';
+  if (detail.dropped) card.classList.add('dropped');
+
+  const title = document.createElement('h3');
+  title.className = 'mine-title';
+  title.textContent = detail.title;
+
+  const state = document.createElement('p');
+  state.className = 'dim mine-state';
+  state.textContent = detail.staged
+    ? 'On stage now.'
+    : detail.dropped
+      ? 'The host took this off the running order.'
+      : `Number ${detail.position} in the running order.`;
+  card.append(title, state);
+
+  if (detail.note) {
+    const note = document.createElement('p');
+    note.className = 'mine-note';
+    // Whatever the host typed, so it goes on screen as text.
+    note.textContent = detail.note;
+    card.append(note);
+  }
+
+  const preview = document.createElement('section');
+  preview.className = 'preview';
+  preview.hidden = true;
+
+  const actions = document.createElement('div');
+  actions.className = 'talk-actions';
+  const read = document.createElement('button');
+  read.type = 'button';
+  read.className = 'ghost';
+  read.textContent = 'Read it through';
+  read.addEventListener('click', async () => {
+    preview.hidden = !preview.hidden;
+    if (preview.hidden) return;
+    preview.textContent = 'Opening\u2026';
+    try {
+      renderPreview(preview, await previewDeck(detail.markdown));
+    } catch (e) {
+      preview.innerHTML = '';
+      const failed = document.createElement('p');
+      failed.className = 'error';
+      failed.textContent = `Could not draw that: ${e.message}`;
+      preview.append(failed);
+    }
+  });
+  actions.append(read);
+
+  // The deck the room is looking at is driven from the console, not rewritten
+  // from the floor.
+  if (!detail.staged) {
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'primary';
+    edit.textContent = detail.dropped ? 'Fix it and put it back' : 'Edit';
+    edit.addEventListener('click', () => openForm(detail));
+    actions.append(edit);
+  }
+
+  card.append(actions, preview);
+  return card;
+}
 
 talkRules.addEventListener('click', async () => {
   const label = talkRules.textContent;
@@ -229,27 +355,38 @@ talkForm.addEventListener('submit', async (event) => {
     talkError.hidden = false;
     return;
   }
+  const rewriting = editing !== null;
+  const url = rewriting
+    ? `/api/sessions/${id}/talks/${editing}?token=${encodeURIComponent(tokenFor(editing))}`
+    : `/api/sessions/${id}/talks`;
+  const body = {
+    title: talkTitle.value,
+    markdown: talkDeck.value,
+    // The same browser id the socket uses, so the talk is attributed to
+    // whoever is already in the room rather than to a stranger.
+    who: viewerId(),
+  };
+
   try {
-    const res = await fetch(`/api/sessions/${id}/talks`, {
-      method: 'POST',
+    const res = await fetch(url, {
+      method: rewriting ? 'PUT' : 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        title: talkTitle.value,
-        markdown: talkDeck.value,
-        // The same browser id the socket uses, so the talk is attributed to
-        // whoever is already in the room rather than to a stranger.
-        who: viewerId(),
-      }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error((await res.text()) || `server said ${res.status}`);
-    const { id: talk, token } = await res.json();
-    // Kept so this phone knows the talk is its own when the host puts it up.
-    rememberTalk(id, talk, token);
-    talkForm.hidden = true;
-    talkDeck.value = '';
-    talkTitle.value = '';
+    if (!rewriting) {
+      const { id: talk, token } = await res.json();
+      // Kept so this phone knows the talk is its own when the host puts it up.
+      rememberTalk(id, talk, token);
+    }
+    closeForm();
+    refreshMine();
   } catch (e) {
-    talkError.textContent = `Could not put that up: ${e.message}`;
+    talkError.textContent = rewriting
+      ? `Could not save that: ${e.message}`
+      : `Could not put that up: ${e.message}`;
     talkError.hidden = false;
   }
 });
+
+refreshMine();

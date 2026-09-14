@@ -1863,3 +1863,214 @@ async fn the_deck_the_server_was_started_with_reaches_the_start_page() {
     assert_eq!(res.status(), 200);
     assert_eq!(res.text().await.unwrap(), deck);
 }
+
+/// Opens a room that takes talks and puts one up, the way a phone does.
+async fn open_mic(host: &str) -> (String, String) {
+    let (id, mc) = create(host, "# Lightning talks").await;
+    let mut console = open(host, &id, Some(&mc)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "submissions", "open": true }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    (id, mc)
+}
+
+async fn put_up(host: &str, id: &str, who: &str, markdown: &str) -> (u64, String) {
+    let res = reqwest::Client::new()
+        .post(format!("http://{host}/api/sessions/{id}/talks"))
+        .json(&serde_json::json!({ "title": "", "markdown": markdown, "who": who }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 201, "the submission was refused");
+    let json: Value = res.json().await.unwrap();
+    (
+        json["id"].as_u64().unwrap(),
+        json["token"].as_str().unwrap().to_string(),
+    )
+}
+
+async fn read_talk(host: &str, id: &str, talk: u64, token: &str) -> (u16, Value) {
+    let res = reqwest::get(format!(
+        "http://{host}/api/sessions/{id}/talks/{talk}?token={token}"
+    ))
+    .await
+    .unwrap();
+    let status = res.status().as_u16();
+    let body = res.text().await.unwrap();
+    (status, serde_json::from_str(&body).unwrap_or(Value::Null))
+}
+
+/// The point of putting a talk up early is being able to read it back and fix
+/// it before standing up in front of a room.
+#[tokio::test]
+async fn a_speaker_reads_and_rewrites_their_own_talk_while_they_wait() {
+    let host = spawn().await;
+    let (id, _) = open_mic(&host).await;
+    let (talk, token) = put_up(&host, &id, "ada-browser", "# Borrow checking").await;
+
+    let (status, detail) = read_talk(&host, &id, talk, &token).await;
+    assert_eq!(status, 200, "a speaker could not open their own talk");
+    assert_eq!(detail["markdown"], "# Borrow checking");
+    assert_eq!(detail["position"], 1);
+    assert_eq!(detail["dropped"], false);
+
+    let res = reqwest::Client::new()
+        .put(format!(
+            "http://{host}/api/sessions/{id}/talks/{talk}?token={token}"
+        ))
+        .json(&serde_json::json!({
+            "title": "Borrow checking, shorter",
+            "markdown": "# Borrow checking\n\n---\n\n# One rule",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 204, "a speaker could not fix their own talk");
+
+    let (_, detail) = read_talk(&host, &id, talk, &token).await;
+    assert_eq!(detail["markdown"], "# Borrow checking\n\n---\n\n# One rule");
+    assert_eq!(detail["title"], "Borrow checking, shorter");
+}
+
+/// The running order is public. The decks behind it are not.
+#[tokio::test]
+async fn a_phone_cannot_open_a_talk_it_did_not_write() {
+    let host = spawn().await;
+    let (id, _) = open_mic(&host).await;
+    let (talk, _) = put_up(&host, &id, "ada-browser", "# Mine").await;
+    let (_, stranger) = put_up(&host, &id, "bob-browser", "# Theirs").await;
+
+    assert_eq!(read_talk(&host, &id, talk, &stranger).await.0, 403);
+    assert_eq!(read_talk(&host, &id, talk, "").await.0, 403);
+    assert_eq!(
+        read_talk(&host, &id, 999, &stranger).await.0,
+        404,
+        "a talk that never existed was a refusal rather than a miss"
+    );
+
+    let res = reqwest::Client::new()
+        .put(format!(
+            "http://{host}/api/sessions/{id}/talks/{talk}?token={stranger}"
+        ))
+        .json(&serde_json::json!({ "title": "", "markdown": "# Not yours" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 403, "a stranger rewrote somebody else's talk");
+}
+
+/// A note about a talk is for the speaker who wrote it. A broadcast reaches a
+/// room, so it travels to the one phone that asks with the right token.
+#[tokio::test]
+async fn the_note_behind_a_drop_reaches_the_speaker_and_not_the_room() {
+    let host = spawn().await;
+    let (id, mc) = open_mic(&host).await;
+    let (talk, token) = put_up(&host, &id, "ada-browser", "# Borrow checking").await;
+
+    let mut phone = open(&host, &id, None).await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "drop", "talk": talk, "note": "Runs twice too long" }),
+    )
+    .await;
+
+    let mut audience = None;
+    for _ in 0..12 {
+        let msg = next_json(&mut phone).await;
+        if msg["type"] == "lineup" && msg["items"].as_array().unwrap().is_empty() {
+            audience = Some(msg);
+            break;
+        }
+    }
+    let lineup = audience.expect("the room was never told the talk came off");
+    assert_eq!(
+        lineup["dropped"].as_array().map(Vec::len),
+        Some(0),
+        "the room was shown what was pulled from it: {lineup}"
+    );
+
+    let (status, detail) = read_talk(&host, &id, talk, &token).await;
+    assert_eq!(status, 200);
+    assert_eq!(detail["note"], "Runs twice too long");
+    assert_eq!(detail["dropped"], true);
+    assert_eq!(detail["markdown"], "# Borrow checking");
+}
+
+/// Ordering the evening is the host's, and a talk moved on one phone moves on
+/// every phone.
+#[tokio::test]
+async fn the_host_reorders_the_running_order_for_the_whole_room() {
+    let host = spawn().await;
+    let (id, mc) = open_mic(&host).await;
+    let (first, _) = put_up(&host, &id, "ada-browser", "# Ada").await;
+    let (second, speaker) = put_up(&host, &id, "bob-browser", "# Bob").await;
+
+    let mut phone = open(&host, &id, None).await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+
+    // A speaker's own token is not the host's.
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "hand", "talk": second }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let mut driver = open(&host, &id, Some(&speaker)).await;
+    ws_send(
+        &mut driver,
+        serde_json::json!({ "type": "reorder", "talk": second, "index": 0 }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "reorder", "talk": second, "index": 0 }),
+    )
+    .await;
+
+    let mut moved = None;
+    for _ in 0..12 {
+        let msg = next_json(&mut phone).await;
+        if msg["type"] == "lineup" && msg["items"][0]["id"] == second {
+            moved = Some(msg);
+            break;
+        }
+    }
+    let lineup = moved.expect("the room never saw the running order change");
+    assert_eq!(lineup["items"][1]["id"], first);
+}
+
+/// A talk the host deleted has to read as gone, not as refused: the phone that
+/// put it up uses the difference to stop offering to edit something that is
+/// no longer there.
+#[tokio::test]
+async fn a_deleted_talk_reads_as_gone_to_the_phone_that_wrote_it() {
+    let host = spawn().await;
+    let (id, mc) = open_mic(&host).await;
+    let (talk, token) = put_up(&host, &id, "ada-browser", "# Mine").await;
+    assert_eq!(read_talk(&host, &id, talk, &token).await.0, 200);
+
+    let mut console = open(&host, &id, Some(&mc)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "remove", "talk": talk }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    assert_eq!(read_talk(&host, &id, talk, &token).await.0, 404);
+    let res = reqwest::Client::new()
+        .put(format!(
+            "http://{host}/api/sessions/{id}/talks/{talk}?token={token}"
+        ))
+        .json(&serde_json::json!({ "title": "", "markdown": "# Back" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 404);
+}

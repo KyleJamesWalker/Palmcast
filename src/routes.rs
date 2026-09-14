@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::assets::{self, Web};
 use crate::deck;
 use crate::origin;
-use crate::session::{EditError, Registry, Role};
+use crate::session::{EditError, Registry, Role, TalkError};
 use crate::share;
 use crate::ws::{self, Join};
 
@@ -88,7 +88,10 @@ pub fn router_with(app: App) -> Router {
         )
         .route("/api/sessions/{id}/markdown", get(get_markdown))
         .route("/api/sessions/{id}/talks", post(submit_talk))
-        .route("/api/sessions/{id}/talks/{talk}", get(read_talk))
+        .route(
+            "/api/sessions/{id}/talks/{talk}",
+            get(read_talk).put(update_talk),
+        )
         .route("/api/sessions/{id}/export", get(export_evening))
         .route("/api/sessions/{id}/cohost", get(cohost_link))
         .route("/api/sessions/{id}/role", get(whoami))
@@ -239,28 +242,78 @@ async fn submit_talk(
     }
 }
 
-/// The markdown of one submitted talk, for the host to read before staging it.
-/// Staff only: the running order is public, the decks behind it are not.
+/// One submitted talk, whole: for the host reading it before putting it up, and
+/// for the speaker who wrote it checking it over while they wait.
+///
+/// The running order is public and the decks behind it are not, so this answers
+/// two tokens and no others. The host's note travels here rather than on the
+/// socket, because it is for one speaker and a broadcast reaches a room.
 async fn read_talk(
     State(registry): State<Registry>,
     Path((id, talk)): Path<(String, u64)>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let token = params.get("token").map(String::as_str).unwrap_or_default();
-    let found = registry.with(&id, |s| {
-        s.role_of(token)
-            .edits()
-            .then(|| s.talk_markdown(talk))
-            .flatten()
+    let found = registry.with(&id, |s| match s.talk_detail(talk) {
+        None => Err(StatusCode::NOT_FOUND),
+        Some(_) if !allowed(s, talk, token) => Err(StatusCode::FORBIDDEN),
+        Some(detail) => Ok(detail),
     });
     match found {
-        Some(Some(markdown)) => (
-            [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
-            markdown,
+        Some(Ok(detail)) => axum::Json(detail).into_response(),
+        Some(Err(status)) => status.into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// The two tokens a talk answers to: the host's, and the one minted for the
+/// talk itself.
+fn allowed(session: &crate::session::Session, talk: u64, token: &str) -> bool {
+    session.role_of(token).edits() || session.owns_talk(talk, token)
+}
+
+#[derive(Deserialize)]
+struct TalkEdit {
+    #[serde(default)]
+    title: String,
+    markdown: String,
+}
+
+/// Rewrites a talk that is still waiting.
+///
+/// The speaker keeps their own deck until the room sees it: the whole point of
+/// putting a talk up early is being able to fix it before you stand up. A talk
+/// the host dropped comes back to the running order on the save that fixes it.
+async fn update_talk(
+    State(registry): State<Registry>,
+    Path((id, talk)): Path<(String, u64)>,
+    Query(params): Query<HashMap<String, String>>,
+    axum::Json(body): axum::Json<TalkEdit>,
+) -> Response {
+    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    let outcome = registry.with_mut(&id, |s| {
+        // A talk that is gone is gone for everyone, so say so rather than
+        // refusing the speaker who wrote it.
+        if s.talk_detail(talk).is_none() {
+            return Some(Err(TalkError::Gone));
+        }
+        if !allowed(s, talk, token) {
+            return None;
+        }
+        Some(s.update_talk(talk, &body.title, &body.markdown))
+    });
+    match outcome {
+        Some(Some(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
+        Some(Some(Err(TalkError::TooLarge))) => {
+            (StatusCode::PAYLOAD_TOO_LARGE, "that talk is too long").into_response()
+        }
+        Some(Some(Err(TalkError::Staged))) => (
+            StatusCode::CONFLICT,
+            "the room is looking at this talk right now",
         )
             .into_response(),
+        Some(Some(Err(TalkError::Gone))) | None => StatusCode::NOT_FOUND.into_response(),
         Some(None) => StatusCode::FORBIDDEN.into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 

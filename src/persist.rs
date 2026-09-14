@@ -85,6 +85,13 @@ pub struct PersistedTalk {
     pub token: String,
     #[serde(default)]
     pub by: String,
+    /// Whether the host has taken it off the running order, and what they said
+    /// when they did. Two fields rather than an optional string, so a drop with
+    /// nothing written on it is still a drop.
+    #[serde(default)]
+    pub dropped: bool,
+    #[serde(default)]
+    pub note: String,
 }
 
 /// What one voter chose on one slide.

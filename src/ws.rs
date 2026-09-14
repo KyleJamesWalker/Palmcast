@@ -118,8 +118,17 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
         ClientMsg::Submissions { open } => {
             registry.with_mut(id, |s| s.set_submissions(s.role_of(token), open));
         }
-        ClientMsg::Drop { talk } => {
-            registry.with_mut(id, |s| s.drop_talk(s.role_of(token), talk));
+        ClientMsg::Reorder { talk, index } => {
+            registry.with_mut(id, |s| s.reorder(s.role_of(token), talk, index));
+        }
+        ClientMsg::Drop { talk, note } => {
+            registry.with_mut(id, |s| s.drop_talk(s.role_of(token), talk, &note));
+        }
+        ClientMsg::Restore { talk } => {
+            registry.with_mut(id, |s| s.restore_talk(s.role_of(token), talk));
+        }
+        ClientMsg::Remove { talk } => {
+            registry.with_mut(id, |s| s.remove_talk(s.role_of(token), talk));
         }
         ClientMsg::SetName { name } => {
             registry.with_mut(id, |s| s.set_name(who, &name));

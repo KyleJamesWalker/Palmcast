@@ -8,7 +8,9 @@ use tokio::sync::broadcast;
 
 use crate::deck::{self, Slide};
 use crate::persist::{Choice, PersistedCue, PersistedQuestion, PersistedSession, PersistedTalk};
-use crate::wire::{AudienceQuestion, Frame, LineupEntry, Reaction, ScoreRow, ServerMsg};
+use crate::wire::{
+    AudienceQuestion, Frame, LineupEntry, Reaction, ScoreRow, ServerMsg, TalkDetail,
+};
 
 /// No vowels, so an id cannot spell a word, and no glyphs that look alike when
 /// read off a phone screen in a dark room.
@@ -42,6 +44,9 @@ const MAX_TALKS_PER_PERSON: usize = 3;
 /// A lightning talk, not a keynote. Also what one submission can cost the room.
 const MAX_TALK_BYTES: usize = 64 * 1024;
 const MAX_TITLE_CHARS: usize = 60;
+/// A note is a line telling a speaker what to fix, the same length the room
+/// gets for a question.
+const MAX_NOTE_CHARS: usize = 280;
 
 /// What a socket or a request is allowed to do.
 ///
@@ -85,6 +90,10 @@ pub struct Talk {
     /// allows and no more.
     pub token: String,
     pub by: String,
+    /// Set when the host takes it off the running order, holding whatever they
+    /// wanted the speaker to know. The talk is kept rather than deleted, so the
+    /// speaker can fix what was wrong and put it back.
+    pub dropped: Option<String>,
 }
 
 /// The host's own deck, parked while a talk is on stage.
@@ -602,20 +611,36 @@ impl Session {
     }
 
     fn lineup_msg(&self) -> ServerMsg {
-        ServerMsg::Lineup {
-            items: self
-                .lineup
+        let rows = |dropped: bool| -> Vec<LineupEntry> {
+            self.lineup
                 .iter()
+                .filter(|talk| talk.dropped.is_some() == dropped)
                 .map(|talk| LineupEntry {
                     id: talk.id,
                     title: talk.title.clone(),
                     by: talk.by.clone(),
                     slides: deck::parse(&talk.markdown).len(),
                 })
-                .collect(),
+                .collect()
+        };
+        ServerMsg::Lineup {
+            items: rows(false),
+            dropped: rows(true),
             staged: self.staged,
             open: self.submissions_open,
         }
+    }
+
+    /// The talks that are actually in the running order, in order, as indexes
+    /// into the lineup. A dropped talk keeps its slot so putting it back puts
+    /// it back where it was, which means a position is never a lineup index.
+    fn running(&self) -> Vec<usize> {
+        self.lineup
+            .iter()
+            .enumerate()
+            .filter(|(_, talk)| talk.dropped.is_none())
+            .map(|(index, _)| index)
+            .collect()
     }
 
     fn baton_msg(&self) -> ServerMsg {
@@ -676,21 +701,74 @@ impl Session {
             markdown: markdown.to_string(),
             token: token.clone(),
             by,
+            dropped: None,
         });
         self.touched = Instant::now();
         self.emit(&self.lineup_msg());
         Some((id, token))
     }
 
-    pub fn talk_markdown(&self, talk: u64) -> Option<String> {
-        // A staged talk is being edited live, so the live deck is the truth.
-        if self.staged == Some(talk) {
-            return Some(self.markdown.clone());
-        }
+    /// One talk, whole, for whoever is entitled to it: the host reading it
+    /// before putting it up, or the speaker checking their own.
+    pub fn talk_detail(&self, talk: u64) -> Option<TalkDetail> {
+        let held = self.lineup.iter().find(|t| t.id == talk)?;
+        let position = self
+            .running()
+            .iter()
+            .position(|slot| self.lineup[*slot].id == talk)
+            .map(|at| at + 1);
+        Some(TalkDetail {
+            id: held.id,
+            title: held.title.clone(),
+            // A staged talk is being edited live, so the live deck is the truth.
+            markdown: if self.staged == Some(talk) {
+                self.markdown.clone()
+            } else {
+                held.markdown.clone()
+            },
+            by: held.by.clone(),
+            position,
+            staged: self.staged == Some(talk),
+            dropped: held.dropped.is_some(),
+            note: held.dropped.clone().unwrap_or_default(),
+        })
+    }
+
+    /// True when this is the token minted for that talk. Constant time, like
+    /// every other token comparison here.
+    pub fn owns_talk(&self, talk: u64, token: &str) -> bool {
         self.lineup
             .iter()
             .find(|t| t.id == talk)
-            .map(|t| t.markdown.clone())
+            .map(|t| t.token.as_bytes().ct_eq(token.as_bytes()).into())
+            .unwrap_or(false)
+    }
+
+    /// Replaces a talk the room has not seen yet.
+    ///
+    /// A talk still waiting is the speaker's to rewrite, and one the host
+    /// dropped is theirs to fix, which puts it back where it was. The talk on
+    /// stage is the exception: that deck is the room's, and it is edited
+    /// through the console like any other live deck.
+    pub fn update_talk(&mut self, talk: u64, title: &str, markdown: &str) -> Result<(), TalkError> {
+        if markdown.len() > MAX_TALK_BYTES {
+            return Err(TalkError::TooLarge);
+        }
+        if self.staged == Some(talk) {
+            return Err(TalkError::Staged);
+        }
+        let Some(held) = self.lineup.iter_mut().find(|t| t.id == talk) else {
+            return Err(TalkError::Gone);
+        };
+        held.title = match title.trim() {
+            "" => first_heading(markdown),
+            given => given.chars().take(MAX_TITLE_CHARS).collect(),
+        };
+        held.markdown = markdown.to_string();
+        held.dropped = None;
+        self.touched = Instant::now();
+        self.emit(&self.lineup_msg());
+        Ok(())
     }
 
     pub fn set_submissions(&mut self, role: Role, open: bool) -> bool {
@@ -703,12 +781,59 @@ impl Session {
         true
     }
 
-    /// Drops a talk. A staged talk comes off the stage first, so the room is
-    /// never left looking at a deck the lineup no longer has.
-    pub fn drop_talk(&mut self, role: Role, talk: u64) -> bool {
+    /// Takes a talk off the running order, with whatever the host wants its
+    /// speaker to know.
+    ///
+    /// The deck is kept rather than deleted, because whoever wrote it is
+    /// standing in the room: a talk pulled for running twice too long is one
+    /// edit away from being usable. A staged talk comes off the stage first, so
+    /// the room is never left looking at a deck the running order has lost.
+    pub fn drop_talk(&mut self, role: Role, talk: u64, note: &str) -> bool {
         if !role.hosts() || !self.lineup.iter().any(|t| t.id == talk) {
             return false;
         }
+        self.clear_stage_of(role, talk);
+        let note: String = note.trim().chars().take(MAX_NOTE_CHARS).collect();
+        if let Some(held) = self.lineup.iter_mut().find(|t| t.id == talk) {
+            held.dropped = Some(note);
+        }
+        self.touched = Instant::now();
+        self.emit(&self.lineup_msg());
+        true
+    }
+
+    /// Puts a dropped talk back where it was.
+    pub fn restore_talk(&mut self, role: Role, talk: u64) -> bool {
+        if !role.hosts() {
+            return false;
+        }
+        let Some(held) = self.lineup.iter_mut().find(|t| t.id == talk) else {
+            return false;
+        };
+        if held.dropped.take().is_none() {
+            return false;
+        }
+        self.touched = Instant::now();
+        self.emit(&self.lineup_msg());
+        true
+    }
+
+    /// Throws a talk away. Nothing comes back from this, which is why dropping
+    /// one is the gentler thing the host reaches for first.
+    pub fn remove_talk(&mut self, role: Role, talk: u64) -> bool {
+        if !role.hosts() || !self.lineup.iter().any(|t| t.id == talk) {
+            return false;
+        }
+        self.clear_stage_of(role, talk);
+        self.lineup.retain(|t| t.id != talk);
+        self.touched = Instant::now();
+        self.emit(&self.lineup_msg());
+        true
+    }
+
+    /// Gets a talk off the stage and out of the driving seat, for the two ways
+    /// a talk stops being part of the evening.
+    fn clear_stage_of(&mut self, role: Role, talk: u64) {
         if self.staged == Some(talk) {
             self.stage(role, None);
         }
@@ -716,7 +841,32 @@ impl Session {
             self.baton = None;
             self.emit(&self.baton_msg());
         }
-        self.lineup.retain(|t| t.id != talk);
+    }
+
+    /// Moves a talk to another place in the running order, counting from zero.
+    ///
+    /// The order talks arrive in is the order somebody typed fastest, which is
+    /// nobody's idea of an evening. A position counts the running order alone,
+    /// so a dropped talk sitting between two of them changes nothing.
+    pub fn reorder(&mut self, role: Role, talk: u64, index: usize) -> bool {
+        if !role.hosts() {
+            return false;
+        }
+        let running = self.running();
+        let Some(from) = running
+            .iter()
+            .position(|slot| self.lineup[*slot].id == talk)
+        else {
+            return false;
+        };
+        let to = index.min(running.len().saturating_sub(1));
+        if to == from {
+            return false;
+        }
+        let moved = self.lineup.remove(running[from]);
+        // Read again, because the removal shifted everything behind it.
+        let landing = self.running().get(to).copied().unwrap_or(self.lineup.len());
+        self.lineup.insert(landing, moved);
         self.touched = Instant::now();
         self.emit(&self.lineup_msg());
         true
@@ -734,7 +884,10 @@ impl Session {
             return false;
         }
         if let Some(id) = talk
-            && !self.lineup.iter().any(|t| t.id == id)
+            && !self
+                .lineup
+                .iter()
+                .any(|t| t.id == id && t.dropped.is_none())
         {
             return false;
         }
@@ -820,7 +973,10 @@ impl Session {
             return false;
         }
         if let Some(id) = talk
-            && !self.lineup.iter().any(|t| t.id == id)
+            && !self
+                .lineup
+                .iter()
+                .any(|t| t.id == id && t.dropped.is_none())
         {
             return false;
         }
@@ -844,6 +1000,15 @@ fn first_heading(markdown: &str) -> String {
                 .filter(|t: &String| !t.is_empty())
         })
         .unwrap_or_else(|| "Untitled".to_string())
+}
+
+/// Why a speaker's own edit to their own talk did not land.
+#[derive(Debug, PartialEq, Eq)]
+pub enum TalkError {
+    /// The room is looking at it. That deck is edited through the console.
+    Staged,
+    TooLarge,
+    Gone,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1028,6 +1193,8 @@ impl Registry {
                         markdown: talk.markdown.clone(),
                         token: talk.token.clone(),
                         by: talk.by.clone(),
+                        dropped: talk.dropped.is_some(),
+                        note: talk.dropped.clone().unwrap_or_default(),
                     })
                     .collect(),
                 next_talk_id: s.next_talk_id,
@@ -1146,6 +1313,7 @@ impl Registry {
                             markdown: talk.markdown,
                             token: talk.token,
                             by: talk.by,
+                            dropped: talk.dropped.then_some(talk.note),
                         })
                         .collect(),
                     next_talk_id: item.next_talk_id.max(1),
@@ -1445,15 +1613,13 @@ mod tests {
         // So none of the host's controls answer to them.
         assert!(!reg.with_mut(&id, |s| s.stage(role, Some(other))).unwrap());
         assert!(!reg.with_mut(&id, |s| s.hand(role, None)).unwrap());
-        assert!(!reg.with_mut(&id, |s| s.drop_talk(role, other)).unwrap());
+        assert!(!reg.with_mut(&id, |s| s.drop_talk(role, other, "")).unwrap());
         assert!(
             !reg.with_mut(&id, |s| s.set_submissions(role, false))
                 .unwrap()
         );
         assert!(
-            reg.with(&id, |s| s.talk_markdown(other))
-                .flatten()
-                .is_some(),
+            reg.with(&id, |s| s.talk_detail(other)).flatten().is_some(),
             "the test is meaningless if the other talk never existed"
         );
     }
@@ -1497,7 +1663,10 @@ mod tests {
         reg.with_mut(&id, |s| s.stage(Role::Mc, None)).unwrap();
 
         assert_eq!(
-            reg.with(&id, |s| s.talk_markdown(talk)).flatten().unwrap(),
+            reg.with(&id, |s| s.talk_detail(talk))
+                .flatten()
+                .unwrap()
+                .markdown,
             "# Ada\n\n---\n\n# Fixed",
             "the fix made on stage was lost when the talk came down"
         );
@@ -1509,7 +1678,10 @@ mod tests {
         let (talk, speaker) = submit(&reg, &id, "ada", "# Ada\n\n---\n\n# Two\n\n---\n\n# Three");
         reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
             .unwrap();
-        assert!(reg.with_mut(&id, |s| s.drop_talk(Role::Mc, talk)).unwrap());
+        assert!(
+            reg.with_mut(&id, |s| s.drop_talk(Role::Mc, talk, ""))
+                .unwrap()
+        );
 
         let ServerMsg::Deck { slides, .. } = reg.with(&id, Session::snapshot).unwrap() else {
             panic!("no deck");
@@ -1522,6 +1694,229 @@ mod tests {
         };
         assert!(items.is_empty());
         assert_eq!(staged, None);
+    }
+
+    fn order(reg: &Registry, id: &str) -> Vec<u64> {
+        match reg.with(id, Session::lineup_msg).unwrap() {
+            ServerMsg::Lineup { items, .. } => items.into_iter().map(|t| t.id).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Talks arrive in the order somebody typed fastest, which is not an
+    /// evening. The host decides what follows what.
+    #[test]
+    fn the_host_sets_the_running_order() {
+        let (reg, id, _) = open_room();
+        let (first, _) = submit(&reg, &id, "ada", "# Ada");
+        let (second, _) = submit(&reg, &id, "bob", "# Bob");
+        let (third, _) = submit(&reg, &id, "cal", "# Cal");
+
+        assert!(
+            reg.with_mut(&id, |s| s.reorder(Role::Mc, third, 0))
+                .unwrap()
+        );
+        assert_eq!(order(&reg, &id), vec![third, first, second]);
+
+        assert!(
+            reg.with_mut(&id, |s| s.reorder(Role::Mc, third, 2))
+                .unwrap()
+        );
+        assert_eq!(order(&reg, &id), vec![first, second, third]);
+
+        // Past the end is the end rather than a refusal: a phone sends the
+        // position it can see.
+        assert!(
+            reg.with_mut(&id, |s| s.reorder(Role::Mc, first, 99))
+                .unwrap()
+        );
+        assert_eq!(order(&reg, &id), vec![second, third, first]);
+    }
+
+    /// A dropped talk keeps its slot in the list it was dropped from, so a
+    /// position always counts the running order and never the gaps in it.
+    #[test]
+    fn a_dropped_talk_does_not_shift_the_order_around_it() {
+        let (reg, id, _) = open_room();
+        let (first, _) = submit(&reg, &id, "ada", "# Ada");
+        let (second, _) = submit(&reg, &id, "bob", "# Bob");
+        let (third, _) = submit(&reg, &id, "cal", "# Cal");
+        reg.with_mut(&id, |s| s.drop_talk(Role::Mc, second, ""))
+            .unwrap();
+        assert_eq!(order(&reg, &id), vec![first, third]);
+
+        assert!(
+            reg.with_mut(&id, |s| s.reorder(Role::Mc, first, 1))
+                .unwrap()
+        );
+        assert_eq!(order(&reg, &id), vec![third, first]);
+        assert!(
+            reg.with_mut(&id, |s| s.restore_talk(Role::Mc, second))
+                .unwrap()
+        );
+        assert_eq!(order(&reg, &id).len(), 3);
+    }
+
+    #[test]
+    fn only_the_host_orders_the_evening() {
+        let (reg, id, _) = open_room();
+        let (first, speaker) = submit(&reg, &id, "ada", "# Ada");
+        let (second, _) = submit(&reg, &id, "bob", "# Bob");
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(first)))
+            .unwrap();
+        let role = reg.role(&id, &speaker);
+
+        assert!(!reg.with_mut(&id, |s| s.reorder(role, second, 0)).unwrap());
+        assert!(
+            !reg.with_mut(&id, |s| s.reorder(Role::CoHost, second, 0))
+                .unwrap()
+        );
+        assert!(
+            !reg.with_mut(&id, |s| s.restore_talk(Role::Viewer, second))
+                .unwrap()
+        );
+        assert_eq!(order(&reg, &id), vec![first, second]);
+    }
+
+    /// Whoever wrote the talk is standing in the room, so a drop is a message
+    /// and a deck they can still fix, not a deletion.
+    #[test]
+    fn a_dropped_talk_keeps_its_deck_and_carries_the_note() {
+        let (reg, id, _) = open_room();
+        let (talk, speaker) = submit(&reg, &id, "ada", "# Ada\n\n---\n\n# Two");
+        assert!(
+            reg.with_mut(&id, |s| s.drop_talk(Role::Mc, talk, "  Twice too long.  "))
+                .unwrap()
+        );
+
+        assert!(order(&reg, &id).is_empty());
+        let detail = reg.with(&id, |s| s.talk_detail(talk)).flatten().unwrap();
+        assert!(detail.dropped);
+        assert_eq!(detail.note, "Twice too long.");
+        assert_eq!(detail.position, None);
+        assert_eq!(detail.markdown, "# Ada\n\n---\n\n# Two");
+
+        // And it is nobody's to put on until it comes back.
+        assert!(
+            !reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+                .unwrap()
+        );
+        assert!(!reg.with_mut(&id, |s| s.hand(Role::Mc, Some(talk))).unwrap());
+        assert_eq!(reg.role(&id, &speaker), Role::Viewer);
+    }
+
+    #[test]
+    fn a_note_is_a_line_and_not_a_speech() {
+        let (reg, id, _) = open_room();
+        let (talk, _) = submit(&reg, &id, "ada", "# Ada");
+        reg.with_mut(&id, |s| s.drop_talk(Role::Mc, talk, &"no".repeat(400)))
+            .unwrap();
+        let detail = reg.with(&id, |s| s.talk_detail(talk)).flatten().unwrap();
+        assert_eq!(detail.note.chars().count(), MAX_NOTE_CHARS);
+    }
+
+    #[test]
+    fn fixing_a_dropped_talk_puts_it_back_where_it_was() {
+        let (reg, id, _) = open_room();
+        let (first, _) = submit(&reg, &id, "ada", "# Ada");
+        let (second, _) = submit(&reg, &id, "bob", "# Bob");
+        let (third, _) = submit(&reg, &id, "cal", "# Cal");
+        reg.with_mut(&id, |s| s.drop_talk(Role::Mc, second, "Needs an ending"))
+            .unwrap();
+
+        reg.with_mut(&id, |s| {
+            s.update_talk(second, "", "# Bob\n\n---\n\n# An ending")
+        })
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(order(&reg, &id), vec![first, second, third]);
+        let detail = reg.with(&id, |s| s.talk_detail(second)).flatten().unwrap();
+        assert!(!detail.dropped);
+        assert_eq!(detail.note, "");
+        assert_eq!(detail.position, Some(2));
+        assert_eq!(detail.title, "Bob", "the retitle did not follow the deck");
+    }
+
+    /// The deck the room is looking at belongs to the room. It is edited in the
+    /// console, where an edit reaches every phone at once.
+    #[test]
+    fn a_talk_on_stage_is_not_rewritten_behind_the_room_s_back() {
+        let (reg, id, _) = open_room();
+        let (talk, _) = submit(&reg, &id, "ada", "# Ada");
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+
+        assert_eq!(
+            reg.with_mut(&id, |s| s.update_talk(talk, "", "# Something else"))
+                .unwrap(),
+            Err(TalkError::Staged)
+        );
+    }
+
+    #[test]
+    fn a_talk_answers_to_its_own_token_and_no_other() {
+        let (reg, id, mc) = open_room();
+        let (mine, my_token) = submit(&reg, &id, "ada", "# Ada");
+        let (_, your_token) = submit(&reg, &id, "bob", "# Bob");
+
+        reg.with(&id, |s| {
+            assert!(s.owns_talk(mine, &my_token));
+            assert!(
+                !s.owns_talk(mine, &your_token),
+                "another talk's token opened it"
+            );
+            assert!(
+                !s.owns_talk(mine, &mc),
+                "the host token passed as a speaker's"
+            );
+            assert!(!s.owns_talk(mine, ""), "an empty token opened a talk");
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn removing_a_talk_takes_it_away_for_good() {
+        let (reg, id, _) = open_room();
+        let (talk, _) = submit(&reg, &id, "ada", "# Ada");
+        reg.with_mut(&id, |s| s.drop_talk(Role::Mc, talk, "not tonight"))
+            .unwrap();
+
+        assert!(
+            reg.with_mut(&id, |s| s.remove_talk(Role::Mc, talk))
+                .unwrap()
+        );
+        assert!(reg.with(&id, |s| s.talk_detail(talk)).flatten().is_none());
+        assert!(
+            !reg.with_mut(&id, |s| s.restore_talk(Role::Mc, talk))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn a_dropped_talk_and_its_note_survive_a_restart() {
+        let before = registry();
+        let (id, _) = before.create("# Welcome").unwrap();
+        before.with_mut(&id, |s| s.set_submissions(Role::Mc, true));
+        let (talk, token) = before
+            .with_mut(&id, |s| s.submit("ada", "", "# Ada"))
+            .flatten()
+            .unwrap();
+        before
+            .with_mut(&id, |s| s.drop_talk(Role::Mc, talk, "Needs an ending"))
+            .unwrap();
+
+        let after = registry();
+        assert_eq!(after.import(before.export()), 1);
+
+        let detail = after.with(&id, |s| s.talk_detail(talk)).flatten().unwrap();
+        assert!(detail.dropped, "the drop was forgotten across a restart");
+        assert_eq!(detail.note, "Needs an ending");
+        assert!(order(&after, &id).is_empty());
+        assert!(
+            after.with(&id, |s| s.owns_talk(talk, &token)).unwrap(),
+            "the speaker lost their own talk across a restart"
+        );
     }
 
     #[test]
@@ -1599,6 +1994,7 @@ mod tests {
             items,
             staged,
             open,
+            ..
         } = after.with(&id, Session::lineup_msg).unwrap()
         else {
             panic!("no lineup");

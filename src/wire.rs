@@ -26,6 +26,24 @@ pub struct LineupEntry {
     pub slides: usize,
 }
 
+/// One talk, whole. Answered to a request carrying either the host's token or
+/// the talk's own, never broadcast: the note the host left is between those
+/// two and nobody else.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TalkDetail {
+    pub id: u64,
+    pub title: String,
+    pub markdown: String,
+    pub by: String,
+    /// Where it sits in the running order, counting from one. `None` once the
+    /// host has taken it off.
+    pub position: Option<usize>,
+    pub staged: bool,
+    pub dropped: bool,
+    /// Why the host took it off, when they said. Empty when they did not.
+    pub note: String,
+}
+
 /// A question from the floor. `text` is whatever a viewer typed, so every view
 /// puts it on screen as text and never as markup.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -87,6 +105,9 @@ pub enum ServerMsg {
     /// host puts it on.
     Lineup {
         items: Vec<LineupEntry>,
+        /// Talks the host has taken off the running order. Staff only, because
+        /// a room does not need to watch what was pulled from it.
+        dropped: Vec<LineupEntry>,
         /// The talk currently on stage, if any.
         staged: Option<u64>,
         open: bool,
@@ -131,6 +152,17 @@ impl ServerMsg {
                     })
                     .collect(),
             }),
+            ServerMsg::Lineup {
+                items,
+                staged,
+                open,
+                ..
+            } => Some(ServerMsg::Lineup {
+                items: items.clone(),
+                dropped: Vec::new(),
+                staged: *staged,
+                open: *open,
+            }),
             ServerMsg::Tally { .. } => None,
             other => Some(other.clone()),
         }
@@ -155,8 +187,26 @@ pub enum ClientMsg {
     Submissions {
         open: bool,
     },
-    /// The host dropping a talk from the lineup.
+    /// The host moving a talk to another place in the running order, counting
+    /// from zero.
+    Reorder {
+        talk: u64,
+        index: usize,
+    },
+    /// The host taking a talk off the running order, with whatever they want
+    /// its speaker to know. The talk is kept, so the speaker can fix it and put
+    /// it back.
     Drop {
+        talk: u64,
+        #[serde(default)]
+        note: String,
+    },
+    /// The host putting a dropped talk back where it was.
+    Restore {
+        talk: u64,
+    },
+    /// The host throwing a talk away for good.
+    Remove {
         talk: u64,
     },
     /// The whole selection, replacing whatever this voter chose before.
@@ -205,7 +255,7 @@ impl Frame {
         let owner = serde_json::to_string(msg).unwrap_or_default();
         let audience = match msg.redacted() {
             // Identical payloads are the common case, so do not serialize twice.
-            Some(redacted) if matches!(msg, ServerMsg::Deck { .. }) => {
+            Some(redacted) if matches!(msg, ServerMsg::Deck { .. } | ServerMsg::Lineup { .. }) => {
                 Some(serde_json::to_string(&redacted).unwrap_or_default())
             }
             Some(_) => Some(owner.clone()),
@@ -264,6 +314,31 @@ mod tests {
     fn an_identical_message_is_not_serialized_twice() {
         let frame = Frame::new(&ServerMsg::Move { current: 2 });
         assert_eq!(frame.for_socket(true), frame.for_socket(false));
+    }
+
+    #[test]
+    fn the_room_is_not_told_what_was_pulled_from_the_running_order() {
+        let entry = LineupEntry {
+            id: 1,
+            title: "Borrow checking".into(),
+            by: "Ada".into(),
+            slides: 3,
+        };
+        let frame = Frame::new(&ServerMsg::Lineup {
+            items: vec![entry.clone()],
+            dropped: vec![LineupEntry {
+                title: "Needs a rewrite".into(),
+                ..entry
+            }],
+            staged: None,
+            open: true,
+        });
+
+        let owner = frame.for_socket(true).unwrap();
+        let audience = frame.for_socket(false).unwrap();
+        assert!(owner.contains("Needs a rewrite"));
+        assert!(!audience.contains("Needs a rewrite"), "{audience}");
+        assert!(audience.contains("Borrow checking"));
     }
 
     #[test]

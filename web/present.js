@@ -91,7 +91,7 @@ let independent = false;
 let latestQuestions = [];
 let editingRev = null;
 let myRole = 'viewer';
-let lineup = { items: [], staged: null, open: false };
+let lineup = { items: [], dropped: [], staged: null, open: false };
 let baton = null;
 const voted = new Set();
 const tallies = new Map();
@@ -228,10 +228,26 @@ function paintLineup() {
     onHand(talk) {
       socket.send({ type: 'hand', talk });
     },
+    onMove(talk, index) {
+      socket.send({ type: 'reorder', talk: talk.id, index });
+    },
     onDrop(talk) {
-      // A deck somebody wrote, so this asks before throwing it away.
-      if (confirm(`Drop "${talk.title}" from the running order?`)) {
-        socket.send({ type: 'drop', talk: talk.id });
+      // The speaker is in the room and reads this on their own phone, so the
+      // line is offered here rather than left for the host to find them later.
+      const note = prompt(
+        `Take "${talk.title}" off the running order?\n\n` +
+          `A line for ${talk.by || 'the speaker'}, if you have one:`,
+        '',
+      );
+      if (note === null) return;
+      socket.send({ type: 'drop', talk: talk.id, note });
+    },
+    onRestore(talk) {
+      socket.send({ type: 'restore', talk: talk.id });
+    },
+    onRemove(talk) {
+      if (confirm(`Delete "${talk.title}" for good? Its speaker loses it too.`)) {
+        socket.send({ type: 'remove', talk: talk.id });
       }
     },
     async onPreview(talk) {
@@ -243,7 +259,8 @@ function paintLineup() {
           `/api/sessions/${id}/talks/${talk.id}?token=${encodeURIComponent(token ?? '')}`,
         );
         if (!res.ok) throw new Error(`server said ${res.status}`);
-        renderPreview(els.talkPreview, await previewDeck(await res.text()));
+        const detail = await res.json();
+        renderPreview(els.talkPreview, await previewDeck(detail.markdown));
       } catch (e) {
         els.talkPreview.innerHTML = '';
         const failed = document.createElement('p');
