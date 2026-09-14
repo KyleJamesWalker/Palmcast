@@ -5,6 +5,7 @@ import {
   packDeck,
   rememberToken,
   slideCount,
+  starterDeck,
   unpackDeck,
 } from '/shared.js';
 import { previewDeck, renderPreview } from '/preview.js';
@@ -82,11 +83,17 @@ previewToggle.addEventListener('click', async () => {
 });
 
 const DRAFT = 'palmcast:draft';
-try {
-  editor.value = localStorage.getItem(DRAFT) || SAMPLE;
-} catch {
-  editor.value = SAMPLE;
+
+function savedDraft() {
+  try {
+    return localStorage.getItem(DRAFT) || '';
+  } catch {
+    return '';
+  }
 }
+
+const draft = savedDraft();
+editor.value = draft || SAMPLE;
 
 function refresh() {
   const n = slideCount(editor.value);
@@ -137,7 +144,26 @@ async function openShared() {
 }
 
 addEventListener('hashchange', openShared);
-openShared();
+
+// What the editor opens with, in order: a deck someone shared, whatever was
+// being written in this browser last, the deck this instance was started with,
+// the sample. Only the third needs asking the server, so the sample goes up
+// first and gives way to an answer that arrives.
+async function fill() {
+  if (deckTokenIn(location.hash)) {
+    await openShared();
+    return;
+  }
+  if (draft) return;
+  const starter = await starterDeck();
+  // A deck typed or pasted while that was in flight is worth more than it.
+  if (starter && editor.value === SAMPLE && !deckTokenIn(location.hash)) {
+    editor.value = starter;
+    refresh();
+  }
+}
+
+fill();
 
 // The rules, not the deck. Someone arriving with a topic, a page of notes or
 // an existing deck has the source an agent needs and no idea what shape the

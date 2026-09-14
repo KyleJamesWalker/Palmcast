@@ -11,12 +11,23 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 async fn spawn() -> String {
     let registry = Registry::new(Duration::from_secs(3600));
+    serve(routes::router(registry)).await
+}
+
+async fn spawn_with_deck(markdown: &str) -> String {
+    serve(routes::router_with(routes::App {
+        registry: Registry::new(Duration::from_secs(3600)),
+        public_url: None,
+        starter: Some(markdown.to_string()),
+    }))
+    .await
+}
+
+async fn serve(router: axum::Router) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        axum::serve(listener, routes::router(registry))
-            .await
-            .unwrap();
+        axum::serve(listener, router).await.unwrap();
     });
     format!("127.0.0.1:{}", addr.port())
 }
@@ -1831,4 +1842,24 @@ async fn the_export_holds_the_evening() {
         vtt.contains("Borrow checking \u{2014} slide 2"),
         "got {vtt}"
     );
+}
+
+#[tokio::test]
+async fn an_instance_without_a_deck_offers_the_start_page_nothing() {
+    let host = spawn().await;
+    let res = reqwest::get(format!("http://{host}/api/starter"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 204);
+}
+
+#[tokio::test]
+async fn the_deck_the_server_was_started_with_reaches_the_start_page() {
+    let deck = "# Quiz night\n\n---\n\n# Round one\n";
+    let host = spawn_with_deck(deck).await;
+    let res = reqwest::get(format!("http://{host}/api/starter"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.text().await.unwrap(), deck);
 }

@@ -17,7 +17,7 @@ use crate::session::{EditError, Registry, Role};
 use crate::share;
 use crate::ws::{self, Join};
 
-const MAX_DECK_BYTES: usize = 256 * 1024;
+pub const MAX_DECK_BYTES: usize = 256 * 1024;
 /// A deck is the largest thing anyone posts. The margin covers the JSON frame.
 const MAX_BODY_BYTES: usize = MAX_DECK_BYTES + 4096;
 /// A socket frame only ever carries a short command, so the default megabytes
@@ -54,6 +54,9 @@ pub struct App {
     /// Set when the instance knows its own address. Without it the Host header
     /// decides, which is fine on a laptop and guesswork behind a proxy.
     pub public_url: Option<String>,
+    /// The deck the start page opens with, for an instance that runs the same
+    /// talk or quiz every time. Unset leaves the page its built-in sample.
+    pub starter: Option<String>,
 }
 
 impl axum::extract::FromRef<App> for Registry {
@@ -66,6 +69,7 @@ pub fn router(registry: Registry) -> Router {
     router_with(App {
         registry,
         public_url: None,
+        starter: None,
     })
 }
 
@@ -75,6 +79,7 @@ pub fn router_with(app: App) -> Router {
         .route("/healthz", get(health))
         .route("/api/sessions", post(create_session))
         .route("/api/preview", post(preview_deck))
+        .route("/api/starter", get(starter_deck))
         .route("/api/pack", post(pack_deck))
         .route("/api/unpack", post(unpack_deck))
         .route(
@@ -113,6 +118,21 @@ async fn health(State(registry): State<Registry>) -> Response {
         viewers: registry.viewers(),
     })
     .into_response()
+}
+
+/// The deck this instance was started with, if it was started with one.
+///
+/// 204 rather than an empty body, because the start page has its own sample to
+/// fall back on and "no deck configured" is not "a deck of nothing".
+async fn starter_deck(State(app): State<App>) -> Response {
+    match app.starter {
+        Some(markdown) => (
+            [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+            markdown,
+        )
+            .into_response(),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
 }
 
 #[derive(Deserialize, Serialize)]

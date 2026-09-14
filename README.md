@@ -179,6 +179,27 @@ chat client would carry.
 The token sits in the URL fragment. Browsers never send a fragment to the
 server, so a deck shared in a chat leaves no trace in an access log.
 
+## Start an instance on your own deck
+
+An instance that runs the same quiz every week should not make its host paste
+the deck every week. `--deck` names a Markdown file the start page opens with,
+in place of the built-in sample:
+
+```bash
+palmcast --deck quiznight.md
+```
+
+The deck is read once at startup, so a file the server cannot read stops it
+there rather than surprising the first person to open the page. Editing the
+file afterwards takes a restart to show, and changes nothing in a room already
+running.
+
+It is a starting point and not a lock. The editor still opens on whatever it
+finds first: a deck someone arrived with as a link, then whatever was last
+being written in that browser, then this deck, then the sample. A host who
+writes their own deck keeps it, and a phone that has never been here gets
+yours.
+
 ## Reactions and questions
 
 The audience gets five reactions in a bar under the slide. A tap floats the
@@ -202,6 +223,7 @@ asked and the board as it stands.
 | `--ttl-hours` | `PALMCAST_TTL_HOURS` | `6` | Hours a session survives with nobody watching. |
 | `--state-file` | `PALMCAST_STATE_FILE` | none | Carry live rooms across a restart. |
 | `--public-url` | `PALMCAST_PUBLIC_URL` | none | The address the audience reaches. |
+| `--deck` | `PALMCAST_DECK` | none | A Markdown deck the start page opens with. |
 
 A link that outlives its room says so. Every view asks the server whether the
 session is still there, once on load and again whenever the socket drops. A view
