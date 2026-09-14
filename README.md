@@ -9,6 +9,11 @@ lightning talk, a quiz night. Write a deck in Markdown, share a QR code, and
 every phone in the room stays on your current slide. The room can vote on quiz
 questions, react, and ask questions back.
 
+<img src="docs/screenshots/presenter.png" width="760" alt="The presenter console during a quiz round: the question, a live vote tally, speaker notes, questions from the floor and the leaderboard">
+
+The presenter console. The tally and the right answer stay on this screen until
+the presenter opens them.
+
 ## Overview
 
 One session holds one deck. Whoever writes the deck controls it, and everyone
@@ -19,6 +24,10 @@ else watches. The session has three views:
 | Presenter | `/s/<id>/present` | The person driving. Shows notes and the next slide. |
 | Personal | `/s/<id>` | The audience, on their own phones. |
 | Stage | `/s/<id>/stage` | A TV or projector, if the room has one. |
+
+| The room, on its own phones | The stage screen, if there is one |
+|---|---|
+| <img src="docs/screenshots/phone-vote.png" width="240" alt="A phone showing a pick-all question with two options selected and a send button"> | <img src="docs/screenshots/stage.png" width="420" alt="A television showing a slide title and the leaderboard"> |
 
 The server holds sessions in memory. There is no database, no Node toolchain and
 no internet dependency, so a laptop on a venue network works as well as a hosted
@@ -51,6 +60,8 @@ cargo run -- --port 8080
 
 Open `http://localhost:8080`, write a deck, and press **Start presenting**. The
 presenter console shows a QR code under **Share**. Point a phone at it to join.
+
+<img src="docs/screenshots/editor.png" width="640" alt="The start page: a Markdown editor holding the built-in deck, the slide count, and buttons to start presenting or preview the deck">
 
 **Share** hands the link to the phone's share sheet where there is one, and to
 the clipboard otherwise. A laptop serving plain http has neither, because both
@@ -138,6 +149,8 @@ right answer, and a question may have more than one.
 The room taps an option. The presenter watches the count fill, then presses
 **Reveal the answer**, which opens the answer and the split to everyone.
 
+<img src="docs/screenshots/phone-reveal.png" width="240" alt="A phone after the reveal: both right answers marked with their counts, the wrong one dim">
+
 Marking several answers makes it a pick-all question. The room selects every
 answer it wants and sends them together, and a point needs the whole set. The
 count still shows how many people answered, not how many boxes they ticked.
@@ -179,6 +192,27 @@ chat client would carry.
 The token sits in the URL fragment. Browsers never send a fragment to the
 server, so a deck shared in a chat leaves no trace in an access log.
 
+## Start an instance on your own deck
+
+An instance that runs the same quiz every week should not make its host paste
+the deck every week. `--deck` names a Markdown file the start page opens with,
+in place of the built-in sample:
+
+```bash
+palmcast --deck quiznight.md
+```
+
+The deck is read once at startup, so a file the server cannot read stops it
+there rather than surprising the first person to open the page. Editing the
+file afterwards takes a restart to show, and changes nothing in a room already
+running.
+
+It is a starting point and not a lock. The editor still opens on whatever it
+finds first: a deck someone arrived with as a link, then whatever was last
+being written in that browser, then this deck, then the sample. A host who
+writes their own deck keeps it, and a phone that has never been here gets
+yours.
+
 ## Reactions and questions
 
 The audience gets five reactions in a bar under the slide. A tap floats the
@@ -202,6 +236,7 @@ asked and the board as it stands.
 | `--ttl-hours` | `PALMCAST_TTL_HOURS` | `6` | Hours a session survives with nobody watching. |
 | `--state-file` | `PALMCAST_STATE_FILE` | none | Carry live rooms across a restart. |
 | `--public-url` | `PALMCAST_PUBLIC_URL` | none | The address the audience reaches. |
+| `--deck` | `PALMCAST_DECK` | none | A Markdown deck the start page opens with. |
 
 A link that outlives its room says so. Every view asks the server whether the
 session is still there, once on load and again whenever the socket drops. A view

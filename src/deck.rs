@@ -118,12 +118,20 @@ fn split_slides(markdown: &str) -> Vec<String> {
 
 /// Pulls `- [ ]` and `- [x]` lines out of the body so the view can draw them as
 /// buttons instead of a list, and so the answer can be held back.
+///
+/// Fenced lines are prompt, like everywhere else in this format. A slide that
+/// shows what a question looks like is documentation, not a question.
 fn split_question(body: &str) -> (String, Option<Question>) {
     let mut prompt = Vec::new();
     let mut options = Vec::new();
     let mut correct = Vec::new();
+    let mut fence = Fence::default();
 
     for line in body.lines() {
+        if fence.consume(line) {
+            prompt.push(line);
+            continue;
+        }
         match task_item(line) {
             Some((checked, text)) => {
                 if checked {
@@ -263,6 +271,25 @@ mod tests {
         assert_eq!(slides.len(), 1);
         assert_eq!(slides[0].notes, "remember the punchline");
         assert!(!slides[0].html.contains("punchline"));
+    }
+
+    #[test]
+    fn a_task_list_inside_a_fence_stays_code() {
+        let deck = "# How to ask\n\n```markdown\n- [x] right\n- [ ] wrong\n```";
+        let slides = parse(deck);
+        assert_eq!(slides.len(), 1);
+        assert!(slides[0].question.is_none());
+        assert!(slides[0].html.contains("[x] right"));
+    }
+
+    #[test]
+    fn a_fenced_example_does_not_disarm_a_real_question_below_it() {
+        let deck =
+            "# Both\n\n```markdown\n- [x] example\n- [ ] example\n```\n\n- [ ] no\n- [x] yes";
+        let slides = parse(deck);
+        let question = slides[0].question.as_ref().expect("a question");
+        assert_eq!(question.options, vec!["no", "yes"]);
+        assert_eq!(question.correct, vec![1]);
     }
 
     #[test]

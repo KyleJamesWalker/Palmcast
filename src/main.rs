@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use palmcast::persist;
@@ -31,6 +31,28 @@ struct Args {
     /// is written 0600. Leave unset to keep everything in memory.
     #[arg(long, env = "PALMCAST_STATE_FILE")]
     state_file: Option<PathBuf>,
+
+    /// A Markdown deck the start page opens with, instead of the built-in
+    /// sample. For an instance that runs the same quiz or talk every time.
+    #[arg(long, env = "PALMCAST_DECK")]
+    deck: Option<PathBuf>,
+}
+
+/// Read once at startup, not per request: a deck the operator named and the
+/// server cannot use is a mistake worth stopping for, and the first visitor of
+/// the evening is too late to find it.
+fn read_deck(path: &Path) -> Result<String, String> {
+    let markdown = std::fs::read_to_string(path)
+        .map_err(|error| format!("could not read the deck at {}: {error}", path.display()))?;
+    if markdown.len() > routes::MAX_DECK_BYTES {
+        return Err(format!(
+            "the deck at {} is {} bytes, over the {} byte limit",
+            path.display(),
+            markdown.len(),
+            routes::MAX_DECK_BYTES
+        ));
+    }
+    Ok(markdown)
 }
 
 #[tokio::main]
@@ -41,6 +63,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
     let registry = Registry::new(Duration::from_secs(args.ttl_hours * 3600));
+
+    let starter = match &args.deck {
+        Some(path) => {
+            let markdown = read_deck(path)?;
+            tracing::info!(
+                bytes = markdown.len(),
+                "start page opens with {}",
+                path.display()
+            );
+            Some(markdown)
+        }
+        None => None,
+    };
 
     if let Some(path) = &args.state_file {
         match persist::load(path) {
@@ -95,6 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = App {
         registry: registry.clone(),
         public_url: args.public_url.clone(),
+        starter,
     };
     // The result is held rather than propagated, because a server that fell over
     // still has rooms worth keeping and `?` here would skip the save entirely.

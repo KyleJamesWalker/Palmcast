@@ -5,39 +5,12 @@ import {
   packDeck,
   rememberToken,
   slideCount,
+  starterDeck,
   unpackDeck,
 } from '/shared.js';
 import { previewDeck, renderPreview } from '/preview.js';
 import { starterPrompt } from '/deckstate.js';
-
-const SAMPLE = `# Why Rust
-
-A three minute case, made at a bar
-
-???
-Keep it to three minutes. They have drinks.
-
----
-
-## The pitch
-
-- No garbage collector
-- No data races
-- No null
-
----
-
-## The catch
-
-The borrow checker will beat you up
-for about two weeks.
-
-Then it stops.
-
----
-
-# Questions?
-`;
+import { SAMPLE } from '/sample.js';
 
 const editor = document.getElementById('markdown');
 const start = document.getElementById('start');
@@ -82,11 +55,17 @@ previewToggle.addEventListener('click', async () => {
 });
 
 const DRAFT = 'palmcast:draft';
-try {
-  editor.value = localStorage.getItem(DRAFT) || SAMPLE;
-} catch {
-  editor.value = SAMPLE;
+
+function savedDraft() {
+  try {
+    return localStorage.getItem(DRAFT) || '';
+  } catch {
+    return '';
+  }
 }
+
+const draft = savedDraft();
+editor.value = draft || SAMPLE;
 
 function refresh() {
   const n = slideCount(editor.value);
@@ -137,7 +116,26 @@ async function openShared() {
 }
 
 addEventListener('hashchange', openShared);
-openShared();
+
+// What the editor opens with, in order: a deck someone shared, whatever was
+// being written in this browser last, the deck this instance was started with,
+// the sample. Only the third needs asking the server, so the sample goes up
+// first and gives way to an answer that arrives.
+async function fill() {
+  if (deckTokenIn(location.hash)) {
+    await openShared();
+    return;
+  }
+  if (draft) return;
+  const starter = await starterDeck();
+  // A deck typed or pasted while that was in flight is worth more than it.
+  if (starter && editor.value === SAMPLE && !deckTokenIn(location.hash)) {
+    editor.value = starter;
+    refresh();
+  }
+}
+
+fill();
 
 // The rules, not the deck. Someone arriving with a topic, a page of notes or
 // an existing deck has the source an agent needs and no idea what shape the

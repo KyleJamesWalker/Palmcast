@@ -271,3 +271,20 @@ export async function unpackDeck(token, fetcher = globalThis.fetch) {
   if (!res.ok) throw new Error((await res.text()) || `server said ${res.status}`);
   return (await res.json()).markdown;
 }
+
+/// The deck this instance was started with, or null when it was not started
+/// with one.
+///
+/// Null covers every way of not having one, including an instance that cannot
+/// answer: a start page with no deck to show has its own sample, and an error
+/// message in front of an empty editor helps nobody.
+export async function starterDeck(fetcher = globalThis.fetch) {
+  try {
+    const res = await fetcher('/api/starter');
+    if (res.status !== 200) return null;
+    const markdown = await res.text();
+    return markdown.trim() ? markdown : null;
+  } catch {
+    return null;
+  }
+}
