@@ -61,7 +61,7 @@ cargo run -- --port 8080
 Open `http://localhost:8080`, write a deck, and press **Start presenting**. The
 presenter console shows a QR code under **Share**. Point a phone at it to join.
 
-<img src="docs/screenshots/editor.png" width="640" alt="The start page: a Markdown editor holding the built-in deck, the slide count, and buttons to start presenting or preview the deck">
+<img src="docs/screenshots/editor.png" width="640" alt="The start page: a Markdown editor holding the built-in deck, a row of buttons that insert the format's own characters, the slide count, and buttons to start presenting or preview the deck">
 
 **Share** hands the link to the phone's share sheet where there is one, and to
 the clipboard otherwise. A laptop serving plain http has neither, because both
@@ -106,6 +106,19 @@ Keep it to three minutes. They have drinks.
 
 Notes reach the presenter socket only. The server strips them from every message
 bound for an audience or stage view.
+
+The editor knows that format. Enter on a list item opens the next one, and Enter
+on an empty item steps out of the list, so a four option question is typed once
+rather than four times. An answer never carries its tick down: the line after
+`- [x] Rust` is `- [ ]`. A numbered list counts on, and a fenced block is left
+alone, because a list inside a fence is an example rather than a list.
+
+The row above the editor writes what a phone keyboard buries two taps deep:
+`---` for a slide, `[ ]` for an answer, `???` for notes. A keyboard gets the
+usual shortcuts instead. **Ctrl/⌘ + B** and **I** mark emphasis, **K** wraps
+a link, **Ctrl/⌘ + Enter** starts a slide, and Tab nests a list item where
+Shift+Tab lifts it back out. Both editors work this way, the start page and
+**Edit** in the presenter console.
 
 Tapping the slide counter opens a grid of every slide, marking the questions, so
 an MC can reach round four without stepping through the talk.
