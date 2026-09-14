@@ -292,6 +292,12 @@ nothing else. Paste it into an agent with a topic, a page of notes, or a deck
 you already have, and paste the reply back into the editor. The presenter
 console has the same button, which adds the deck so far and the open questions.
 
+The rules it carries cover every mark the parser reads, and the two habits that
+cost the most: an agent reaches for raw HTML to lay a slide out, and for `*`
+bullets it does not mean to hold back. Both prompts quote and ask for the deck
+in a fence of four backticks or more, because a deck that shows code carries
+three of its own.
+
 ## Save a deck for later
 
 A room is temporary. **Copy deck link** turns the deck itself into a link, on
