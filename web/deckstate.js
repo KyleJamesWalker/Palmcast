@@ -102,10 +102,10 @@ export function starterPrompt() {
     '',
     'Mix in a few questions for the room. A bar audience taps more than it reads.',
     '',
-    'Here is what I want the deck to cover. Say how much of it you want, the',
-    'way "a 50 question quiz on opossum facts" does:',
+    'Here is what I want the deck to cover:',
     '',
-    '<paste your topic, your notes, or an existing deck here>',
+    '<paste your topic, your notes, or an existing deck here;',
+    'e.g. a 50 question quiz on opossum facts>',
     '',
     replyRule(fence),
   ].join('\n');
