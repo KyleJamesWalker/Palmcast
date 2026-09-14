@@ -1,0 +1,316 @@
+/// What a phone cannot do with a keyboard, and what a keyboard should not need
+/// a button for.
+///
+/// Everything here is a pure function over a document and a splice back, so the
+/// rules are testable without a browser. `smartEditor` is the only part that
+/// touches the DOM.
+///
+/// A document is `{ text, start, end }`, the three things a textarea knows. An
+/// edit replaces `[from, to)` with `insert` and then puts the selection at
+/// `select`, in offsets of the text the splice produces. Null means the key
+/// press was not ours and the browser should handle it.
+
+const WRAPS = { bold: '**', italic: '*', code: '`', strike: '~~' };
+
+/// The blocks the toolbar inserts, in the shape the deck format needs.
+///
+/// `blank` is how many blank lines have to sit above the block. A separator
+/// only splits slides when a blank line precedes it, so a button that writes
+/// `---` without one writes three dashes into the middle of a slide.
+const BLOCKS = {
+  slide: { blank: 1, text: '---', after: 2 },
+  notes: { blank: 1, text: '???', after: 1 },
+  question: { blank: 0, text: '- [ ] ', after: 0 },
+  item: { blank: 0, text: '- ', after: 0 },
+};
+
+/// Applies an edit. The wiring below uses the browser to do this; tests use it
+/// to read the result.
+export function apply(doc, edit) {
+  if (!edit) return doc;
+  const text = doc.text.slice(0, edit.from) + edit.insert + doc.text.slice(edit.to);
+  return { text, start: edit.select[0], end: edit.select[1] };
+}
+
+function lineBounds(text, index) {
+  const start = text.lastIndexOf('\n', index - 1) + 1;
+  const end = text.indexOf('\n', index);
+  return [start, end === -1 ? text.length : end];
+}
+
+/// Mirrors the server's fence rule, so the editor stays quiet inside code.
+///
+/// A deck about software shows Markdown, and the sample deck shows this very
+/// format: a fenced block of task items is an example, not a question, and
+/// continuing the list inside it would be the editor typing into someone's
+/// code.
+export function inFence(text, index) {
+  const lines = text.slice(0, index).split('\n').slice(0, -1);
+  let open = null;
+  for (const line of lines) {
+    const trimmed = line.trimStart();
+    if (line.length - trimmed.length >= 4) continue;
+    const marker = trimmed[0];
+    if (marker !== '`' && marker !== '~') continue;
+    let run = 0;
+    while (trimmed[run] === marker) run += 1;
+    if (run < 3) continue;
+    if (!open) {
+      open = { marker, run };
+    } else if (open.marker === marker && run >= open.run && trimmed.slice(run).trim() === '') {
+      open = null;
+    }
+  }
+  return open !== null;
+}
+
+const ITEM = /^([ \t]*)(?:([-*+])([ \t]+)(\[[ xX]\][ \t]+)?|(\d{1,9})([.)])([ \t]+)|(>)([ \t]?))/;
+
+/// The list item a line is, or null. `marker` is what the line below it opens
+/// with: a number one higher, or an unticked box, because the next answer is
+/// not right just because this one was.
+export function listItem(line) {
+  const match = ITEM.exec(line);
+  if (!match) return null;
+  const [prefix, indent, bullet, gap, task, number, delim, numGap, quote, quoteGap] = match;
+  const body = line.slice(prefix.length);
+
+  let marker;
+  if (bullet) marker = `${bullet}${gap}${task ? '[ ] ' : ''}`;
+  else if (number) marker = `${Number(number) + 1}${delim}${numGap}`;
+  else marker = `${quote}${quoteGap || ' '}`;
+
+  return { indent, prefix, body, marker };
+}
+
+/// One indent step off the front, or null when there is none left to take.
+function outdent(indent) {
+  if (indent.startsWith('\t')) return indent.slice(1);
+  if (indent.startsWith('  ')) return indent.slice(2);
+  if (indent.startsWith(' ')) return '';
+  return null;
+}
+
+/// Enter on a list item carries the list down. Enter on an empty one steps out
+/// of it, one level at a time, which is what the second Enter is for.
+export function breakLine(doc) {
+  const { text, start, end } = doc;
+  if (start !== end) return null;
+
+  const [lineStart, lineEnd] = lineBounds(text, start);
+  if (inFence(text, lineStart)) return null;
+
+  const line = text.slice(lineStart, lineEnd);
+  const item = listItem(line);
+  if (!item) return null;
+  // The cursor sits in the marker itself, so there is no item to continue yet.
+  if (start < lineStart + item.prefix.length) return null;
+
+  if (item.body.trim() === '') {
+    const stepped = outdent(item.indent);
+    const insert = stepped === null ? '' : stepped + item.marker;
+    const at = lineStart + insert.length;
+    return { from: lineStart, to: lineEnd, insert, select: [at, at] };
+  }
+
+  const insert = `\n${item.indent}${item.marker}`;
+  const at = start + insert.length;
+  return { from: start, to: start, insert, select: [at, at] };
+}
+
+/// Tab on a list item nests it. Everywhere else Tab stays the key that moves
+/// focus, because taking that away costs a keyboard user the page.
+export function shiftItem(doc, back = false) {
+  const { text, start, end } = doc;
+  if (start !== end) return null;
+  const [lineStart, lineEnd] = lineBounds(text, start);
+  const item = listItem(text.slice(lineStart, lineEnd));
+  if (!item) return null;
+
+  const indent = back ? outdent(item.indent) : `  ${item.indent}`;
+  if (indent === null) return null;
+  const shift = indent.length - item.indent.length;
+  return {
+    from: lineStart,
+    to: lineStart + item.indent.length,
+    insert: indent,
+    // A cursor sitting in front of the indent must not be pushed off the line.
+    select: [Math.max(lineStart, start + shift), Math.max(lineStart, start + shift)],
+  };
+}
+
+/// How many of `char` run up to `index`, and away from it.
+function runBefore(text, index, char) {
+  let n = 0;
+  while (index - n > 0 && text[index - n - 1] === char) n += 1;
+  return n;
+}
+
+function runAfter(text, index, char) {
+  let n = 0;
+  while (text[index + n] === char) n += 1;
+  return n;
+}
+
+/// The word under a cursor, so bold with nothing selected still bolds
+/// something.
+function wordAt(text, index) {
+  const word = /[^\s*_~`[\]()]/;
+  let start = index;
+  let end = index;
+  while (start > 0 && word.test(text[start - 1])) start -= 1;
+  while (end < text.length && word.test(text[end])) end += 1;
+  return [start, end];
+}
+
+/// Wraps the selection, or unwraps it when it is already wrapped.
+///
+/// The run length has to match the marker exactly: `*` inside `**bold**` finds
+/// a run of two, so it adds emphasis rather than quietly taking the bold off.
+export function toggleWrap(doc, kind) {
+  const marker = WRAPS[kind];
+  if (!marker) return null;
+  const { text } = doc;
+  const [start, end] = doc.start === doc.end ? wordAt(text, doc.start) : [doc.start, doc.end];
+  const inner = text.slice(start, end);
+  const char = marker[0];
+
+  if (runBefore(text, start, char) === marker.length && runAfter(text, end, char) === marker.length) {
+    const from = start - marker.length;
+    return { from, to: end + marker.length, insert: inner, select: [from, from + inner.length] };
+  }
+
+  if (inner.length >= 2 * marker.length && inner.startsWith(marker) && inner.endsWith(marker)) {
+    const bare = inner.slice(marker.length, -marker.length);
+    return { from: start, to: end, insert: bare, select: [start, start + bare.length] };
+  }
+
+  const at = start + marker.length;
+  return {
+    from: start,
+    to: end,
+    insert: marker + inner + marker,
+    select: [at, at + inner.length],
+  };
+}
+
+/// A link around the selection, with whichever half is still missing selected.
+export function insertLink(doc) {
+  const inner = doc.text.slice(doc.start, doc.end);
+  const insert = `[${inner}](url)`;
+  const at = inner ? doc.start + inner.length + 3 : doc.start + 1;
+  return { from: doc.start, to: doc.end, insert, select: [at, at + (inner ? 3 : 0)] };
+}
+
+/// Puts a block at the end of the line the cursor is on, with the blank lines
+/// the format needs around it and none of the ones it already has.
+export function insertBlock(doc, kind) {
+  const block = BLOCKS[kind];
+  if (!block) return null;
+  const { text } = doc;
+  const [lineStart, lineEnd] = lineBounds(text, doc.start);
+  // An empty line is the place for the block, not something to push down.
+  const blank = text.slice(lineStart, lineEnd).trim() === '';
+  const from = blank ? lineStart : lineEnd;
+  const to = blank ? lineEnd : lineEnd;
+
+  const head = text.slice(0, from);
+  const want = head === '' ? 0 : block.blank + 1;
+  const have = head.length - head.replace(/\n+$/, '').length;
+  const before = '\n'.repeat(Math.max(0, want - have));
+
+  const tail = text.slice(to);
+  const trailing = tail.length - tail.replace(/^\n+/, '').length;
+  const after = '\n'.repeat(Math.max(0, block.after - trailing));
+
+  const insert = before + block.text + after;
+  const at = from + insert.length + Math.min(block.after, trailing);
+  return { from, to, insert, select: [at, at] };
+}
+
+/// What a key press means in the editor, or null when it means nothing here.
+///
+/// Meta or control, either one: the same page is driven from a Mac, a laptop at
+/// the back of a room, and a phone with a keyboard case.
+export function shortcut(event) {
+  if (event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey)) return null;
+  switch (String(event.key).toLowerCase()) {
+    case 'b':
+      return 'bold';
+    case 'i':
+      return 'italic';
+    case 'e':
+      return 'code';
+    case 'k':
+      return 'link';
+    case 'enter':
+      return 'slide';
+    default:
+      return null;
+  }
+}
+
+/// The one place a name from a toolbar button or a shortcut turns into an edit.
+export function editFor(name, doc) {
+  if (name in WRAPS) return toggleWrap(doc, name);
+  if (name in BLOCKS) return insertBlock(doc, name);
+  if (name === 'link') return insertLink(doc);
+  return null;
+}
+
+/// Wires a textarea to the rules above, and to a toolbar when the page has one.
+///
+/// Every edit goes through `execCommand`, deprecated and still the only way to
+/// change a textarea without emptying the browser's undo stack. Assigning to
+/// `value` would cost the author every keystroke before the one the button
+/// wrote, which is a worse trade than an old API.
+export function smartEditor(area, toolbar) {
+  const read = () => ({ text: area.value, start: area.selectionStart, end: area.selectionEnd });
+
+  const run = (edit) => {
+    if (!edit) return false;
+    area.focus();
+    area.setSelectionRange(edit.from, edit.to);
+    let done = edit.from === edit.to && edit.insert === '';
+    try {
+      done =
+        done ||
+        (edit.insert
+          ? document.execCommand('insertText', false, edit.insert)
+          : document.execCommand('delete'));
+    } catch {
+      done = false;
+    }
+    if (!done) {
+      area.value = apply(read(), edit).text;
+      area.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    area.setSelectionRange(edit.select[0], edit.select[1]);
+    return true;
+  };
+
+  area.addEventListener('keydown', (event) => {
+    const plain = !event.metaKey && !event.ctrlKey && !event.altKey;
+    if (event.key === 'Enter' && plain && !event.shiftKey) {
+      if (run(breakLine(read()))) event.preventDefault();
+      return;
+    }
+    if (event.key === 'Tab' && plain) {
+      if (run(shiftItem(read(), event.shiftKey))) event.preventDefault();
+      return;
+    }
+    const name = shortcut(event);
+    if (name && run(editFor(name, read()))) event.preventDefault();
+  });
+
+  if (!toolbar) return;
+  // The caret is the whole point of the button, and focus would take it. On a
+  // phone it would take the keyboard down with it.
+  toolbar.addEventListener('mousedown', (event) => {
+    if (event.target.closest('button')) event.preventDefault();
+  });
+  toolbar.addEventListener('click', (event) => {
+    const pressed = event.target.closest('button[data-edit]');
+    if (pressed) run(editFor(pressed.dataset.edit, read()));
+  });
+}

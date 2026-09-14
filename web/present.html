@@ -38,6 +38,20 @@
 
   <section id="editor" class="editor" hidden>
     <label class="label" for="deck-text">Deck</label>
+    <div id="deck-toolbar" class="toolbar" role="group" aria-label="Insert Markdown">
+      <button type="button" data-edit="slide" aria-label="New slide"
+        title="New slide (Ctrl/&#8984; + Enter)">---</button>
+      <button type="button" data-edit="question" aria-label="Answer option"
+        title="Answer option">[&#8201;]</button>
+      <button type="button" data-edit="item" aria-label="List item"
+        title="List item">&bull;</button>
+      <button type="button" data-edit="notes" aria-label="Speaker notes"
+        title="Speaker notes">???</button>
+      <button type="button" data-edit="bold" aria-label="Bold"
+        title="Bold (Ctrl/&#8984; + B)"><b>B</b></button>
+      <button type="button" data-edit="italic" aria-label="Italic"
+        title="Italic (Ctrl/&#8984; + I)"><i>I</i></button>
+    </div>
     <textarea id="deck-text" spellcheck="false"></textarea>
     <div class="editor-actions">
       <button id="deck-save" class="primary">Save</button>

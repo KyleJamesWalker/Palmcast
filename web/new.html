@@ -15,11 +15,25 @@
     <p class="dim">Write a deck. Everyone in the room follows on their own screen.</p>
   </header>
 
-  <label class="field">
-    <span class="label">Your deck</span>
+  <div class="field">
+    <label class="label" for="markdown">Your deck</label>
+    <div id="toolbar" class="toolbar" role="group" aria-label="Insert Markdown">
+      <button type="button" data-edit="slide" aria-label="New slide"
+        title="New slide (Ctrl/&#8984; + Enter)">---</button>
+      <button type="button" data-edit="question" aria-label="Answer option"
+        title="Answer option">[&#8201;]</button>
+      <button type="button" data-edit="item" aria-label="List item"
+        title="List item">&bull;</button>
+      <button type="button" data-edit="notes" aria-label="Speaker notes"
+        title="Speaker notes">???</button>
+      <button type="button" data-edit="bold" aria-label="Bold"
+        title="Bold (Ctrl/&#8984; + B)"><b>B</b></button>
+      <button type="button" data-edit="italic" aria-label="Italic"
+        title="Italic (Ctrl/&#8984; + I)"><i>I</i></button>
+    </div>
     <textarea id="markdown" spellcheck="false" autocapitalize="sentences"
       aria-describedby="syntax"></textarea>
-  </label>
+  </div>
 
   <p id="syntax" class="dim syntax">
     <code>---</code> on its own line starts a new slide.
