@@ -20,6 +20,7 @@
     <button id="follow" class="ghost follow" hidden>Room is on 1 · follow</button>
     <button id="edit-toggle" class="ghost">Edit</button>
     <button id="share-toggle" class="ghost">Share</button>
+    <button id="lineup-toggle" class="ghost">Lineup</button>
   </div>
 
   <section id="share" class="share" hidden>
@@ -59,6 +60,24 @@
   <section class="notes">
     <h2 class="label">Notes</h2>
     <div id="notes" class="notes-body dim"></div>
+  </section>
+
+  <section id="lineup-panel" class="lineup-panel" hidden>
+    <div class="lineup-head">
+      <h2 class="label">Running order</h2>
+      <span class="lineup-head-actions">
+        <a id="export" class="ghost-link" download>Save the evening</a>
+        <button id="submissions" class="ghost">Open submissions</button>
+      </span>
+    </div>
+    <ul id="lineup" class="lineup"></ul>
+    <div id="talk-read" class="talk-read" hidden>
+      <div class="lineup-head">
+        <h2 id="talk-read-title" class="label">Reading</h2>
+        <button id="talk-read-close" class="ghost">Close</button>
+      </div>
+      <section id="talk-preview" class="preview" aria-label="Talk preview"></section>
+    </div>
   </section>
 
   <section class="qa-console">

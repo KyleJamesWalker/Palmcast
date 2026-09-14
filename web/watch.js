@@ -1,4 +1,6 @@
-import { connect, sessionId } from '/shared.js';
+import { connect, copyText, sessionId, viewerId } from '/shared.js';
+import { renderLineup, rememberTalk, talkHeld } from '/lineup.js';
+import { starterPrompt } from '/deckstate.js';
 import { renderOptions } from '/quiz.js';
 import { pruneBySlide, survivingSlides } from '/deckstate.js';
 import { burst, reactionBar } from '/reactions.js';
@@ -10,6 +12,18 @@ const slide = document.getElementById('slide');
 const options = document.getElementById('options');
 const position = document.getElementById('position');
 const status = document.getElementById('status');
+const lineupList = document.getElementById('lineup');
+const submitTalk = document.getElementById('submit-talk');
+const talkForm = document.getElementById('talk-form');
+const talkTitle = document.getElementById('talk-title');
+const talkDeck = document.getElementById('talk-deck');
+const talkRules = document.getElementById('talk-rules');
+const talkCancel = document.getElementById('talk-cancel');
+const talkError = document.getElementById('talk-error');
+const yours = document.getElementById('yours');
+const yoursLink = document.getElementById('yours-link');
+
+let lineup = { items: [], staged: null, open: false };
 
 let slides = [];
 let current = 0;
@@ -94,6 +108,21 @@ const socket = connect(id, null, {
       emptyText: 'Set a name above to join the game.',
     });
   },
+  lineup(msg) {
+    lineup = msg;
+    renderLineup(lineupList, lineup, { role: 'viewer' });
+    // A talk already up cannot be submitted again, and a closed room takes
+    // none, so the button only offers what the room will actually accept.
+    submitTalk.hidden = !lineup.open || !talkForm.hidden;
+  },
+  baton(msg) {
+    // The host just handed the controls somewhere. If it was to the talk this
+    // browser put up, this is the speaker, and they need their own console.
+    const mine = talkHeld(id);
+    const up = Boolean(mine) && msg.talk === mine.talk;
+    yours.hidden = !up;
+    if (up) yoursLink.href = `/s/${id}/present#t=${encodeURIComponent(mine.token)}`;
+  },
   status(state) {
     status.dataset.state = state;
     status.textContent = state;
@@ -169,4 +198,58 @@ nameForm.addEventListener('submit', (event) => {
   }
   socket.send({ type: 'set_name', name });
   nameText.blur();
+});
+
+
+submitTalk.addEventListener('click', () => {
+  talkForm.hidden = false;
+  submitTalk.hidden = true;
+  talkDeck.focus();
+});
+
+talkCancel.addEventListener('click', () => {
+  talkForm.hidden = true;
+  submitTalk.hidden = !lineup.open;
+});
+
+talkRules.addEventListener('click', async () => {
+  const label = talkRules.textContent;
+  talkRules.textContent =
+    (await copyText(starterPrompt())) === 'copied' ? 'Prompt copied' : 'No clipboard here';
+  setTimeout(() => {
+    talkRules.textContent = label;
+  }, 2000);
+});
+
+talkForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  talkError.hidden = true;
+  if (!talkDeck.value.trim()) {
+    talkError.textContent = 'A talk needs at least one slide.';
+    talkError.hidden = false;
+    return;
+  }
+  try {
+    const res = await fetch(`/api/sessions/${id}/talks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: talkTitle.value,
+        markdown: talkDeck.value,
+        // The same browser id the socket uses, so the talk is attributed to
+        // whoever is already in the room rather than to a stranger.
+        who: viewerId(),
+      }),
+    });
+    if (!res.ok) throw new Error((await res.text()) || `server said ${res.status}`);
+    const { id: talk, token } = await res.json();
+    // Kept so this phone knows the talk is its own when the host puts it up.
+    rememberTalk(id, talk, token);
+    talkForm.hidden = true;
+    talkDeck.value = '';
+    talkTitle.value = '';
+  } catch (e) {
+    talkError.textContent = `Could not put that up: ${e.message}`;
+    talkError.hidden = false;
+  }
 });

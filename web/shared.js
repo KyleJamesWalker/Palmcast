@@ -29,17 +29,26 @@ export function rememberToken(id, token) {
 
 /// Anonymous and per browser. It keeps one person from filling the tally and is
 /// not an identity.
-function viewerId() {
+/// Held for the life of the page as well as in storage.
+///
+/// Storage can be unavailable, and without this the fallback minted a fresh id
+/// on every call. The socket and an http request from the same phone then
+/// disagreed about who was asking, which is how a submitted talk lost the name
+/// of whoever put it up.
+let who = null;
+
+export function viewerId() {
+  if (who) return who;
   try {
-    let id = localStorage.getItem('palmcast:who');
-    if (!id) {
-      id = Math.random().toString(36).slice(2) + Date.now().toString(36);
-      localStorage.setItem('palmcast:who', id);
+    who = localStorage.getItem('palmcast:who');
+    if (!who) {
+      who = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem('palmcast:who', who);
     }
-    return id;
   } catch {
-    return Math.random().toString(36).slice(2);
+    who = Math.random().toString(36).slice(2);
   }
+  return who;
 }
 
 /// Reconnects on its own, because a phone that locks drops the socket.
