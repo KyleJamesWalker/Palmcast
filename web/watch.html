@@ -24,6 +24,22 @@
     <button type="submit">Join</button>
   </form>
   <ul id="scores" class="score-list"></ul>
+  <h2 class="label label-spaced">Running order</h2>
+  <ul id="lineup" class="lineup"></ul>
+  <button id="submit-talk" class="ghost" hidden>Put a talk up</button>
+  <form id="talk-form" class="talk-form" hidden>
+    <input id="talk-title" type="text" maxlength="60" placeholder="Title (or leave it to the first heading)"
+      autocomplete="off" aria-label="Talk title">
+    <textarea id="talk-deck" spellcheck="false" aria-label="Your deck"
+      placeholder="# My talk&#10;&#10;---&#10;&#10;## A point"></textarea>
+    <div class="talk-actions">
+      <button type="submit" class="primary">Put it up</button>
+      <button id="talk-rules" type="button" class="ghost">Copy prompt for an agent</button>
+      <button id="talk-cancel" type="button" class="ghost">Cancel</button>
+    </div>
+    <p id="talk-error" class="error" hidden></p>
+  </form>
+
   <h2 class="label label-spaced">Questions</h2>
   <form id="ask-form" class="ask-form">
     <input id="ask-text" type="text" maxlength="280" placeholder="Ask a question"
@@ -32,6 +48,10 @@
   </form>
   <ul id="questions" class="question-list"></ul>
 </section>
+<div id="yours" class="yours" hidden role="status">
+  <span>You are up.</span>
+  <a id="yours-link" class="primary-link" href="#">Open your controls</a>
+</div>
 <div id="reactions" class="reaction-bar"></div>
 <footer class="bar">
   <span id="position" class="dim">—</span>

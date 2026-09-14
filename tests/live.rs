@@ -1666,3 +1666,169 @@ async fn a_deck_too_large_to_present_is_too_large_to_preview() {
     .await;
     assert_eq!(status, 413);
 }
+
+async fn ws_send(socket: &mut Socket, msg: Value) {
+    socket
+        .send(Message::Text(msg.to_string().into()))
+        .await
+        .unwrap();
+}
+
+/// A talk is put up by somebody who is already in the room, so the running
+/// order says who is giving it.
+#[tokio::test]
+async fn a_submitted_talk_carries_the_name_of_whoever_put_it_up() {
+    let host = spawn().await;
+    let (id, mc) = create(&host, "# Lightning talks").await;
+
+    let mut console = open(&host, &id, Some(&mc)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "submissions", "open": true }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut phone = open_as(&host, &id, None, "ada-browser").await;
+    ws_send(
+        &mut phone,
+        serde_json::json!({ "type": "set_name", "name": "Ada" }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let res = reqwest::Client::new()
+        .post(format!("http://{host}/api/sessions/{id}/talks"))
+        .json(&serde_json::json!({
+            "title": "",
+            "markdown": "# Borrow checking\n\n---\n\n# Two",
+            "who": "ada-browser",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 201, "the submission was refused");
+
+    // Read the lineup off a freshly opened socket, which is hydrated with it.
+    let mut later = open(&host, &id, Some(&mc)).await;
+    let mut seen = None;
+    for _ in 0..8 {
+        let msg = next_json(&mut later).await;
+        if msg["type"] == "lineup" {
+            seen = Some(msg);
+            break;
+        }
+    }
+    let lineup = seen.expect("no lineup in the opening state");
+    let entry = &lineup["items"][0];
+    assert_eq!(entry["title"], "Borrow checking");
+    assert_eq!(entry["slides"], 2);
+    assert_eq!(
+        entry["by"], "Ada",
+        "the running order lost who is giving the talk"
+    );
+}
+
+/// The export is what the evening was for, so it has to hold the decks, who
+/// gave them, what the room asked, and cues a video editor can use.
+#[tokio::test]
+async fn the_export_holds_the_evening() {
+    let host = spawn().await;
+    let (id, mc) = create(&host, "# Lightning talks\n\n---\n\n# Up next").await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "submissions", "open": true }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut phone = open_as(&host, &id, None, "ada-browser").await;
+    ws_send(
+        &mut phone,
+        serde_json::json!({ "type": "set_name", "name": "Ada" }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    reqwest::Client::new()
+        .post(format!("http://{host}/api/sessions/{id}/talks"))
+        .json(&serde_json::json!({
+            "title": "Borrow checking",
+            "markdown": "# Borrow checking\n\n---\n\n# It stops hurting",
+            "who": "ada-browser",
+        }))
+        .send()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "stage", "talk": 1 }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "goto", "index": 1 }),
+    )
+    .await;
+    ws_send(
+        &mut phone,
+        serde_json::json!({ "type": "ask", "text": "how long" }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(60)).await;
+
+    let bytes = reqwest::get(format!("http://{host}/api/sessions/{id}/export?token={mc}"))
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.to_vec())).unwrap();
+    let names: Vec<String> = (0..zip.len())
+        .map(|n| zip.by_index(n).unwrap().name().to_string())
+        .collect();
+    assert!(names.contains(&"00-host.md".to_string()), "got {names:?}");
+    assert!(
+        names.contains(&"01-borrow-checking.md".to_string()),
+        "a talk is missing or misnamed: {names:?}"
+    );
+
+    let read = |zip: &mut zip::ZipArchive<std::io::Cursor<Vec<u8>>>, name: &str| {
+        use std::io::Read;
+        let mut out = String::new();
+        zip.by_name(name).unwrap().read_to_string(&mut out).unwrap();
+        out
+    };
+
+    assert_eq!(
+        read(&mut zip, "01-borrow-checking.md"),
+        "# Borrow checking\n\n---\n\n# It stops hurting"
+    );
+
+    let record: Value = serde_json::from_str(&read(&mut zip, "timeline.json")).unwrap();
+    assert_eq!(record["talks"][1]["by"], "Ada");
+    assert_eq!(record["talks"][1]["questions"][0]["text"], "how long");
+    assert_eq!(record["board"][0]["name"], "Ada");
+    let cues = record["timeline"].as_array().unwrap();
+    assert_eq!(
+        cues.len(),
+        2,
+        "the timeline is not what the room saw: {cues:?}"
+    );
+    assert_eq!(cues[0]["slide"], 0);
+    assert_eq!(cues[1]["slide"], 1);
+    assert_eq!(cues[1]["title"], "Borrow checking");
+
+    // A cue file a video editor can drop straight onto a recording.
+    let vtt = read(&mut zip, "slides.vtt");
+    assert!(vtt.starts_with("WEBVTT"), "got {vtt}");
+    assert!(vtt.contains("--> "), "no cue timings: {vtt}");
+    assert!(
+        vtt.contains("Borrow checking \u{2014} slide 2"),
+        "got {vtt}"
+    );
+}

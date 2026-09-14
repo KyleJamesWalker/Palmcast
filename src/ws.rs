@@ -16,13 +16,10 @@ pub struct Join {
 
 pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
     let Join { id, token, who } = join;
-    let role = token
-        .as_deref()
-        .map(|t| registry.role(&id, t))
-        .unwrap_or(Role::Viewer);
-    // Notes, tallies and the deck source follow the ability to edit, so a
-    // co-host sees what they need to write the next question.
-    let is_owner = role.edits();
+    // Notes, tallies and the deck source follow the ability to edit or drive,
+    // so a co-host sees what they need to write the next question and a speaker
+    // handed the controls sees their own notes.
+    let mut is_staff = staff_now(&registry, &id, token.as_deref());
     let Some(mut rx) = registry.subscribe(&id) else {
         return;
     };
@@ -30,11 +27,11 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
 
     // One lock for the whole opening state, so a socket is never hydrated from
     // a snapshot of one moment and a leaderboard of another.
-    let Some(opening) = registry.with(&id, |s| s.catch_up(is_owner)) else {
+    let Some(opening) = registry.with(&id, |s| s.catch_up(is_staff)) else {
         return;
     };
     for msg in &opening {
-        if send(&mut sink, msg, is_owner).await.is_err() {
+        if send(&mut sink, msg, is_staff).await.is_err() {
             return;
         }
     }
@@ -49,14 +46,26 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
             outgoing = rx.recv() => {
                 match outgoing {
                     Ok(frame) => {
-                        if send_frame(&mut sink, &frame, is_owner).await.is_err() {
+                        if send_frame(&mut sink, &frame, is_staff).await.is_err() {
                             break;
+                        }
+                        // The host just handed the controls somewhere. If that
+                        // was to or from this socket, what it may see changed,
+                        // and it needs the state it was not being sent.
+                        if frame.rerole {
+                            let now = staff_now(&registry, &id, token.as_deref());
+                            if now != is_staff {
+                                is_staff = now;
+                                if resync(&mut sink, &registry, &id, is_staff).await.is_err() {
+                                    break;
+                                }
+                            }
                         }
                     }
                     // A phone on bar wifi falls behind a burst of reactions.
                     // Resend the state it missed instead of closing on it.
                     Err(RecvError::Lagged(_)) => {
-                        if resync(&mut sink, &registry, &id, is_owner).await.is_err() {
+                        if resync(&mut sink, &registry, &id, is_staff).await.is_err() {
                             break;
                         }
                     }
@@ -69,7 +78,7 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
                 let Ok(msg) = serde_json::from_str::<ClientMsg>(&text) else {
                     continue;
                 };
-                handle(&registry, &id, token.as_deref(), role, &who, msg);
+                handle(&registry, &id, token.as_deref(), &who, msg);
             }
         }
     }
@@ -77,27 +86,40 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
     registry.with_mut(&id, Session::leave);
 }
 
+/// What this socket may see right now.
+///
+/// Read fresh rather than captured, because the host can hand the controls over
+/// while a socket is open.
+fn staff_now(registry: &Registry, id: &str, token: Option<&str>) -> bool {
+    let role = token.map(|t| registry.role(id, t)).unwrap_or(Role::Viewer);
+    role.edits() || role.drives()
+}
+
 /// Every branch re-checks the token inside the registry, so a forged frame from
-/// a viewer changes nothing.
-fn handle(
-    registry: &Registry,
-    id: &str,
-    token: Option<&str>,
-    role: Role,
-    who: &str,
-    msg: ClientMsg,
-) {
+/// a viewer changes nothing. The role is read at the moment the frame lands,
+/// never captured when the socket opened: a speaker handed the controls must
+/// start driving without reconnecting, and one handed them back must stop.
+fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: ClientMsg) {
+    let token = token.unwrap_or("");
     match msg {
         ClientMsg::Goto { index } => {
-            if let Some(token) = token {
-                registry.with_mut(id, |s| s.goto(token, index));
-            }
+            registry.with_mut(id, |s| s.goto(token, index));
         }
         // The reveal also moves the board, and both leave under the one lock.
         ClientMsg::Reveal { slide } => {
-            if let Some(token) = token {
-                registry.with_mut(id, |s| s.reveal(token, slide));
-            }
+            registry.with_mut(id, |s| s.reveal(token, slide));
+        }
+        ClientMsg::Stage { talk } => {
+            registry.with_mut(id, |s| s.stage(s.role_of(token), talk));
+        }
+        ClientMsg::Hand { talk } => {
+            registry.with_mut(id, |s| s.hand(s.role_of(token), talk));
+        }
+        ClientMsg::Submissions { open } => {
+            registry.with_mut(id, |s| s.set_submissions(s.role_of(token), open));
+        }
+        ClientMsg::Drop { talk } => {
+            registry.with_mut(id, |s| s.drop_talk(s.role_of(token), talk));
         }
         ClientMsg::SetName { name } => {
             registry.with_mut(id, |s| s.set_name(who, &name));
@@ -112,7 +134,7 @@ fn handle(
             registry.with_mut(id, |s| s.upvote(who, question));
         }
         ClientMsg::Answered { question } => {
-            registry.with_mut(id, |s| s.mark_answered(role, question));
+            registry.with_mut(id, |s| s.mark_answered(s.role_of(token), question));
         }
         // Anyone in the room may vote, the presenter included.
         ClientMsg::Answer { slide, options } => {

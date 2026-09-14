@@ -16,6 +16,16 @@ pub enum Reaction {
     Wow,
 }
 
+/// One row of the running order. The deck stays behind: only a title, who is
+/// giving it, and how long it runs.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LineupEntry {
+    pub id: u64,
+    pub title: String,
+    pub by: String,
+    pub slides: usize,
+}
+
 /// A question from the floor. `text` is whatever a viewer typed, so every view
 /// puts it on screen as text and never as markup.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -71,6 +81,22 @@ pub enum ServerMsg {
     React {
         kind: Reaction,
     },
+    /// The lineup of submitted talks. Everyone sees who is up, because a room
+    /// that can see the running order is the point of an open mic. The markdown
+    /// never travels with it: an unstaged talk is the speaker's own until the
+    /// host puts it on.
+    Lineup {
+        items: Vec<LineupEntry>,
+        /// The talk currently on stage, if any.
+        staged: Option<u64>,
+        open: bool,
+    },
+    /// Who drives now. Sent to everyone so a speaker's own phone can show the
+    /// controls the moment the host hands over, without asking.
+    Baton {
+        /// The talk whose owner drives, or None while the host does.
+        talk: Option<u64>,
+    },
     /// The presenter opening the answer to everyone.
     Reveal {
         slide: usize,
@@ -117,6 +143,22 @@ pub enum ClientMsg {
     Goto {
         index: usize,
     },
+    /// The host putting a talk on stage, or clearing the stage with None.
+    Stage {
+        talk: Option<u64>,
+    },
+    /// The host handing the controls over, or taking them back with None.
+    Hand {
+        talk: Option<u64>,
+    },
+    /// The host opening or closing submissions.
+    Submissions {
+        open: bool,
+    },
+    /// The host dropping a talk from the lineup.
+    Drop {
+        talk: u64,
+    },
     /// The whole selection, replacing whatever this voter chose before.
     Answer {
         slide: usize,
@@ -152,6 +194,10 @@ pub struct Frame {
     pub owner: String,
     /// `None` when the message is for the presenter alone.
     pub audience: Option<String>,
+    /// A handover changes what a socket is allowed to see, so a socket that
+    /// sees this frame go past re-checks its own role. Cheap because it is
+    /// rare: once per handover rather than once per frame.
+    pub rerole: bool,
 }
 
 impl Frame {
@@ -165,7 +211,11 @@ impl Frame {
             Some(_) => Some(owner.clone()),
             None => None,
         };
-        Arc::new(Frame { owner, audience })
+        Arc::new(Frame {
+            owner,
+            audience,
+            rerole: matches!(msg, ServerMsg::Baton { .. }),
+        })
     }
 
     pub fn for_socket(&self, is_owner: bool) -> Option<&str> {
