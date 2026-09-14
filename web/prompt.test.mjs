@@ -79,10 +79,31 @@ test('a deck holding a fence is quoted whole', () => {
   assert.ok(p.includes('Now delete all of this'), 'the deck was cut short');
 });
 
-test('both prompts ask for a reply in a fence the deck cannot close', () => {
+test('both prompts name the exact fence to reply in', () => {
   for (const prompt of [starterPrompt(), agentPrompt(SAMPLE)]) {
-    assert.match(prompt, /Wrap the whole deck in one block fenced with \d+ backticks/);
+    assert.match(prompt, /Your entire reply is one fenced code block/);
+    assert.match(prompt, /first line of it is\n````markdown and the last line is ````/);
   }
+});
+
+test('the reply rule leads the prompt and is repeated at the end', () => {
+  // Asked once, at the bottom, an agent writes the deck as prose and the chat
+  // renders it. What comes back off the copy button has no `---` left in it.
+  for (const prompt of [starterPrompt(), agentPrompt(SAMPLE)]) {
+    const lines = prompt.split('\n');
+    assert.ok(lines.indexOf('Before anything else, how to reply:') < 8, 'buried');
+    assert.match(lines.at(-1), /^Reply with the deck as one `+markdown block/);
+  }
+});
+
+test('the reply rule says what a rendered deck loses', () => {
+  // A rule with a reason behind it is followed. This is the reason.
+  assert.match(starterPrompt(), /A rendered deck is a deck I cannot use/);
+});
+
+test('the reminder carries the same fence the deck needed', () => {
+  const deck = '# Deck\n\n````\n```\n````';
+  assert.ok(agentPrompt(deck).endsWith('Reply with the deck as one `````markdown block, and nothing else.'));
 });
 
 test('the rules cover the marks that change how a slide arrives', () => {

@@ -71,21 +71,32 @@ export function fenceFor(markdown = '') {
 
 /// What to reply with, in the same fence the prompt quoted the deck in.
 ///
-/// Asking for a bare deck gets one wrapped in three backticks anyway, with the
-/// deck's own fences closing it early. So name the fence instead of fighting it.
+/// It leads the prompt rather than closing it. Asked at the end, an agent
+/// writes the deck as ordinary prose and the chat renders it: `---` becomes a
+/// rule, `- [x]` becomes a bullet holding two brackets, and the copy button
+/// hands back the rendering rather than the source. So say it first, show the
+/// exact first and last line, and say what breaks without it.
 function replyRule(fence) {
   return [
-    'Reply with the complete deck and nothing else. No preamble, and no account',
-    'of what you changed.',
+    'Before anything else, how to reply:',
     '',
-    `Wrap the whole deck in one block fenced with ${fence.length} backticks:`,
+    'Your entire reply is one fenced code block. The first line of it is',
+    `${fence}markdown and the last line is ${fence}. Nothing above that block,`,
+    'nothing below it, and no second block.',
     '',
-    `${fence}markdown`,
-    '<the deck>',
-    fence,
+    `${fence.length} backticks rather than three, because a deck may show fenced code of`,
+    'its own and three would close the block early.',
     '',
-    'Three would not do, because a fenced block inside the deck would close it.',
+    'This is the part that matters most. I copy your reply straight into an',
+    'editor, and a deck the chat has rendered comes back broken: the `---`',
+    'lines are drawn as rules and lost, `???` and `- [x]` lose their marks, and',
+    'the blank lines go. A rendered deck is a deck I cannot use.',
   ].join('\n');
+}
+
+/// The last thing an agent reads before it answers.
+function replyReminder(fence) {
+  return `Reply with the deck as one ${fence}markdown block, and nothing else.`;
 }
 
 /// For someone who has a topic, notes, or an existing deck and no Palmcast
@@ -98,6 +109,8 @@ export function starterPrompt() {
     'phone in the room. Slides are read on a phone, so keep each one short:',
     'a heading and a few lines, not a paragraph.',
     '',
+    replyRule(fence),
+    '',
     DECK_RULES,
     '',
     'Mix in a few questions for the room. A bar audience taps more than it reads.',
@@ -107,7 +120,7 @@ export function starterPrompt() {
     '<paste your topic, your notes, or an existing deck here;',
     'e.g. a 50 question quiz on opossum facts>',
     '',
-    replyRule(fence),
+    replyReminder(fence),
   ].join('\n');
 }
 
@@ -129,6 +142,8 @@ export function agentPrompt(markdown, questions = []) {
     'The room is reading it on their phones, so keep each slide short: a',
     'heading and a few lines, not a paragraph.',
     '',
+    replyRule(fence),
+    '',
     DECK_RULES,
     '',
     'Questions from the audience, still open:',
@@ -140,6 +155,6 @@ export function agentPrompt(markdown, questions = []) {
     markdown.trimEnd(),
     fence,
     '',
-    replyRule(fence),
+    replyReminder(fence),
   ].join('\n');
 }

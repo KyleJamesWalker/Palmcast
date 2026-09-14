@@ -294,9 +294,14 @@ console has the same button, which adds the deck so far and the open questions.
 
 The rules it carries cover every mark the parser reads, and the two habits that
 cost the most: an agent reaches for raw HTML to lay a slide out, and for `*`
-bullets it does not mean to hold back. Both prompts quote and ask for the deck
-in a fence of four backticks or more, because a deck that shows code carries
-three of its own.
+bullets it does not mean to hold back.
+
+Both prompts open by asking for the whole reply in one fenced block, and close
+by asking again. An agent told only to "reply with the deck" writes it as prose,
+the chat renders it, and the copy button hands back the rendering: the `---`
+lines drawn as rules and gone, `???` and `- [x]` stripped of their marks. The
+fence is four backticks or more, because a deck that shows code carries three
+of its own.
 
 ## Save a deck for later
 
