@@ -174,6 +174,39 @@ split form votes differently from a room that cannot see it.
 
 One vote per browser. A second tap replaces the first rather than adding one.
 
+## Run an open mic
+
+A room can take talks from the floor. **Lineup** in the presenter console opens
+submissions, and every phone grows a **Put a talk up** button. A title and a
+deck put a speaker in the running order, which is on every screen, so the room
+knows who is next.
+
+The host reads a talk before it goes up, puts it on stage, and hands its speaker
+the controls. Staging parks the host deck and brings it back when the talk comes
+down. The leaderboard runs the whole evening rather than resetting per talk.
+
+Talks arrive in the order somebody typed fastest, which is nobody's idea of an
+evening. The arrows beside each row move a talk up or down, and every screen
+follows.
+
+A speaker keeps their own deck until the room sees it. Their phone shows **Your
+talk**: where it stands in the running order, **Edit**, and **Read it through**,
+which draws every slide with the parser the room runs. The talk on stage is the
+exception. That deck belongs to the room, and the console edits it.
+
+**Drop** takes a talk off the running order and asks for a line to go with it.
+The speaker reads that line on their own phone and the room never does. It
+travels to the one phone holding that talk's token, not over the socket that
+reaches everyone. Their button becomes **Fix it and put it back**, and saving
+returns the talk to the slot it had. **Delete** is the one that does not come
+back.
+
+A room takes 40 talks, and three from any one person.
+
+**Save the evening** hands the host a zip. It holds every deck as its speaker
+left it, what the room asked during each talk, the board, and a `slides.vtt`
+cue file timed against a recording. A dropped talk stays out of it.
+
 ## Preview before the room sees it
 
 **Preview deck** draws every slide as a card, in order, with speaker notes and
