@@ -21,7 +21,7 @@ test('a setext heading underline does not split the slide', () => {
   assert.equal(slideCount('Heading\n---\n\nbody'), 1);
 });
 
-test('the count matches the server on the sample deck', () => {
+test('the count matches the server on a four slide deck', () => {
   const deck = '# One\n\n???\nnote\n\n---\n\n## Two\n\n---\n\n## Three\n\n---\n\n# End\n';
   assert.equal(slideCount(deck), 4);
 });

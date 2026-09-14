@@ -10,35 +10,7 @@ import {
 } from '/shared.js';
 import { previewDeck, renderPreview } from '/preview.js';
 import { starterPrompt } from '/deckstate.js';
-
-const SAMPLE = `# Why Rust
-
-A three minute case, made at a bar
-
-???
-Keep it to three minutes. They have drinks.
-
----
-
-## The pitch
-
-- No garbage collector
-- No data races
-- No null
-
----
-
-## The catch
-
-The borrow checker will beat you up
-for about two weeks.
-
-Then it stops.
-
----
-
-# Questions?
-`;
+import { SAMPLE } from '/sample.js';
 
 const editor = document.getElementById('markdown');
 const start = document.getElementById('start');
