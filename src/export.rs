@@ -181,6 +181,14 @@ pub fn bundle(session: &Session) -> std::io::Result<Vec<u8>> {
             .collect();
     }
 
+    // The links in a deck point at a room that will not outlive the evening, so
+    // the pictures travel with it. The file name carries the id the deck's own
+    // url ends with.
+    for held in &session.images {
+        writer.start_file(format!("images/{}.{}", held.id, held.extension()), options)?;
+        writer.write_all(&held.bytes)?;
+    }
+
     let record = Record {
         opened: stamp(session.opened),
         talks,

@@ -175,6 +175,49 @@ slide counter to jump opens the slide it lands on from the start.
 **Preview deck** draws every staged item, dimmed, so the author reads the whole
 slide before the room reads any of it.
 
+## Put a picture on a slide
+
+Markdown's own image syntax, pointing anywhere:
+
+```markdown
+# The crab
+
+![Ferris, the Rust mascot](https://example.com/ferris.png)
+```
+
+Every phone in the room fetches that address itself, so whoever wrote the deck
+learns nothing about the room, and whoever hosts the picture learns every
+address in it. A picture that will not load leaves its alt text, which is the
+reason to write one.
+
+An instance can also keep pictures itself. It is off unless the operator turns
+it on:
+
+```bash
+palmcast --uploads
+```
+
+Then the deck editor and the talk form grow a picture button. It opens the
+phone's own picker, and what comes back is a line of markdown at the cursor with
+the brackets waiting for alt text.
+
+An upload is never kept as it arrived. The server decodes it, brings the longest
+edge down to 1600 pixels, and encodes it again: jpeg for a photograph, png for
+anything carrying transparency. A phone photograph is several megabytes and four
+thousand pixels across, and the room pays for every byte once per person. Coming
+back through a pixel buffer also drops everything a camera wrote around the
+image, the place it was taken included.
+
+Uploads take what the room already lets a person do. The host and a co-host can
+always add one. A speaker can add one to their own talk. Anyone in the room can
+while it is taking talks, one picture at a time and 8 MB at most, and a room
+holds 40 of them.
+
+A picture lives exactly as long as the room does. The state file does not carry
+pictures, so a room that comes back across a restart comes back without them.
+**Save the evening** puts them in the zip under `images/`, named by the id the
+deck's own link ends with.
+
 ## Run a quiz
 
 A slide holding two or more task list items becomes a question. `- [x]` marks a
@@ -312,6 +355,7 @@ asked and the board as it stands.
 | `--state-file` | `PALMCAST_STATE_FILE` | none | Carry live rooms across a restart. |
 | `--public-url` | `PALMCAST_PUBLIC_URL` | none | The address the audience reaches. |
 | `--deck` | `PALMCAST_DECK` | none | A Markdown deck the start page opens with. |
+| `--uploads` | `PALMCAST_UPLOADS` | off | Keep pictures people upload, for the life of the room. |
 
 A link that outlives its room says so. Every view asks the server whether the
 session is still there, once on load and again whenever the socket drops. A view
@@ -369,6 +413,14 @@ every phone in the room renders it. The server therefore:
 - Bounds a deck link in both directions. Packing refuses a deck over 64 KB
   before it compresses anything. Unpacking stops reading at the 256 KB deck
   limit, so a small token cannot ask for a large allocation.
+- Strips an image source the same way it strips a link, and draws an uploaded
+  picture only after decoding it. A header claiming more than 12,000 pixels an
+  edge is refused before anything is allocated for it.
+
+A deck pointing at a picture somewhere else makes every phone in the room fetch
+that address. The policy allows it, because that is what an image in a deck is,
+and whoever serves the picture sees the room. Run `--uploads` for a room that
+should tell an outsider nothing.
 
 The presenter token travels in the URL fragment, which browsers never send to the
 server. Copy the presenter link to move control to another device.

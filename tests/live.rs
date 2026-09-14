@@ -19,6 +19,18 @@ async fn spawn_with_deck(markdown: &str) -> String {
         registry: Registry::new(Duration::from_secs(3600)),
         public_url: None,
         starter: Some(markdown.to_string()),
+        uploads: false,
+    }))
+    .await
+}
+
+/// An instance that keeps pictures, which is not the default.
+async fn spawn_with_uploads() -> String {
+    serve(routes::router_with(routes::App {
+        registry: Registry::new(Duration::from_secs(3600)),
+        public_url: None,
+        starter: None,
+        uploads: true,
     }))
     .await
 }
@@ -2166,4 +2178,170 @@ async fn a_viewer_cannot_step_the_slide() {
         }
     };
     assert_eq!(deck["step"], 0, "a viewer walked the room through a list");
+}
+
+/// A png of a given size, standing in for whatever a phone camera produced.
+fn picture(width: u32, height: u32) -> Vec<u8> {
+    let img = image::RgbImage::new(width, height);
+    let mut out = Vec::new();
+    image::DynamicImage::ImageRgb8(img)
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .unwrap();
+    out
+}
+
+async fn put_image(host: &str, id: &str, query: &str, kind: &str, bytes: Vec<u8>) -> (u16, String) {
+    let res = reqwest::Client::new()
+        .post(format!("http://{host}/api/sessions/{id}/images?{query}"))
+        .header("content-type", kind)
+        .body(bytes)
+        .send()
+        .await
+        .unwrap();
+    let status = res.status().as_u16();
+    (status, res.text().await.unwrap())
+}
+
+/// An instance that was not told to keep pictures does not keep pictures.
+#[tokio::test]
+async fn an_instance_without_uploads_takes_none() {
+    let host = spawn().await;
+    let (id, token) = create(&host, "# Deck").await;
+
+    let (status, _) = put_image(
+        &host,
+        &id,
+        &format!("token={token}&who=ada"),
+        "image/png",
+        picture(20, 20),
+    )
+    .await;
+    assert_eq!(status, 404, "an instance with uploads off took one");
+
+    let config: Value = reqwest::get(format!("http://{host}/api/config"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(config["uploads"], false, "the page would offer the button");
+}
+
+/// A phone photograph is several megabytes and four thousand pixels across.
+/// What the room serves has to be neither.
+#[tokio::test]
+async fn an_uploaded_picture_is_shrunk_before_the_room_can_ask_for_it() {
+    let host = spawn_with_uploads().await;
+    let (id, token) = create(&host, "# Deck").await;
+
+    let raw = picture(4000, 3000);
+    let (status, body) = put_image(
+        &host,
+        &id,
+        &format!("token={token}&who=ada"),
+        "image/png",
+        raw.clone(),
+    )
+    .await;
+    assert_eq!(status, 201, "the upload was refused: {body}");
+    let url = serde_json::from_str::<Value>(&body).unwrap()["url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(url.starts_with(&format!("/i/{id}/")), "{url}");
+
+    let res = reqwest::get(format!("http://{host}{url}")).await.unwrap();
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.headers()["content-type"], "image/jpeg");
+    let served = res.bytes().await.unwrap();
+    let drawn = image::load_from_memory(&served).unwrap();
+    assert_eq!(drawn.width(), 1600, "the long edge was not brought down");
+    assert_eq!(drawn.height(), 1200);
+    assert!(
+        served.len() < raw.len(),
+        "the room was served more than was uploaded"
+    );
+}
+
+#[tokio::test]
+async fn a_missing_picture_is_a_miss_and_not_a_panic() {
+    let host = spawn_with_uploads().await;
+    let (id, _) = create(&host, "# Deck").await;
+    let res = reqwest::get(format!("http://{host}/i/{id}/nothinghere"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 404);
+}
+
+#[tokio::test]
+async fn something_that_is_not_a_picture_is_refused() {
+    let host = spawn_with_uploads().await;
+    let (id, token) = create(&host, "# Deck").await;
+
+    let (status, _) = put_image(
+        &host,
+        &id,
+        &format!("token={token}&who=ada"),
+        "text/markdown",
+        b"# not a picture".to_vec(),
+    )
+    .await;
+    assert_eq!(status, 415, "a markdown file was taken as an image");
+
+    let (status, _) = put_image(
+        &host,
+        &id,
+        &format!("token={token}&who=ada"),
+        "image/png",
+        b"not a png at all".to_vec(),
+    )
+    .await;
+    assert_eq!(status, 400, "bytes that decode to nothing were kept");
+}
+
+/// A closed room is nobody's to upload into. An open one takes pictures from
+/// the floor, because it is taking the talks that need them.
+#[tokio::test]
+async fn a_stranger_uploads_only_while_the_room_is_taking_talks() {
+    let host = spawn_with_uploads().await;
+    let (id, mc) = create(&host, "# Deck").await;
+
+    let (status, _) = put_image(&host, &id, "who=ada", "image/png", picture(10, 10)).await;
+    assert_eq!(status, 403, "a closed room took a picture from the floor");
+
+    let mut console = open(&host, &id, Some(&mc)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "submissions", "open": true }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(80)).await;
+
+    let (status, body) = put_image(&host, &id, "who=ada", "image/png", picture(10, 10)).await;
+    assert_eq!(status, 201, "an open room refused one: {body}");
+}
+
+/// One picture at a time from any one phone.
+#[tokio::test]
+async fn a_phone_cannot_fill_a_room_with_pictures() {
+    let host = spawn_with_uploads().await;
+    let (id, token) = create(&host, "# Deck").await;
+    let query = format!("token={token}&who=ada");
+
+    let (first, _) = put_image(&host, &id, &query, "image/png", picture(10, 10)).await;
+    assert_eq!(first, 201);
+    let (again, _) = put_image(&host, &id, &query, "image/png", picture(10, 10)).await;
+    assert_eq!(again, 429, "a second picture landed with no wait");
+}
+
+/// A deck points at pictures anywhere, so the policy has to let a phone draw
+/// them. It still refuses everything a deck has no business loading.
+#[tokio::test]
+async fn the_policy_allows_a_picture_from_somewhere_else() {
+    let host = spawn().await;
+    let res = reqwest::get(format!("http://{host}/")).await.unwrap();
+    let csp = res.headers()["content-security-policy"].to_str().unwrap();
+    assert!(csp.contains("img-src 'self' data: https: http:"), "{csp}");
+    assert!(csp.contains("script-src 'self'"), "{csp}");
+    assert!(csp.contains("object-src 'none'"), "{csp}");
 }

@@ -36,6 +36,12 @@ struct Args {
     /// sample. For an instance that runs the same quiz or talk every time.
     #[arg(long, env = "PALMCAST_DECK")]
     deck: Option<PathBuf>,
+
+    /// Keep pictures people upload, for as long as the room that holds them.
+    /// Off by default: it is the one thing here that holds bytes a stranger
+    /// chose, and a public instance should say yes on purpose.
+    #[arg(long, env = "PALMCAST_UPLOADS", default_value_t = false)]
+    uploads: bool,
 }
 
 /// Read once at startup, not per request: a deck the operator named and the
@@ -127,10 +133,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind((args.bind.as_str(), args.port)).await?;
     tracing::info!("palmcast listening on http://{}", listener.local_addr()?);
+    if args.uploads {
+        tracing::info!(
+            max_edge = palmcast::images::MAX_EDGE,
+            max_bytes = palmcast::images::MAX_UPLOAD_BYTES,
+            "keeping uploaded images for the life of a room"
+        );
+    }
+
     let app = App {
         registry: registry.clone(),
         public_url: args.public_url.clone(),
         starter,
+        uploads: args.uploads,
     };
     // The result is held rather than propagated, because a server that fell over
     // still has rooms worth keeping and `?` here would skip the save entirely.

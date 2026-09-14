@@ -7,6 +7,7 @@ use subtle::ConstantTimeEq;
 use tokio::sync::broadcast;
 
 use crate::deck::{self, Slide};
+use crate::images::Stored;
 use crate::persist::{Choice, PersistedCue, PersistedQuestion, PersistedSession, PersistedTalk};
 use crate::wire::{
     AudienceQuestion, Frame, LineupEntry, Reaction, ScoreRow, ServerMsg, TalkDetail,
@@ -47,6 +48,12 @@ const MAX_TITLE_CHARS: usize = 60;
 /// A note is a line telling a speaker what to fix, the same length the room
 /// gets for a question.
 const MAX_NOTE_CHARS: usize = 280;
+/// An evening of slides, not a gallery. Every picture sits in memory for the
+/// life of the room and is served to everyone in it.
+const MAX_IMAGES: usize = 40;
+const MAX_IMAGE_BYTES: usize = 24 * 1024 * 1024;
+/// One picture at a time from any one phone.
+const UPLOAD_GAP: Duration = Duration::from_secs(2);
 
 /// What a socket or a request is allowed to do.
 ///
@@ -125,6 +132,11 @@ pub struct Session {
     pub last_reaction: HashMap<String, Instant>,
     pub questions: Vec<StoredQuestion>,
     pub last_ask: HashMap<String, Instant>,
+    /// Pictures the room is holding. They live and die with the session, so a
+    /// swept room takes its images with it.
+    pub images: Vec<Stored>,
+    pub image_bytes: usize,
+    pub last_upload: HashMap<String, Instant>,
     pub next_question_id: u64,
     pub participants: HashSet<String>,
     /// participant id -> the name they chose.
@@ -728,6 +740,46 @@ impl Session {
 
     /// One talk, whole, for whoever is entitled to it: the host reading it
     /// before putting it up, or the speaker checking their own.
+    /// Keeps a picture and returns the id to reach it by.
+    ///
+    /// `None` when the room is holding as much as it will, or when this phone
+    /// asked again too soon. The bytes have already been shrunk by the caller,
+    /// so what is counted here is what the room will actually serve.
+    pub fn store_image(&mut self, who: &str, bytes: Vec<u8>, kind: &'static str) -> Option<String> {
+        if !self.admit(who) {
+            return None;
+        }
+        let now = Instant::now();
+        if let Some(last) = self.last_upload.get(who)
+            && now.duration_since(*last) < UPLOAD_GAP
+        {
+            return None;
+        }
+        if self.images.len() >= MAX_IMAGES || self.image_bytes + bytes.len() > MAX_IMAGE_BYTES {
+            return None;
+        }
+        self.last_upload.insert(who.to_string(), now);
+        let id = random_string(16);
+        self.image_bytes += bytes.len();
+        self.images.push(Stored {
+            id: id.clone(),
+            kind,
+            bytes,
+        });
+        self.touched = Instant::now();
+        Some(id)
+    }
+
+    /// Whether the room is open to the floor. A room taking talks is taking
+    /// the pictures those talks need.
+    pub fn takes_talks(&self) -> bool {
+        self.submissions_open
+    }
+
+    pub fn image(&self, id: &str) -> Option<&Stored> {
+        self.images.iter().find(|held| held.id == id)
+    }
+
     pub fn talk_detail(&self, talk: u64) -> Option<TalkDetail> {
         let held = self.lineup.iter().find(|t| t.id == talk)?;
         let position = self
@@ -1105,6 +1157,9 @@ impl Registry {
                 last_reaction: HashMap::new(),
                 questions: Vec::new(),
                 last_ask: HashMap::new(),
+                images: Vec::new(),
+                image_bytes: 0,
+                last_upload: HashMap::new(),
                 next_question_id: 1,
                 participants: HashSet::new(),
                 names: HashMap::new(),
@@ -1326,6 +1381,11 @@ impl Registry {
                         })
                         .collect(),
                     last_ask: HashMap::new(),
+                    // Pictures are not in the state file, so a restored room
+                    // comes back without them.
+                    images: Vec::new(),
+                    image_bytes: 0,
+                    last_upload: HashMap::new(),
                     next_question_id: item.next_question_id.max(1),
                     participants: item.participants,
                     names: item.names,

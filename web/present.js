@@ -18,6 +18,7 @@ import { burst } from '/reactions.js';
 import { renderQuestions } from '/questions.js';
 import { renderScores } from '/scores.js';
 import { applySteps, backward, forward, steps } from '/steps.js';
+import { attachUpload, uploadsOn } from '/upload.js';
 
 const id = sessionId();
 const token = tokenFor(id);
@@ -67,9 +68,25 @@ const els = {
   scores: document.getElementById('scores'),
   jump: document.getElementById('jump'),
   deckToolbar: document.getElementById('deck-toolbar'),
+  deckImage: document.getElementById('deck-image'),
+  deckImageFile: document.getElementById('deck-image-file'),
 };
 
 smartEditor(els.deckText, els.deckToolbar);
+
+attachUpload({
+  button: els.deckImage,
+  input: els.deckImageFile,
+  textarea: els.deckText,
+  session: id,
+  query: () => ({ token: token ?? '' }),
+  onError(message) {
+    els.deckStatus.textContent = message;
+  },
+});
+uploadsOn().then((on) => {
+  els.deckImage.hidden = !on;
+});
 
 const audienceUrl = `${location.origin}/s/${id}`;
 const presenterUrl = `${location.origin}/s/${id}/present#t=${encodeURIComponent(token ?? '')}`;

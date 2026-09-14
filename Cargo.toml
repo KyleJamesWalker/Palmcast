@@ -26,10 +26,12 @@ tokio = { version = "1.53.1", features = ["full"] }
 tracing = "0.1.44"
 zip = { version = "8.6.0", default-features = false }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 
 [dev-dependencies]
 futures-util = "0.3.34"
 http-body-util = "0.1.5"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
 tokio-tungstenite = "0.30.0"
 tower = { version = "0.5.3", features = ["util"] }

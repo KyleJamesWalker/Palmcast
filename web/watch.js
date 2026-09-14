@@ -8,6 +8,7 @@ import { previewDeck, renderPreview } from '/preview.js';
 import { renderQuestions } from '/questions.js';
 import { renderScores } from '/scores.js';
 import { applySteps } from '/steps.js';
+import { attachUpload, uploadsOn } from '/upload.js';
 
 const id = sessionId();
 const slide = document.getElementById('slide');
@@ -24,6 +25,8 @@ const talkCancel = document.getElementById('talk-cancel');
 const talkSubmit = document.getElementById('talk-submit');
 const talkError = document.getElementById('talk-error');
 const mineBox = document.getElementById('mine');
+const talkImage = document.getElementById('talk-image');
+const talkImageFile = document.getElementById('talk-image-file');
 const yours = document.getElementById('yours');
 const yoursLink = document.getElementById('yours-link');
 
@@ -342,6 +345,21 @@ function mineCard(detail) {
   card.append(actions, preview);
   return card;
 }
+
+attachUpload({
+  button: talkImage,
+  input: talkImageFile,
+  textarea: talkDeck,
+  session: id,
+  query: () => (editing === null ? {} : { talk: editing, token: tokenFor(editing) }),
+  onError(message) {
+    talkError.textContent = message;
+    talkError.hidden = false;
+  },
+});
+uploadsOn().then((on) => {
+  talkImage.hidden = !on;
+});
 
 talkRules.addEventListener('click', async () => {
   const label = talkRules.textContent;

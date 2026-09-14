@@ -307,6 +307,21 @@ fn render(body: &str) -> String {
             title,
             id,
         }),
+        Event::Start(Tag::Image {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Event::Start(Tag::Image {
+            link_type,
+            dest_url: if is_safe_url(&dest_url) {
+                dest_url
+            } else {
+                CowStr::Borrowed("")
+            },
+            title,
+            id,
+        }),
         other => other,
     });
 
@@ -481,6 +496,39 @@ mod tests {
     fn obfuscated_javascript_hrefs_are_stripped() {
         let slides = parse("[tap me](  JaVa\tScRiPt:alert(1))");
         assert!(!slides[0].html.to_ascii_lowercase().contains("javascript:"));
+    }
+
+    #[test]
+    fn a_picture_somewhere_else_is_drawn() {
+        let slides = parse("![A crab](https://example.com/ferris.png)");
+        let html = &slides[0].html;
+        assert!(
+            html.contains("src=\"https://example.com/ferris.png\""),
+            "{html}"
+        );
+        assert!(html.contains("alt=\"A crab\""), "{html}");
+    }
+
+    #[test]
+    fn a_picture_source_is_stripped_the_same_way_a_link_is() {
+        for deck in [
+            "![x](javascript:alert(1))",
+            "![x](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)",
+            "![x](vbscript:msgbox)",
+        ] {
+            let html = parse(deck).pop().unwrap().html;
+            assert!(html.contains("<img"), "not drawn as a picture: {html}");
+            assert!(html.contains("src=\"\""), "a source survived: {html}");
+        }
+    }
+
+    /// A source the format will not parse never becomes a picture at all, so
+    /// what reaches the room is the text somebody typed.
+    #[test]
+    fn a_source_that_is_not_a_url_is_not_a_picture() {
+        let html = parse("![x](  JaVa\tScRiPt:alert(1))").pop().unwrap().html;
+        assert!(!html.contains("<img"), "{html}");
+        assert!(!html.to_ascii_lowercase().contains("src="), "{html}");
     }
 
     #[test]
