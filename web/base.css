@@ -380,3 +380,100 @@ input.url {
   border-radius: 10px;
 }
 input.url:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Running order */
+.lineup { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.lineup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+}
+.lineup-row.staged { border-color: var(--accent); }
+.lineup-row.dropped { opacity: .6; }
+.lineup-num { font-size: 12px; color: var(--ink-dim); min-width: 1.2em; }
+.lineup-move { display: flex; flex-direction: column; gap: 2px; }
+.lineup-move button {
+  min-height: 22px;
+  min-width: 30px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 7px;
+}
+.lineup-body { display: flex; flex-direction: column; flex: 1; min-width: 40%; }
+.lineup-title { font-size: 15px; overflow-wrap: anywhere; }
+.lineup-meta { font-size: 12px; }
+.lineup-now {
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.lineup-split { margin-top: 6px; }
+.lineup-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.lineup-button { min-height: 38px; padding: 0 12px; font-size: 13px; }
+
+/* A speaker's own talks, on the phone that put them up. */
+.mine { display: block; margin-top: 14px; }
+.mine-card {
+  display: block;
+  margin-top: 8px;
+  padding: 14px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+}
+.mine-card.dropped { border-color: #e0564f; }
+.mine-title { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+.mine-state { margin: 4px 0 0; font-size: 13px; }
+.mine-note {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+  background: var(--ground);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+}
+.mine-card .talk-actions { margin-top: 12px; }
+.mine-card .preview { max-height: 50vh; margin-top: 12px; }
+
+/* Deck preview */
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  /* The deck, not the page, is what scrolls: the editor stays reachable. */
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px;
+}
+.preview-card {
+  position: relative;
+  padding: 16px 16px 14px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+}
+.preview-number {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 11px;
+  letter-spacing: .08em;
+  color: var(--ink-dim);
+}
+.preview-card .options { margin-top: 12px; }
+.preview-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* A staged list item, before the room has been walked to it. Marked so an
+   author reading a preview can see what is staged, and the room never can. */
+.preview-card .step { opacity: .55; }

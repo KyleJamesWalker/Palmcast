@@ -102,8 +102,8 @@ fn staff_now(registry: &Registry, id: &str, token: Option<&str>) -> bool {
 fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: ClientMsg) {
     let token = token.unwrap_or("");
     match msg {
-        ClientMsg::Goto { index } => {
-            registry.with_mut(id, |s| s.goto(token, index));
+        ClientMsg::Goto { index, step } => {
+            registry.with_mut(id, |s| s.goto(token, index, step));
         }
         // The reveal also moves the board, and both leave under the one lock.
         ClientMsg::Reveal { slide } => {
@@ -118,8 +118,17 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
         ClientMsg::Submissions { open } => {
             registry.with_mut(id, |s| s.set_submissions(s.role_of(token), open));
         }
-        ClientMsg::Drop { talk } => {
-            registry.with_mut(id, |s| s.drop_talk(s.role_of(token), talk));
+        ClientMsg::Reorder { talk, index } => {
+            registry.with_mut(id, |s| s.reorder(s.role_of(token), talk, index));
+        }
+        ClientMsg::Drop { talk, note } => {
+            registry.with_mut(id, |s| s.drop_talk(s.role_of(token), talk, &note));
+        }
+        ClientMsg::Restore { talk } => {
+            registry.with_mut(id, |s| s.restore_talk(s.role_of(token), talk));
+        }
+        ClientMsg::Remove { talk } => {
+            registry.with_mut(id, |s| s.remove_talk(s.role_of(token), talk));
         }
         ClientMsg::SetName { name } => {
             registry.with_mut(id, |s| s.set_name(who, &name));

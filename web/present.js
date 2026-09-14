@@ -17,6 +17,8 @@ import { previewDeck, renderPreview } from '/preview.js';
 import { burst } from '/reactions.js';
 import { renderQuestions } from '/questions.js';
 import { renderScores } from '/scores.js';
+import { applySteps, backward, forward, steps } from '/steps.js';
+import { attachUpload, uploadsOn } from '/upload.js';
 
 const id = sessionId();
 const token = tokenFor(id);
@@ -66,9 +68,25 @@ const els = {
   scores: document.getElementById('scores'),
   jump: document.getElementById('jump'),
   deckToolbar: document.getElementById('deck-toolbar'),
+  deckImage: document.getElementById('deck-image'),
+  deckImageFile: document.getElementById('deck-image-file'),
 };
 
 smartEditor(els.deckText, els.deckToolbar);
+
+attachUpload({
+  button: els.deckImage,
+  input: els.deckImageFile,
+  textarea: els.deckText,
+  session: id,
+  query: () => ({ token: token ?? '' }),
+  onError(message) {
+    els.deckStatus.textContent = message;
+  },
+});
+uploadsOn().then((on) => {
+  els.deckImage.hidden = !on;
+});
 
 const audienceUrl = `${location.origin}/s/${id}`;
 const presenterUrl = `${location.origin}/s/${id}/present#t=${encodeURIComponent(token ?? '')}`;
@@ -87,11 +105,13 @@ let rev = 0;
 // Where the room is, and where this console is looking. They are the same for
 // the mc, who drives. A co-host can read ahead without taking the room along.
 let roomCurrent = 0;
+// How much of the current slide the room has been shown.
+let step = 0;
 let independent = false;
 let latestQuestions = [];
 let editingRev = null;
 let myRole = 'viewer';
-let lineup = { items: [], staged: null, open: false };
+let lineup = { items: [], dropped: [], staged: null, open: false };
 let baton = null;
 const voted = new Set();
 const tallies = new Map();
@@ -100,12 +120,16 @@ const revealed = new Map();
 function paint() {
   const now = slides[current];
   els.slide.innerHTML = now ? now.html : '';
+  // A console reading ahead of the room is proof-reading, so it sees the slide
+  // whole. The mc sees exactly what the room does.
+  applySteps(els.slide, independent ? steps(slides, current) : step);
   els.notes.textContent = now && now.notes ? now.notes : '—';
   const upcoming = slides[current + 1];
   els.next.innerHTML = upcoming ? upcoming.html : '<p>End of deck</p>';
   els.position.textContent = slides.length ? `${current + 1} / ${slides.length}` : '—';
-  els.prev.disabled = current === 0;
-  els.nextBtn.disabled = current >= slides.length - 1;
+  els.position.textContent += stepLabel();
+  els.prev.disabled = !backward(slides, current, step);
+  els.nextBtn.disabled = !forward(slides, current, step);
 
   const question = now?.question;
   const answer = revealed.get(current);
@@ -121,6 +145,10 @@ function paint() {
   });
 
   paintJump();
+  // A press that stays on this slide brings in the next staged item. The quiz
+  // reveal is a different button, so this one never says reveal.
+  els.nextBtn.textContent =
+    forward(slides, current, step)?.index === current ? 'Next item \u2192' : 'Next \u2192';
   // Only meaningful when this console has wandered off on its own.
   els.follow.hidden = !independent;
   els.follow.textContent = `Room is on ${roomCurrent + 1} \u00b7 follow`;
@@ -145,6 +173,7 @@ const socket = connect(id, token, {
     }
     slides = msg.slides;
     roomCurrent = msg.current;
+    step = msg.step;
     if (independent) {
       // An edit can shorten the deck under somebody reading ahead, which would
       // otherwise leave them past the end looking at nothing.
@@ -158,6 +187,7 @@ const socket = connect(id, token, {
   },
   move(msg) {
     roomCurrent = msg.current;
+    step = msg.step;
     if (!independent) current = msg.current;
     paint();
   },
@@ -228,10 +258,26 @@ function paintLineup() {
     onHand(talk) {
       socket.send({ type: 'hand', talk });
     },
+    onMove(talk, index) {
+      socket.send({ type: 'reorder', talk: talk.id, index });
+    },
     onDrop(talk) {
-      // A deck somebody wrote, so this asks before throwing it away.
-      if (confirm(`Drop "${talk.title}" from the running order?`)) {
-        socket.send({ type: 'drop', talk: talk.id });
+      // The speaker is in the room and reads this on their own phone, so the
+      // line is offered here rather than left for the host to find them later.
+      const note = prompt(
+        `Take "${talk.title}" off the running order?\n\n` +
+          `A line for ${talk.by || 'the speaker'}, if you have one:`,
+        '',
+      );
+      if (note === null) return;
+      socket.send({ type: 'drop', talk: talk.id, note });
+    },
+    onRestore(talk) {
+      socket.send({ type: 'restore', talk: talk.id });
+    },
+    onRemove(talk) {
+      if (confirm(`Delete "${talk.title}" for good? Its speaker loses it too.`)) {
+        socket.send({ type: 'remove', talk: talk.id });
       }
     },
     async onPreview(talk) {
@@ -243,7 +289,8 @@ function paintLineup() {
           `/api/sessions/${id}/talks/${talk.id}?token=${encodeURIComponent(token ?? '')}`,
         );
         if (!res.ok) throw new Error(`server said ${res.status}`);
-        renderPreview(els.talkPreview, await previewDeck(await res.text()));
+        const detail = await res.json();
+        renderPreview(els.talkPreview, await previewDeck(detail.markdown));
       } catch (e) {
         els.talkPreview.innerHTML = '';
         const failed = document.createElement('p');
@@ -330,7 +377,7 @@ function paintJump() {
 /// The mc moves the room. A co-host moves only their own screen, because the
 /// server will not take a goto from them and a button that does nothing is
 /// worse than one that does something useful.
-async function go(index) {
+async function go(index, at = 0) {
   const target = clamp(index, 0, Math.max(0, slides.length - 1));
   if ((await roleKnown) === 'cohost') {
     independent = target !== roomCurrent;
@@ -338,25 +385,44 @@ async function go(index) {
     paint();
     return;
   }
-  if (target === current) return;
-  socket.send({ type: 'goto', index: target });
+  if (target === current && at === step) return;
+  socket.send({ type: 'goto', index: target, step: at });
+}
+
+/// One press forward, which walks the staged items on this slide before it
+/// moves on to the next one.
+function ahead() {
+  const to = forward(slides, current, step);
+  if (to) go(to.index, to.step);
+}
+
+function back() {
+  const to = backward(slides, current, step);
+  if (to) go(to.index, to.step);
+}
+
+/// Says which of the slide's staged items the room is on, and nothing at all
+/// for a slide that arrives whole.
+function stepLabel() {
+  const total = steps(slides, current);
+  return total ? ` \u00b7 ${step} / ${total}` : '';
 }
 
 els.reveal.addEventListener('click', () => {
   socket.send({ type: 'reveal', slide: current });
 });
 
-els.prev.addEventListener('click', () => go(current - 1));
-els.nextBtn.addEventListener('click', () => go(current + 1));
+els.prev.addEventListener('click', back);
+els.nextBtn.addEventListener('click', ahead);
 
 document.addEventListener('keydown', (event) => {
   const intent = navIntent(event.key, event.target);
   if (!intent) return;
   event.preventDefault();
-  if (intent === 'next') go(current + 1);
-  else if (intent === 'prev') go(current - 1);
+  if (intent === 'next') ahead();
+  else if (intent === 'prev') back();
   else if (intent === 'first') go(0);
-  else go(slides.length - 1);
+  else go(slides.length - 1, steps(slides, slides.length - 1));
 });
 
 els.shareToggle.addEventListener('click', () => {

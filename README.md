@@ -146,6 +146,78 @@ drops them only where the options themselves changed, because a vote for an
 option that no longer exists means nothing. Changing which option is right keeps
 the votes and rescores the room.
 
+## Bring a list in one line at a time
+
+A list written with `*` arrives one item per press. A list written with `-`
+arrives whole when the slide does. This is Marp's rule, so a deck written for
+Marp behaves the same here.
+
+```markdown
+# Why Rust
+
+* No garbage collector
+* No data races
+* Fearless concurrency
+```
+
+Ordered lists follow the same split: `1)` comes in one at a time and `1.` comes
+in whole.
+
+The room walks together. A press moves every phone to the same item, the stage
+screen included, and nothing arrives on a viewer's phone before the presenter
+sends it. The console counts the slide and the item, `3 / 8 · 1 / 3`, and its
+button reads **Next item** while the press stays on this slide.
+
+Stepping back onto an earlier slide shows that slide whole. The room has already
+read it, and walking a list backwards item by item helps nobody. Tapping the
+slide counter to jump opens the slide it lands on from the start.
+
+**Preview deck** draws every staged item, dimmed, so the author reads the whole
+slide before the room reads any of it.
+
+## Put a picture on a slide
+
+Markdown's own image syntax, pointing anywhere:
+
+```markdown
+# The crab
+
+![Ferris, the Rust mascot](https://example.com/ferris.png)
+```
+
+Every phone in the room fetches that address itself, so whoever wrote the deck
+learns nothing about the room, and whoever hosts the picture learns every
+address in it. A picture that will not load leaves its alt text, which is the
+reason to write one.
+
+An instance can also keep pictures itself. It is off unless the operator turns
+it on:
+
+```bash
+palmcast --uploads
+```
+
+Then the deck editor and the talk form grow a picture button. It opens the
+phone's own picker, and what comes back is a line of markdown at the cursor with
+the brackets waiting for alt text.
+
+An upload is never kept as it arrived. The server decodes it, brings the longest
+edge down to 1600 pixels, and encodes it again: jpeg for a photograph, png for
+anything carrying transparency. A phone photograph is several megabytes and four
+thousand pixels across, and the room pays for every byte once per person. Coming
+back through a pixel buffer also drops everything a camera wrote around the
+image, the place it was taken included.
+
+Uploads take what the room already lets a person do. The host and a co-host can
+always add one. A speaker can add one to their own talk. Anyone in the room can
+while it is taking talks, one picture at a time and 8 MB at most, and a room
+holds 40 of them.
+
+A picture lives exactly as long as the room does. The state file does not carry
+pictures, so a room that comes back across a restart comes back without them.
+**Save the evening** puts them in the zip under `images/`, named by the id the
+deck's own link ends with.
+
 ## Run a quiz
 
 A slide holding two or more task list items becomes a question. `- [x]` marks a
@@ -173,6 +245,39 @@ an audience socket, and neither does the running count. A room that watches the
 split form votes differently from a room that cannot see it.
 
 One vote per browser. A second tap replaces the first rather than adding one.
+
+## Run an open mic
+
+A room can take talks from the floor. **Lineup** in the presenter console opens
+submissions, and every phone grows a **Put a talk up** button. A title and a
+deck put a speaker in the running order, which is on every screen, so the room
+knows who is next.
+
+The host reads a talk before it goes up, puts it on stage, and hands its speaker
+the controls. Staging parks the host deck and brings it back when the talk comes
+down. The leaderboard runs the whole evening rather than resetting per talk.
+
+Talks arrive in the order somebody typed fastest, which is nobody's idea of an
+evening. The arrows beside each row move a talk up or down, and every screen
+follows.
+
+A speaker keeps their own deck until the room sees it. Their phone shows **Your
+talk**: where it stands in the running order, **Edit**, and **Read it through**,
+which draws every slide with the parser the room runs. The talk on stage is the
+exception. That deck belongs to the room, and the console edits it.
+
+**Drop** takes a talk off the running order and asks for a line to go with it.
+The speaker reads that line on their own phone and the room never does. It
+travels to the one phone holding that talk's token, not over the socket that
+reaches everyone. Their button becomes **Fix it and put it back**, and saving
+returns the talk to the slot it had. **Delete** is the one that does not come
+back.
+
+A room takes 40 talks, and three from any one person.
+
+**Save the evening** hands the host a zip. It holds every deck as its speaker
+left it, what the room asked during each talk, the board, and a `slides.vtt`
+cue file timed against a recording. A dropped talk stays out of it.
 
 ## Preview before the room sees it
 
@@ -250,6 +355,7 @@ asked and the board as it stands.
 | `--state-file` | `PALMCAST_STATE_FILE` | none | Carry live rooms across a restart. |
 | `--public-url` | `PALMCAST_PUBLIC_URL` | none | The address the audience reaches. |
 | `--deck` | `PALMCAST_DECK` | none | A Markdown deck the start page opens with. |
+| `--uploads` | `PALMCAST_UPLOADS` | off | Keep pictures people upload, for the life of the room. |
 
 A link that outlives its room says so. Every view asks the server whether the
 session is still there, once on load and again whenever the socket drops. A view
@@ -307,6 +413,14 @@ every phone in the room renders it. The server therefore:
 - Bounds a deck link in both directions. Packing refuses a deck over 64 KB
   before it compresses anything. Unpacking stops reading at the 256 KB deck
   limit, so a small token cannot ask for a large allocation.
+- Strips an image source the same way it strips a link, and draws an uploaded
+  picture only after decoding it. A header claiming more than 12,000 pixels an
+  edge is refused before anything is allocated for it.
+
+A deck pointing at a picture somewhere else makes every phone in the room fetch
+that address. The policy allows it, because that is what an image in a deck is,
+and whoever serves the picture sees the room. Run `--uploads` for a room that
+should tell an outsider nothing.
 
 The presenter token travels in the URL fragment, which browsers never send to the
 server. Copy the presenter link to move control to another device.

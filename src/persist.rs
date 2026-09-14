@@ -19,6 +19,10 @@ pub struct PersistedSession {
     pub cohost_token: String,
     pub markdown: String,
     pub current: usize,
+    /// How much of the current slide the room had been shown. Absent in a file
+    /// written before a slide could arrive in pieces.
+    #[serde(default)]
+    pub step: usize,
     pub rev: u64,
     #[serde(default)]
     pub votes: HashMap<usize, HashMap<String, Choice>>,
@@ -85,6 +89,13 @@ pub struct PersistedTalk {
     pub token: String,
     #[serde(default)]
     pub by: String,
+    /// Whether the host has taken it off the running order, and what they said
+    /// when they did. Two fields rather than an optional string, so a drop with
+    /// nothing written on it is still a drop.
+    #[serde(default)]
+    pub dropped: bool,
+    #[serde(default)]
+    pub note: String,
 }
 
 /// What one voter chose on one slide.

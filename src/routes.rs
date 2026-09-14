@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::assets::{self, Web};
 use crate::deck;
+use crate::images;
 use crate::origin;
-use crate::session::{EditError, Registry, Role};
+use crate::session::{EditError, Registry, Role, TalkError};
 use crate::share;
 use crate::ws::{self, Join};
 
@@ -26,9 +27,9 @@ const MAX_WS_MESSAGE: usize = 16 * 1024;
 
 /// A deck is somebody else's Markdown rendered on everybody's phone, so the
 /// page is pinned to its own origin as well as escaped at the source.
-const CSP: &str = "default-src 'self'; img-src 'self' data:; style-src 'self'; \
-script-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; \
-base-uri 'none'; form-action 'self'; object-src 'none'";
+const CSP: &str = "default-src 'self'; img-src 'self' data: https: http:; \
+style-src 'self'; script-src 'self'; connect-src 'self' ws: wss:; \
+frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
 
 async fn security_headers(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
@@ -57,6 +58,10 @@ pub struct App {
     /// The deck the start page opens with, for an instance that runs the same
     /// talk or quiz every time. Unset leaves the page its built-in sample.
     pub starter: Option<String>,
+    /// Whether this instance keeps pictures for the rooms it serves. Off unless
+    /// the operator turned it on, because it is the one feature here that holds
+    /// bytes somebody else chose.
+    pub uploads: bool,
 }
 
 impl axum::extract::FromRef<App> for Registry {
@@ -70,6 +75,7 @@ pub fn router(registry: Registry) -> Router {
         registry,
         public_url: None,
         starter: None,
+        uploads: false,
     })
 }
 
@@ -80,6 +86,12 @@ pub fn router_with(app: App) -> Router {
         .route("/api/sessions", post(create_session))
         .route("/api/preview", post(preview_deck))
         .route("/api/starter", get(starter_deck))
+        .route("/api/config", get(config))
+        .route(
+            "/api/sessions/{id}/images",
+            post(upload_image).layer(DefaultBodyLimit::max(images::MAX_UPLOAD_BYTES + 4096)),
+        )
+        .route("/i/{id}/{image}", get(serve_image))
         .route("/api/pack", post(pack_deck))
         .route("/api/unpack", post(unpack_deck))
         .route(
@@ -88,7 +100,10 @@ pub fn router_with(app: App) -> Router {
         )
         .route("/api/sessions/{id}/markdown", get(get_markdown))
         .route("/api/sessions/{id}/talks", post(submit_talk))
-        .route("/api/sessions/{id}/talks/{talk}", get(read_talk))
+        .route(
+            "/api/sessions/{id}/talks/{talk}",
+            get(read_talk).put(update_talk),
+        )
         .route("/api/sessions/{id}/export", get(export_evening))
         .route("/api/sessions/{id}/cohost", get(cohost_link))
         .route("/api/sessions/{id}/role", get(whoami))
@@ -239,28 +254,196 @@ async fn submit_talk(
     }
 }
 
-/// The markdown of one submitted talk, for the host to read before staging it.
-/// Staff only: the running order is public, the decks behind it are not.
+/// One submitted talk, whole: for the host reading it before putting it up, and
+/// for the speaker who wrote it checking it over while they wait.
+///
+/// The running order is public and the decks behind it are not, so this answers
+/// two tokens and no others. The host's note travels here rather than on the
+/// socket, because it is for one speaker and a broadcast reaches a room.
 async fn read_talk(
     State(registry): State<Registry>,
     Path((id, talk)): Path<(String, u64)>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let token = params.get("token").map(String::as_str).unwrap_or_default();
-    let found = registry.with(&id, |s| {
-        s.role_of(token)
-            .edits()
-            .then(|| s.talk_markdown(talk))
-            .flatten()
+    let found = registry.with(&id, |s| match s.talk_detail(talk) {
+        None => Err(StatusCode::NOT_FOUND),
+        Some(_) if !allowed(s, talk, token) => Err(StatusCode::FORBIDDEN),
+        Some(detail) => Ok(detail),
     });
     match found {
-        Some(Some(markdown)) => (
-            [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
-            markdown,
+        Some(Ok(detail)) => axum::Json(detail).into_response(),
+        Some(Err(status)) => status.into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// The two tokens a talk answers to: the host's, and the one minted for the
+/// talk itself.
+fn allowed(session: &crate::session::Session, talk: u64, token: &str) -> bool {
+    session.role_of(token).edits() || session.owns_talk(talk, token)
+}
+
+#[derive(Deserialize)]
+struct TalkEdit {
+    #[serde(default)]
+    title: String,
+    markdown: String,
+}
+
+/// Rewrites a talk that is still waiting.
+///
+/// The speaker keeps their own deck until the room sees it: the whole point of
+/// putting a talk up early is being able to fix it before you stand up. A talk
+/// the host dropped comes back to the running order on the save that fixes it.
+async fn update_talk(
+    State(registry): State<Registry>,
+    Path((id, talk)): Path<(String, u64)>,
+    Query(params): Query<HashMap<String, String>>,
+    axum::Json(body): axum::Json<TalkEdit>,
+) -> Response {
+    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    let outcome = registry.with_mut(&id, |s| {
+        // A talk that is gone is gone for everyone, so say so rather than
+        // refusing the speaker who wrote it.
+        if s.talk_detail(talk).is_none() {
+            return Some(Err(TalkError::Gone));
+        }
+        if !allowed(s, talk, token) {
+            return None;
+        }
+        Some(s.update_talk(talk, &body.title, &body.markdown))
+    });
+    match outcome {
+        Some(Some(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
+        Some(Some(Err(TalkError::TooLarge))) => {
+            (StatusCode::PAYLOAD_TOO_LARGE, "that talk is too long").into_response()
+        }
+        Some(Some(Err(TalkError::Staged))) => (
+            StatusCode::CONFLICT,
+            "the room is looking at this talk right now",
         )
             .into_response(),
+        Some(Some(Err(TalkError::Gone))) | None => StatusCode::NOT_FOUND.into_response(),
         Some(None) => StatusCode::FORBIDDEN.into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+#[derive(Serialize)]
+struct Config {
+    uploads: bool,
+}
+
+/// What this instance lets a view offer. A page that cannot upload should not
+/// show a button that fails.
+async fn config(State(app): State<App>) -> Response {
+    axum::Json(Config {
+        uploads: app.uploads,
+    })
+    .into_response()
+}
+
+#[derive(Serialize)]
+struct Uploaded {
+    url: String,
+}
+
+/// Takes a picture for one room.
+///
+/// Open to whoever may write a deck here: the host, a co-host, a speaker with
+/// their own talk, and the room itself while it is taking talks. Bytes are
+/// decoded and shrunk before anything is kept, so what the room serves is
+/// never what a phone camera produced.
+async fn upload_image(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    if !app.uploads {
+        return (StatusCode::NOT_FOUND, "this instance does not keep images").into_response();
+    }
+    let declared = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if !images::readable_type(declared) {
+        return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "that is not an image").into_response();
+    }
+
+    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    let who = params.get("who").map(String::as_str).unwrap_or_default();
+    let talk = params.get("talk").and_then(|t| t.parse::<u64>().ok());
+
+    let allowed = app.registry.with(&id, |s| {
+        s.role_of(token).edits()
+            || talk.is_some_and(|talk| s.owns_talk(talk, token))
+            || s.takes_talks()
+    });
+    match allowed {
+        None => return StatusCode::NOT_FOUND.into_response(),
+        Some(false) => return StatusCode::FORBIDDEN.into_response(),
+        Some(true) => {}
+    }
+
+    // Off the runtime's thread: decoding and resizing a photograph is work, and
+    // every other room on this instance is waiting on the same executor.
+    let shrunk = tokio::task::spawn_blocking(move || images::shrink(&body)).await;
+    let (bytes, kind) = match shrunk {
+        Ok(Ok(out)) => out,
+        Ok(Err(error)) => {
+            let status = match error {
+                images::ImageError::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+                images::ImageError::Unreadable => StatusCode::BAD_REQUEST,
+            };
+            return (status, error.message()).into_response();
+        }
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    let stored = app
+        .registry
+        .with_mut(&id, |s| s.store_image(who, bytes, kind))
+        .flatten();
+    match stored {
+        Some(image) => (
+            StatusCode::CREATED,
+            axum::Json(Uploaded {
+                url: format!("/i/{id}/{image}"),
+            }),
+        )
+            .into_response(),
+        None => (
+            StatusCode::TOO_MANY_REQUESTS,
+            "this room is holding as many images as it can, or that was too soon",
+        )
+            .into_response(),
+    }
+}
+
+/// Serves one picture. The id is random and the bytes never change under it, so
+/// a phone that has drawn it once never asks again.
+async fn serve_image(
+    State(registry): State<Registry>,
+    Path((id, image)): Path<(String, String)>,
+) -> Response {
+    let found = registry.with(&id, |s| {
+        s.image(&image).map(|held| (held.kind, held.bytes.clone()))
+    });
+    match found {
+        Some(Some((kind, bytes))) => (
+            [
+                (header::CONTENT_TYPE, kind.to_string()),
+                (
+                    header::CACHE_CONTROL,
+                    "public, max-age=31536000, immutable".to_string(),
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        _ => (StatusCode::NOT_FOUND, "no such image").into_response(),
     }
 }
 

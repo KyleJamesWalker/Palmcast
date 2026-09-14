@@ -142,7 +142,10 @@ pub fn bundle(session: &Session) -> std::io::Result<Vec<u8>> {
         questions: Vec::new(),
     });
 
-    for (index, talk) in session.lineup.iter().enumerate() {
+    // The running order as it stands. A talk the host took off was not part of
+    // the evening, and numbering it would say it was.
+    let running = session.lineup.iter().filter(|t| t.dropped.is_none());
+    for (index, talk) in running.enumerate() {
         // A talk on stage is being driven live, so the live deck is the one the
         // speaker ended with.
         let markdown = if session.staged == Some(talk.id) {
@@ -176,6 +179,14 @@ pub fn bundle(session: &Session) -> std::io::Result<Vec<u8>> {
                 answered: q.answered,
             })
             .collect();
+    }
+
+    // The links in a deck point at a room that will not outlive the evening, so
+    // the pictures travel with it. The file name carries the id the deck's own
+    // url ends with.
+    for held in &session.images {
+        writer.start_file(format!("images/{}.{}", held.id, held.extension()), options)?;
+        writer.write_all(&held.bytes)?;
     }
 
     let record = Record {

@@ -4,12 +4,13 @@
 /// host sees the controls. One renderer, so the two can never disagree about
 /// what is on stage.
 export function renderLineup(root, lineup, opts = {}) {
-  const { items = [], staged = null, open = false } = lineup ?? {};
+  const { items = [], dropped = [], staged = null, open = false } = lineup ?? {};
   const host = opts.role === 'mc';
   const baton = opts.baton ?? null;
+  const shelf = host ? dropped : [];
   root.innerHTML = '';
 
-  if (!items.length) {
+  if (!items.length && !shelf.length) {
     const empty = document.createElement('p');
     empty.className = 'dim question-empty';
     empty.textContent = open
@@ -29,6 +30,19 @@ export function renderLineup(root, lineup, opts = {}) {
     num.textContent = String(index + 1);
     row.append(num);
 
+    if (host && items.length > 1) {
+      const move = document.createElement('span');
+      move.className = 'lineup-move';
+      const up = button('\u2191', () => opts.onMove?.(talk, index - 1));
+      const down = button('\u2193', () => opts.onMove?.(talk, index + 1));
+      up.disabled = index === 0;
+      down.disabled = index === items.length - 1;
+      up.setAttribute('aria-label', `Move ${talk.title} earlier`);
+      down.setAttribute('aria-label', `Move ${talk.title} later`);
+      move.append(up, down);
+      row.append(move);
+    }
+
     const body = document.createElement('div');
     body.className = 'lineup-body';
     const title = document.createElement('span');
@@ -37,8 +51,7 @@ export function renderLineup(root, lineup, opts = {}) {
     title.textContent = talk.title;
     const meta = document.createElement('span');
     meta.className = 'lineup-meta dim';
-    const slides = `${talk.slides} slide${talk.slides === 1 ? '' : 's'}`;
-    meta.textContent = talk.by ? `${talk.by} · ${slides}` : slides;
+    meta.textContent = describe(talk);
     body.append(title, meta);
     row.append(body);
 
@@ -73,6 +86,45 @@ export function renderLineup(root, lineup, opts = {}) {
     }
     root.append(row);
   });
+
+  if (!shelf.length) return;
+
+  const split = document.createElement('li');
+  split.className = 'lineup-split label';
+  split.textContent = 'Taken off';
+  root.append(split);
+
+  shelf.forEach((talk) => {
+    const row = document.createElement('li');
+    row.className = 'lineup-row dropped';
+
+    const body = document.createElement('div');
+    body.className = 'lineup-body';
+    const title = document.createElement('span');
+    title.className = 'lineup-title';
+    // Whatever a speaker typed, so it goes on screen as text.
+    title.textContent = talk.title;
+    const meta = document.createElement('span');
+    meta.className = 'lineup-meta dim';
+    meta.textContent = describe(talk);
+    body.append(title, meta);
+    row.append(body);
+
+    const actions = document.createElement('div');
+    actions.className = 'lineup-actions';
+    actions.append(
+      button('Read', () => opts.onPreview?.(talk)),
+      button('Put back', () => opts.onRestore?.(talk), 'primary'),
+      button('Delete', () => opts.onRemove?.(talk)),
+    );
+    row.append(actions);
+    root.append(row);
+  });
+}
+
+function describe(talk) {
+  const slides = `${talk.slides} slide${talk.slides === 1 ? '' : 's'}`;
+  return talk.by ? `${talk.by} · ${slides}` : slides;
 }
 
 function button(label, onClick, kind = 'ghost') {
@@ -83,21 +135,39 @@ function button(label, onClick, kind = 'ghost') {
   return el;
 }
 
-/// Where a speaker's own talk token lives, so their phone knows it is theirs
-/// when the host puts it up.
+const key = (session) => `palmcast:talk:${session}`;
+
+/// Where a speaker's own talk tokens live, so their phone knows which talks in
+/// the running order are theirs: to read back while they wait, to fix, and to
+/// drive when the host puts one up.
 export function rememberTalk(session, talk, token) {
+  const held = [...talksHeld(session).filter((t) => t.talk !== talk), { talk, token }];
+  write(session, held);
+}
+
+export function talksHeld(session) {
   try {
-    localStorage.setItem(`palmcast:talk:${session}`, JSON.stringify({ talk, token }));
+    const raw = localStorage.getItem(key(session));
+    const held = raw ? JSON.parse(raw) : [];
+    // An entry written by an older build is one object rather than a list.
+    return Array.isArray(held) ? held : [held];
   } catch {
-    /* the speaker will have to be handed the link instead */
+    return [];
   }
 }
 
-export function talkHeld(session) {
+/// Forgets a talk this browser can no longer reach.
+export function forgetTalk(session, talk) {
+  write(
+    session,
+    talksHeld(session).filter((t) => t.talk !== talk),
+  );
+}
+
+function write(session, held) {
   try {
-    const raw = localStorage.getItem(`palmcast:talk:${session}`);
-    return raw ? JSON.parse(raw) : null;
+    localStorage.setItem(key(session), JSON.stringify(held));
   } catch {
-    return null;
+    /* the speaker will have to be handed the link instead */
   }
 }

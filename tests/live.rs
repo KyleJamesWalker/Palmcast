@@ -19,6 +19,18 @@ async fn spawn_with_deck(markdown: &str) -> String {
         registry: Registry::new(Duration::from_secs(3600)),
         public_url: None,
         starter: Some(markdown.to_string()),
+        uploads: false,
+    }))
+    .await
+}
+
+/// An instance that keeps pictures, which is not the default.
+async fn spawn_with_uploads() -> String {
+    serve(routes::router_with(routes::App {
+        registry: Registry::new(Duration::from_secs(3600)),
+        public_url: None,
+        starter: None,
+        uploads: true,
     }))
     .await
 }
@@ -1862,4 +1874,474 @@ async fn the_deck_the_server_was_started_with_reaches_the_start_page() {
         .unwrap();
     assert_eq!(res.status(), 200);
     assert_eq!(res.text().await.unwrap(), deck);
+}
+
+/// Opens a room that takes talks and puts one up, the way a phone does.
+async fn open_mic(host: &str) -> (String, String) {
+    let (id, mc) = create(host, "# Lightning talks").await;
+    let mut console = open(host, &id, Some(&mc)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "submissions", "open": true }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    (id, mc)
+}
+
+async fn put_up(host: &str, id: &str, who: &str, markdown: &str) -> (u64, String) {
+    let res = reqwest::Client::new()
+        .post(format!("http://{host}/api/sessions/{id}/talks"))
+        .json(&serde_json::json!({ "title": "", "markdown": markdown, "who": who }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 201, "the submission was refused");
+    let json: Value = res.json().await.unwrap();
+    (
+        json["id"].as_u64().unwrap(),
+        json["token"].as_str().unwrap().to_string(),
+    )
+}
+
+async fn read_talk(host: &str, id: &str, talk: u64, token: &str) -> (u16, Value) {
+    let res = reqwest::get(format!(
+        "http://{host}/api/sessions/{id}/talks/{talk}?token={token}"
+    ))
+    .await
+    .unwrap();
+    let status = res.status().as_u16();
+    let body = res.text().await.unwrap();
+    (status, serde_json::from_str(&body).unwrap_or(Value::Null))
+}
+
+/// The point of putting a talk up early is being able to read it back and fix
+/// it before standing up in front of a room.
+#[tokio::test]
+async fn a_speaker_reads_and_rewrites_their_own_talk_while_they_wait() {
+    let host = spawn().await;
+    let (id, _) = open_mic(&host).await;
+    let (talk, token) = put_up(&host, &id, "ada-browser", "# Borrow checking").await;
+
+    let (status, detail) = read_talk(&host, &id, talk, &token).await;
+    assert_eq!(status, 200, "a speaker could not open their own talk");
+    assert_eq!(detail["markdown"], "# Borrow checking");
+    assert_eq!(detail["position"], 1);
+    assert_eq!(detail["dropped"], false);
+
+    let res = reqwest::Client::new()
+        .put(format!(
+            "http://{host}/api/sessions/{id}/talks/{talk}?token={token}"
+        ))
+        .json(&serde_json::json!({
+            "title": "Borrow checking, shorter",
+            "markdown": "# Borrow checking\n\n---\n\n# One rule",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 204, "a speaker could not fix their own talk");
+
+    let (_, detail) = read_talk(&host, &id, talk, &token).await;
+    assert_eq!(detail["markdown"], "# Borrow checking\n\n---\n\n# One rule");
+    assert_eq!(detail["title"], "Borrow checking, shorter");
+}
+
+/// The running order is public. The decks behind it are not.
+#[tokio::test]
+async fn a_phone_cannot_open_a_talk_it_did_not_write() {
+    let host = spawn().await;
+    let (id, _) = open_mic(&host).await;
+    let (talk, _) = put_up(&host, &id, "ada-browser", "# Mine").await;
+    let (_, stranger) = put_up(&host, &id, "bob-browser", "# Theirs").await;
+
+    assert_eq!(read_talk(&host, &id, talk, &stranger).await.0, 403);
+    assert_eq!(read_talk(&host, &id, talk, "").await.0, 403);
+    assert_eq!(
+        read_talk(&host, &id, 999, &stranger).await.0,
+        404,
+        "a talk that never existed was a refusal rather than a miss"
+    );
+
+    let res = reqwest::Client::new()
+        .put(format!(
+            "http://{host}/api/sessions/{id}/talks/{talk}?token={stranger}"
+        ))
+        .json(&serde_json::json!({ "title": "", "markdown": "# Not yours" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 403, "a stranger rewrote somebody else's talk");
+}
+
+/// A note about a talk is for the speaker who wrote it. A broadcast reaches a
+/// room, so it travels to the one phone that asks with the right token.
+#[tokio::test]
+async fn the_note_behind_a_drop_reaches_the_speaker_and_not_the_room() {
+    let host = spawn().await;
+    let (id, mc) = open_mic(&host).await;
+    let (talk, token) = put_up(&host, &id, "ada-browser", "# Borrow checking").await;
+
+    let mut phone = open(&host, &id, None).await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "drop", "talk": talk, "note": "Runs twice too long" }),
+    )
+    .await;
+
+    let mut audience = None;
+    for _ in 0..12 {
+        let msg = next_json(&mut phone).await;
+        if msg["type"] == "lineup" && msg["items"].as_array().unwrap().is_empty() {
+            audience = Some(msg);
+            break;
+        }
+    }
+    let lineup = audience.expect("the room was never told the talk came off");
+    assert_eq!(
+        lineup["dropped"].as_array().map(Vec::len),
+        Some(0),
+        "the room was shown what was pulled from it: {lineup}"
+    );
+
+    let (status, detail) = read_talk(&host, &id, talk, &token).await;
+    assert_eq!(status, 200);
+    assert_eq!(detail["note"], "Runs twice too long");
+    assert_eq!(detail["dropped"], true);
+    assert_eq!(detail["markdown"], "# Borrow checking");
+}
+
+/// Ordering the evening is the host's, and a talk moved on one phone moves on
+/// every phone.
+#[tokio::test]
+async fn the_host_reorders_the_running_order_for_the_whole_room() {
+    let host = spawn().await;
+    let (id, mc) = open_mic(&host).await;
+    let (first, _) = put_up(&host, &id, "ada-browser", "# Ada").await;
+    let (second, speaker) = put_up(&host, &id, "bob-browser", "# Bob").await;
+
+    let mut phone = open(&host, &id, None).await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+
+    // A speaker's own token is not the host's.
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "hand", "talk": second }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let mut driver = open(&host, &id, Some(&speaker)).await;
+    ws_send(
+        &mut driver,
+        serde_json::json!({ "type": "reorder", "talk": second, "index": 0 }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "reorder", "talk": second, "index": 0 }),
+    )
+    .await;
+
+    let mut moved = None;
+    for _ in 0..12 {
+        let msg = next_json(&mut phone).await;
+        if msg["type"] == "lineup" && msg["items"][0]["id"] == second {
+            moved = Some(msg);
+            break;
+        }
+    }
+    let lineup = moved.expect("the room never saw the running order change");
+    assert_eq!(lineup["items"][1]["id"], first);
+}
+
+/// A talk the host deleted has to read as gone, not as refused: the phone that
+/// put it up uses the difference to stop offering to edit something that is
+/// no longer there.
+#[tokio::test]
+async fn a_deleted_talk_reads_as_gone_to_the_phone_that_wrote_it() {
+    let host = spawn().await;
+    let (id, mc) = open_mic(&host).await;
+    let (talk, token) = put_up(&host, &id, "ada-browser", "# Mine").await;
+    assert_eq!(read_talk(&host, &id, talk, &token).await.0, 200);
+
+    let mut console = open(&host, &id, Some(&mc)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "remove", "talk": talk }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    assert_eq!(read_talk(&host, &id, talk, &token).await.0, 404);
+    let res = reqwest::Client::new()
+        .put(format!(
+            "http://{host}/api/sessions/{id}/talks/{talk}?token={token}"
+        ))
+        .json(&serde_json::json!({ "title": "", "markdown": "# Back" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 404);
+}
+
+/// A staged list is a slide that arrives in pieces, and every phone in the room
+/// has to arrive at the same piece at the same time.
+#[tokio::test]
+async fn the_room_follows_the_presenter_through_a_staged_list() {
+    let host = spawn().await;
+    let (id, token) = create(
+        &host,
+        "# Why Rust\n\n* No garbage collector\n* No data races",
+    )
+    .await;
+
+    let mut phone = open(&host, &id, None).await;
+    let deck = loop {
+        let msg = next_json(&mut phone).await;
+        if msg["type"] == "deck" {
+            break msg;
+        }
+    };
+    assert_eq!(
+        deck["slides"][0]["steps"], 2,
+        "the room was not told the staging"
+    );
+    assert_eq!(deck["step"], 0, "the room opened part way into the slide");
+    let html = deck["slides"][0]["html"].as_str().unwrap();
+    assert!(html.contains(r#"data-step="1""#), "{html}");
+
+    let mut console = open(&host, &id, Some(&token)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "goto", "index": 0, "step": 1 }),
+    )
+    .await;
+
+    let moved = loop {
+        let msg = next_json(&mut phone).await;
+        if msg["type"] == "move" {
+            break msg;
+        }
+    };
+    assert_eq!(
+        moved["current"], 0,
+        "the room changed slide rather than step"
+    );
+    assert_eq!(moved["step"], 1);
+}
+
+/// A step past the end of the slide is clamped. The console sends the position
+/// it can see, and an edit under it can leave that past the end.
+#[tokio::test]
+async fn a_step_past_the_end_of_a_slide_is_clamped() {
+    let host = spawn().await;
+    let (id, token) = create(&host, "# Plain\n\n- One\n- Two").await;
+    let mut phone = open(&host, &id, None).await;
+    let mut console = open(&host, &id, Some(&token)).await;
+
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "goto", "index": 0, "step": 9 }),
+    )
+    .await;
+
+    let moved = loop {
+        let msg = next_json(&mut phone).await;
+        if msg["type"] == "move" {
+            break msg;
+        }
+    };
+    assert_eq!(moved["step"], 0, "a slide that stages nothing took a step");
+}
+
+/// A viewer cannot step the room any more than they can move it.
+#[tokio::test]
+async fn a_viewer_cannot_step_the_slide() {
+    let host = spawn().await;
+    let (id, _) = create(&host, "* One\n* Two").await;
+    let mut phone = open(&host, &id, None).await;
+    ws_send(
+        &mut phone,
+        serde_json::json!({ "type": "goto", "index": 0, "step": 1 }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut later = open(&host, &id, None).await;
+    let deck = loop {
+        let msg = next_json(&mut later).await;
+        if msg["type"] == "deck" {
+            break msg;
+        }
+    };
+    assert_eq!(deck["step"], 0, "a viewer walked the room through a list");
+}
+
+/// A png of a given size, standing in for whatever a phone camera produced.
+fn picture(width: u32, height: u32) -> Vec<u8> {
+    let img = image::RgbImage::new(width, height);
+    let mut out = Vec::new();
+    image::DynamicImage::ImageRgb8(img)
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .unwrap();
+    out
+}
+
+async fn put_image(host: &str, id: &str, query: &str, kind: &str, bytes: Vec<u8>) -> (u16, String) {
+    let res = reqwest::Client::new()
+        .post(format!("http://{host}/api/sessions/{id}/images?{query}"))
+        .header("content-type", kind)
+        .body(bytes)
+        .send()
+        .await
+        .unwrap();
+    let status = res.status().as_u16();
+    (status, res.text().await.unwrap())
+}
+
+/// An instance that was not told to keep pictures does not keep pictures.
+#[tokio::test]
+async fn an_instance_without_uploads_takes_none() {
+    let host = spawn().await;
+    let (id, token) = create(&host, "# Deck").await;
+
+    let (status, _) = put_image(
+        &host,
+        &id,
+        &format!("token={token}&who=ada"),
+        "image/png",
+        picture(20, 20),
+    )
+    .await;
+    assert_eq!(status, 404, "an instance with uploads off took one");
+
+    let config: Value = reqwest::get(format!("http://{host}/api/config"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(config["uploads"], false, "the page would offer the button");
+}
+
+/// A phone photograph is several megabytes and four thousand pixels across.
+/// What the room serves has to be neither.
+#[tokio::test]
+async fn an_uploaded_picture_is_shrunk_before_the_room_can_ask_for_it() {
+    let host = spawn_with_uploads().await;
+    let (id, token) = create(&host, "# Deck").await;
+
+    let raw = picture(4000, 3000);
+    let (status, body) = put_image(
+        &host,
+        &id,
+        &format!("token={token}&who=ada"),
+        "image/png",
+        raw.clone(),
+    )
+    .await;
+    assert_eq!(status, 201, "the upload was refused: {body}");
+    let url = serde_json::from_str::<Value>(&body).unwrap()["url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(url.starts_with(&format!("/i/{id}/")), "{url}");
+
+    let res = reqwest::get(format!("http://{host}{url}")).await.unwrap();
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.headers()["content-type"], "image/jpeg");
+    let served = res.bytes().await.unwrap();
+    let drawn = image::load_from_memory(&served).unwrap();
+    assert_eq!(drawn.width(), 1600, "the long edge was not brought down");
+    assert_eq!(drawn.height(), 1200);
+    assert!(
+        served.len() < raw.len(),
+        "the room was served more than was uploaded"
+    );
+}
+
+#[tokio::test]
+async fn a_missing_picture_is_a_miss_and_not_a_panic() {
+    let host = spawn_with_uploads().await;
+    let (id, _) = create(&host, "# Deck").await;
+    let res = reqwest::get(format!("http://{host}/i/{id}/nothinghere"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 404);
+}
+
+#[tokio::test]
+async fn something_that_is_not_a_picture_is_refused() {
+    let host = spawn_with_uploads().await;
+    let (id, token) = create(&host, "# Deck").await;
+
+    let (status, _) = put_image(
+        &host,
+        &id,
+        &format!("token={token}&who=ada"),
+        "text/markdown",
+        b"# not a picture".to_vec(),
+    )
+    .await;
+    assert_eq!(status, 415, "a markdown file was taken as an image");
+
+    let (status, _) = put_image(
+        &host,
+        &id,
+        &format!("token={token}&who=ada"),
+        "image/png",
+        b"not a png at all".to_vec(),
+    )
+    .await;
+    assert_eq!(status, 400, "bytes that decode to nothing were kept");
+}
+
+/// A closed room is nobody's to upload into. An open one takes pictures from
+/// the floor, because it is taking the talks that need them.
+#[tokio::test]
+async fn a_stranger_uploads_only_while_the_room_is_taking_talks() {
+    let host = spawn_with_uploads().await;
+    let (id, mc) = create(&host, "# Deck").await;
+
+    let (status, _) = put_image(&host, &id, "who=ada", "image/png", picture(10, 10)).await;
+    assert_eq!(status, 403, "a closed room took a picture from the floor");
+
+    let mut console = open(&host, &id, Some(&mc)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "submissions", "open": true }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(80)).await;
+
+    let (status, body) = put_image(&host, &id, "who=ada", "image/png", picture(10, 10)).await;
+    assert_eq!(status, 201, "an open room refused one: {body}");
+}
+
+/// One picture at a time from any one phone.
+#[tokio::test]
+async fn a_phone_cannot_fill_a_room_with_pictures() {
+    let host = spawn_with_uploads().await;
+    let (id, token) = create(&host, "# Deck").await;
+    let query = format!("token={token}&who=ada");
+
+    let (first, _) = put_image(&host, &id, &query, "image/png", picture(10, 10)).await;
+    assert_eq!(first, 201);
+    let (again, _) = put_image(&host, &id, &query, "image/png", picture(10, 10)).await;
+    assert_eq!(again, 429, "a second picture landed with no wait");
+}
+
+/// A deck points at pictures anywhere, so the policy has to let a phone draw
+/// them. It still refuses everything a deck has no business loading.
+#[tokio::test]
+async fn the_policy_allows_a_picture_from_somewhere_else() {
+    let host = spawn().await;
+    let res = reqwest::get(format!("http://{host}/")).await.unwrap();
+    let csp = res.headers()["content-security-policy"].to_str().unwrap();
+    assert!(csp.contains("img-src 'self' data: https: http:"), "{csp}");
+    assert!(csp.contains("script-src 'self'"), "{csp}");
+    assert!(csp.contains("object-src 'none'"), "{csp}");
 }
