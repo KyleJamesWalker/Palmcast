@@ -78,10 +78,14 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
     caret = editor.read();
   };
 
-  els.theme.addEventListener('change', () => {
+  const writeTheme = () => {
     const name = els.theme.value;
-    write(setTheme(caret ?? editor.read(), name));
-    applyTheme(name);
+    write(setTheme(caret ?? editor.read(), name, els.scope.checked));
+    return name;
+  };
+
+  els.theme.addEventListener('change', () => {
+    applyTheme(writeTheme());
     show();
   });
 
@@ -97,8 +101,11 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
 
   // Changing the reach rewrites the directive already on that line rather than
   // waiting for the next pick, so the checkbox and the deck never disagree.
+  // One checkbox governs both pickers, because "this slide only" means the same
+  // thing to a look as it does to a move.
   els.scope.addEventListener('change', () => {
     if (els.transition.value) writeTransition();
+    if (els.theme.value) writeTheme();
   });
 
   // Two transitions are only comparable if you can run each of them twice.
@@ -114,6 +121,9 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
   /// Keeps the theme picker showing what the deck actually says, including
   /// after an edit the author typed by hand.
   const sync = () => {
+    // A slide scoped look is not the deck's, so reading the deck wide one here
+    // would snap the picker back the moment a scoped pick was made.
+    if (els.scope.checked) return;
     const named = themeIn(area.value) ?? '';
     if (els.theme.value !== named) {
       els.theme.value = looks.themes.some((l) => l.name === named) ? named : '';

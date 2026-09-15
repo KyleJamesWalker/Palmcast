@@ -16,6 +16,10 @@ pub struct Slide {
     /// back over the same boundary runs the same animation reversed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transition: Option<Transition>,
+    /// A look for this slide alone, from `_theme`. `None` leaves the slide on
+    /// whatever the deck asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
 }
 
 /// A transition, as the deck named it. Whether the name is installed is the
@@ -70,6 +74,7 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
             question,
             steps,
             transition,
+            theme: asked.spot_theme,
         });
     }
 
@@ -80,6 +85,7 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
             question: None,
             steps: 0,
             transition: None,
+            theme: None,
         }];
     }
     slides
@@ -87,8 +93,8 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
 
 /// The theme the deck asked for, if it asked for one and the name is a name.
 ///
-/// Deck wide wherever it is written, and the last one wins, because a theme
-/// that changed halfway through would repaint the room mid-talk.
+/// Deck wide wherever it is written, and the last one wins. A slide that wants
+/// its own look says `_theme`, which is on the slide and never carries.
 pub fn theme_of(markdown: &str) -> Option<String> {
     let mut found = None;
     let mut fence = Fence::default();
@@ -109,6 +115,7 @@ pub fn theme_of(markdown: &str) -> Option<String> {
 struct Directives {
     transition: Option<Transition>,
     spot: Option<Transition>,
+    spot_theme: Option<String>,
 }
 
 /// Lifts the directive lines out of a slide and reads them.
@@ -129,6 +136,7 @@ fn split_directives(raw: &str) -> (String, Directives) {
         match directive(line) {
             Some(("transition", value)) => asked.transition = transition(value),
             Some(("_transition", value)) => asked.spot = transition(value),
+            Some(("_theme", value)) => asked.spot_theme = style_name(value),
             // Read deck wide by `theme_of`, and dropped here so it never draws.
             Some(("theme", _)) => {}
             _ => body.push(line),
@@ -853,6 +861,37 @@ mod tests {
             theme_of("# One\n\n---\n\n<!-- theme: paper -->\n# Two").as_deref(),
             Some("paper")
         );
+    }
+
+    #[test]
+    fn a_slide_can_ask_for_a_look_of_its_own() {
+        let slides = parse(
+            "<!-- theme: ember -->\n# One\n\n---\n\n<!-- _theme: neon -->\n# Two\n\n---\n\n# Three",
+        );
+        assert_eq!(slides.len(), 3);
+        assert_eq!(slides[0].theme, None, "the first slide claimed a look");
+        assert_eq!(slides[1].theme.as_deref(), Some("neon"));
+        assert_eq!(
+            slides[2].theme, None,
+            "a _theme carried past the slide that asked for it"
+        );
+        // The deck wide theme is untouched by any of it.
+        assert_eq!(
+            theme_of("<!-- theme: ember -->\n# One\n\n---\n\n<!-- _theme: neon -->\n# Two")
+                .as_deref(),
+            Some("ember")
+        );
+    }
+
+    #[test]
+    fn a_slide_look_is_a_name_and_never_a_path() {
+        for bad in ["../secrets", "a/b", "one two", "\"quoted\"", ""] {
+            let slides = parse(&format!("<!-- _theme: {bad} -->\n# One"));
+            assert_eq!(slides[0].theme, None, "{bad:?} was taken as a look");
+        }
+        // And the directive never reaches the slide either way.
+        let slides = parse("<!-- _theme: ../secrets -->\n# One");
+        assert!(!slides[0].html.contains("_theme"), "the directive drew");
     }
 
     #[test]

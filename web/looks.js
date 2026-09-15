@@ -111,6 +111,12 @@ export async function installedLooks(fetcher = globalThis.fetch) {
 /// One link swapped in place rather than a stylesheet appended per theme: a
 /// talk that follows one in another theme has to be able to put the page back,
 /// and dropping the href is what "no theme" means.
+/// The look a slide should be painted in: its own `_theme` when it named one,
+/// and the deck's otherwise.
+export function themeFor(slide, deckTheme) {
+  return slide?.theme ?? deckTheme ?? null;
+}
+
 export function applyTheme(name, doc = document) {
   let link = doc.getElementById('deck-theme');
   if (!link) {

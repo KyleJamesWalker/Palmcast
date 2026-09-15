@@ -169,6 +169,9 @@ impl ServerMsg {
                         notes: String::new(),
                         steps: s.steps,
                         transition: s.transition.clone(),
+                        // The look paints the audience's own screen, so it has
+                        // to reach them. It names a stylesheet and nothing else.
+                        theme: s.theme.clone(),
                         question: s.question.as_ref().map(|q| Question {
                             options: q.options.clone(),
                             multi: q.multi,
@@ -334,6 +337,7 @@ mod tests {
                 notes: "the secret note".into(),
                 steps: 0,
                 transition: None,
+                theme: Some("neon".into()),
                 question: Some(Question {
                     options: vec!["a".into(), "b".into()],
                     multi: false,
@@ -387,6 +391,21 @@ mod tests {
         assert!(owner.contains("Needs a rewrite"));
         assert!(!audience.contains("Needs a rewrite"), "{audience}");
         assert!(audience.contains("Borrow checking"));
+    }
+
+    #[test]
+    fn a_slide_look_reaches_the_room_that_has_to_draw_it() {
+        let Some(ServerMsg::Deck { slides, .. }) = deck_msg().redacted() else {
+            panic!("the deck was withheld from the room");
+        };
+        assert_eq!(
+            slides[0].theme.as_deref(),
+            Some("neon"),
+            "the audience was not told which look to paint the slide in"
+        );
+        // It names a stylesheet the instance already serves to anyone, so there
+        // is nothing in it to withhold. The notes beside it still go.
+        assert_eq!(slides[0].notes, "");
     }
 
     #[test]

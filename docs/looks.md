@@ -13,7 +13,8 @@ Picking one writes the directive into the deck and shows it on a small sample
 slide beside the picker; tapping that sample runs the transition again, which is
 the only way to compare two of them without picking each one twice. **This slide
 only** writes `_transition` instead, for a slide that should differ from the
-ones after it. Both pickers are on the start page and in the
+ones after it. The same box applies to the theme picker, where it writes
+`_theme`. Both pickers are on the start page and in the
 presenter console, and the directives below are what they write, so a deck
 written by hand and a deck written with them are the same deck.
 
@@ -35,6 +36,29 @@ serif headings; `neon` is cyan and magenta on near black.
 The line is read wherever it sits and paints the whole deck, and it never
 appears on a slide. A name the instance does not have is ignored, so a deck
 written against someone else's instance still runs here.
+
+One slide can differ, with `_theme`:
+
+```markdown
+<!-- theme: paper -->
+
+# Why Rust
+
+---
+
+<!-- _theme: neon -->
+
+# The part that should feel different
+
+---
+
+# Back to paper
+```
+
+`_theme` paints the slide it sits on and no others, and never carries to the
+slides after it. Everything else stays on whatever `theme` named. Use it for one
+slide that wants to land differently; a deck that changes its look on every
+slide is a deck the room is reading rather than following.
 
 A theme covers the reading surface: the slide on a phone and the whole stage
 screen. The status pill, the footer, the Room panel and the presenter console

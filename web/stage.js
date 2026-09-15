@@ -3,7 +3,7 @@ import { renderOptions } from '/quiz.js';
 import { pruneBySlide, survivingSlides } from '/deckstate.js';
 import { burst } from '/reactions.js';
 import { renderScores } from '/scores.js';
-import { applyTheme, crossing, preload, swap } from '/looks.js';
+import { applyTheme, crossing, preload, swap, themeFor } from '/looks.js';
 import { joinUrl, showJoin } from '/qr.js';
 import { applySteps } from '/steps.js';
 
@@ -16,10 +16,13 @@ let slides = [];
 let current = 0;
 let step = 0;
 let rev = 0;
+/// The deck's own look. A slide naming `_theme` overrides it for that slide.
+let deckTheme = null;
 const revealed = new Map();
 
 function paint() {
   const now = slides[current];
+  applyTheme(themeFor(now, deckTheme));
   slide.innerHTML = now ? now.html : '<p class="waiting">Waiting for the presenter\u2026</p>';
   applySteps(slide, step);
   position.textContent = slides.length ? `${current + 1} / ${slides.length}` : '';
@@ -47,7 +50,7 @@ connect(id, null, {
     slides = msg.slides;
     current = msg.current;
     step = msg.step;
-    applyTheme(msg.theme);
+    deckTheme = msg.theme ?? null;
     // Every transition the deck can reach for, fetched now rather than at the
     // press that needs it. A talk going on stage is the moment there is time.
     preload(slides);

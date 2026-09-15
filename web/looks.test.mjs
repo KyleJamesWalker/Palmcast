@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { crossing, demoFaces, optionsFor, swap, transitionNames } from './looks.js';
+import { crossing, demoFaces, optionsFor, swap, themeFor, transitionNames } from './looks.js';
 
 const deck = [
   { transition: { name: 'cover', duration: 800 } },
@@ -169,4 +169,15 @@ test('the demo always steps forward, never backwards', () => {
 test('a row the server did not shape is skipped rather than breaking the picker', () => {
   const rows = optionsFor(['ember', null, { about: 'no name' }, { name: 'neon' }], 'theme');
   assert.deepEqual(rows.map((r) => r.value), ['', 'neon']);
+});
+
+test('a slide with its own look overrides the deck, and only for itself', () => {
+  assert.equal(themeFor({ theme: 'neon' }, 'ember'), 'neon');
+  assert.equal(themeFor({}, 'ember'), 'ember', 'a slide with no look left the deck behind');
+  assert.equal(themeFor({ theme: 'neon' }, null), 'neon');
+});
+
+test('with nothing named anywhere the view keeps its own default', () => {
+  assert.equal(themeFor({}, null), null);
+  assert.equal(themeFor(undefined, undefined), null, 'a missing slide threw instead of falling back');
 });
