@@ -35,7 +35,23 @@ pub struct Knob {
     /// The value the stylesheet falls back to, which is what a picker should
     /// open on.
     pub value: String,
+    /// Named choices the look suggests, from `--knob-<name>-options`. A picker
+    /// offers these; the value is still whatever the grammar allows, so a look
+    /// that names none is not a look that only takes what it named.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<Choice>,
 }
+
+/// One named value a look suggests for a knob.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Choice {
+    pub name: String,
+    pub value: String,
+}
+
+/// The suffix that turns a declaration into a list of choices rather than a
+/// knob of its own.
+const OPTIONS: &str = "-options";
 
 pub struct Sheet {
     pub css: String,
@@ -193,7 +209,7 @@ fn knobs(css: &str) -> Vec<Knob> {
             continue;
         };
         let value = rest.split([';', '}']).next().unwrap_or_default().trim();
-        if value.is_empty() || value.len() > 64 || value.contains("var(") {
+        if value.is_empty() || value.len() > 200 || value.contains("var(") {
             continue;
         }
         if found.iter().any(|knob| knob.name == name) {
@@ -202,10 +218,48 @@ fn knobs(css: &str) -> Vec<Knob> {
         found.push(Knob {
             name,
             value: value.to_string(),
+            options: Vec::new(),
         });
     }
-    found.sort_by(|a, b| a.name.cmp(&b.name));
-    found
+
+    // `--knob-heading-options` describes `--knob-heading`; it is not a knob.
+    let (lists, mut knobs): (Vec<Knob>, Vec<Knob>) = found
+        .into_iter()
+        .partition(|knob| knob.name.ends_with(OPTIONS));
+    for list in lists {
+        let of = list.name.trim_end_matches(OPTIONS).to_string();
+        if let Some(knob) = knobs.iter_mut().find(|knob| knob.name == of) {
+            knob.options = choices(&list.value);
+        }
+    }
+
+    knobs.sort_by(|a, b| a.name.cmp(&b.name));
+    knobs
+}
+
+/// The choices a look offers for one knob.
+///
+/// Two shapes, because looks want two different things. `cyan #3ef0ff, orange
+/// #ff8800` names colours, and the value is what a picker shows beside the
+/// name. `vegas, tampa, space-station` names presets the stylesheet maps for
+/// itself, and the name is the value.
+///
+/// A malformed entry is dropped rather than refusing the list: a look offering
+/// three of its four choices is more use than one offering none.
+fn choices(value: &str) -> Vec<Choice> {
+    value
+        .split(',')
+        .filter_map(|entry| {
+            let mut words = entry.split_whitespace();
+            let name = style_name(words.next()?)?;
+            let value = match words.next() {
+                Some(given) if !given.is_empty() && given.len() <= 32 => given.to_string(),
+                Some(_) => return None,
+                None => name.clone(),
+            };
+            words.next().is_none().then_some(Choice { name, value })
+        })
+        .collect()
 }
 
 /// What a file says about itself, for a picker to put next to the name.
@@ -260,18 +314,28 @@ mod tests {
             .find(|l| l.name == "neon")
             .expect("no neon");
         assert_eq!(
-            neon.knobs,
-            vec![
-                Knob {
-                    name: "accent".into(),
-                    value: "#ff3ea5".into()
-                },
-                Knob {
-                    name: "heading".into(),
-                    value: "#3ef0ff".into()
-                },
-            ],
+            neon.knobs
+                .iter()
+                .map(|k| k.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["accent", "heading"],
             "neon did not surface the knobs its stylesheet declares"
+        );
+        let heading = neon.knobs.iter().find(|k| k.name == "heading").unwrap();
+        assert_eq!(heading.value, "#3ef0ff");
+        assert_eq!(
+            heading
+                .options
+                .iter()
+                .map(|c| (c.name.as_str(), c.value.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("cyan", "#3ef0ff"),
+                ("orange", "#ff8800"),
+                ("rose", "#ff3ea5"),
+                ("lime", "#6dff5c"),
+            ],
+            "the named colours neon offers did not come through"
         );
 
         // Every other built-in declares none, and is what it always was.
@@ -285,6 +349,39 @@ mod tests {
     }
 
     #[test]
+    fn a_look_can_offer_presets_it_maps_itself() {
+        // A list of bare names, for a knob whose value the stylesheet reads
+        // rather than paints with. The name is the value.
+        let found = knobs(
+            ".a { --knob-style: vegas; \
+             --knob-style-options: vegas, tampa, italy, la, space-station; }",
+        );
+        assert_eq!(found.len(), 1, "the options list was taken for a knob");
+        assert_eq!(found[0].name, "style");
+        assert_eq!(found[0].value, "vegas");
+        assert_eq!(
+            found[0]
+                .options
+                .iter()
+                .map(|c| (c.name.as_str(), c.value.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("vegas", "vegas"),
+                ("tampa", "tampa"),
+                ("italy", "italy"),
+                ("la", "la"),
+                ("space-station", "space-station"),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_options_list_for_a_knob_that_is_not_there_is_dropped() {
+        let found = knobs(".a { --knob-ghost-options: one, two; }");
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
     fn reading_a_knob_back_is_not_declaring_one() {
         // `var(--knob-x)` is a use, and a use is not a declaration.
         let found = knobs(".a { color: var(--knob-heading); --knob-real: #fff; }");
@@ -292,7 +389,8 @@ mod tests {
             found,
             vec![Knob {
                 name: "real".into(),
-                value: "#fff".into()
+                value: "#fff".into(),
+                options: Vec::new(),
             }],
             "a var() reading a knob was taken for a declaration"
         );

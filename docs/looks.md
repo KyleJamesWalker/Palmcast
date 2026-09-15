@@ -82,10 +82,62 @@ serves them on `/api/config` for the pickers to offer.
 A look that declares none behaves exactly as it always did, and so does a deck
 that turns none.
 
+### Offering choices
+
+A knob can name the values it expects, in a second property beside it:
+
+```css
+--knob-heading: #3ef0ff;
+--knob-heading-options: cyan #3ef0ff, orange #ff8800, rose #ff3ea5;
+```
+
+The editor offers those by name and writes the value. The list is a suggestion
+and not a rule: any value the grammar allows still works, so a deck can ask for
+a colour the look never thought of.
+
+CSS has no way of its own to declare a list of options. `@property` can
+enumerate keywords in its `syntax` descriptor, but only to validate them, and it
+cannot map a name to a value. So the list is an ordinary custom property, which
+keeps it in the stylesheet with everything else.
+
+### Presets a look maps itself
+
+The values do not have to be colours. A knob can take a bare word and the look
+can decide what it means:
+
+```css
+.viewer, .stage {
+  --knob-style: vegas;
+  --knob-style-options: vegas, tampa, italy, la, space-station;
+}
+
+@container style(--knob-style: vegas) {
+  .slide h1 { color: #ff2d95; }
+  .slide { --accent: #ffd166; }
+}
+
+@container style(--knob-style: tampa) {
+  .slide h1 { color: #00c2a8; }
+  .slide { --accent: #ff7043; }
+}
+```
+
+A name on its own in the options list is its own value, so `vegas` offers
+`vegas`. `@container style()` is how a stylesheet reads a custom property back
+and changes rules on it, which is what turns one word into a whole heading and
+accent combination. It applies to descendants of the element holding the
+property, so the headings inside the reading surface are reachable and the
+surface itself is not.
+
+Style queries need a recent browser. One without them ignores the blocks and
+shows the look's own defaults, which is the same thing a deck naming no knob
+gets.
+
 ### What a knob may hold
 
 A colour (`#f80`, `#ff8800`, `#ff8800cc`), a time (`400ms`, `1.5s`), a number,
-or a share (`40%`). Nothing else.
+a share (`40%`), or a bare word in the same narrow alphabet a look's own name
+uses: lowercase letters, digits and dashes, up to 32 of them. Nothing else.
 
 That list is short on purpose. A knob becomes a custom property in the room's
 stylesheet, and one holding `url(...)` would make every phone in the room fetch

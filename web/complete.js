@@ -101,9 +101,16 @@ export function completionsAt(doc, looks = { themes: [], transitions: [] }) {
     const knob = declared.find((k) => k.name === query.slice(0, split));
     if (!knob) return null;
     const typed = query.slice(split + 1);
-    // The value the stylesheet itself falls back to. Knowing what a look
-    // currently uses is most of what makes a knob usable at all.
-    const items = [{ value: knob.value, about: 'what this look uses' }];
+    // What the look offers, if it offered anything, and otherwise the value it
+    // falls back to. Either way the point is the same: knowing what a look
+    // already uses is most of what makes a knob usable at all.
+    const offers = Array.isArray(knob.options) ? knob.options : [];
+    const items = offers.length
+      ? offers.map((choice) => ({
+          value: choice.value,
+          about: choice.name === choice.value ? '' : choice.name,
+        }))
+      : [{ value: knob.value, about: 'what this look uses' }];
     return slot('knobvalue', start, typed, ahead, rank(items, typed));
   }
 

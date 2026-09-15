@@ -3,7 +3,9 @@
    to read on a phone, not easier. */
 .viewer, .stage {
   --knob-heading: #3ef0ff;
+  --knob-heading-options: cyan #3ef0ff, orange #ff8800, rose #ff3ea5, lime #6dff5c;
   --knob-accent: #ff3ea5;
+  --knob-accent-options: magenta #ff3ea5, cyan #3ef0ff, amber #ffb020;
 
   --ground: #06060c;
   --raised: #12122a;

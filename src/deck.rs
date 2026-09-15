@@ -238,12 +238,17 @@ fn knob_value(value: &str) -> Option<String> {
     if value.is_empty() || value.len() > 32 {
         return None;
     }
+    // A bare word as well as a measurement, because a look can offer presets
+    // and map them itself: `--knob-style: vegas` means whatever the stylesheet
+    // says it means. A word is the same narrow alphabet as a look's own name,
+    // so it can no more reach a path or close a quote than the name can.
     let shaped = is_hex_colour(value)
         || duration_ms(value).is_some()
         || is_number(value)
         || value
             .strip_suffix('%')
-            .is_some_and(|rest| is_number(rest) && !rest.is_empty());
+            .is_some_and(|rest| is_number(rest) && !rest.is_empty())
+        || style_name(value).is_some();
     shaped.then(|| value.to_string())
 }
 
@@ -1021,9 +1026,6 @@ mod tests {
             "red;background:url(x)",
             "expression(alert(1))",
             "var(--ground)",
-            "#ff",
-            "#gggggg",
-            "100vw",
             "calc(1px+2px)",
             "'quoted'",
             "\"quoted\"",
@@ -1032,6 +1034,25 @@ mod tests {
             let deck = format!("<!-- theme: neon x={bad} -->\n# One");
             assert_eq!(theme_of(&deck), None, "{bad:?} was let through");
         }
+    }
+
+    /// The keyword alphabet is the same one a look's own name uses, so it
+    /// admits words that are not measurements. They are inert: a custom
+    /// property holding `100vw` or `gggggg` is a value a stylesheet either
+    /// reads or ignores, and neither can become a rule.
+    #[test]
+    fn a_word_shaped_value_is_a_keyword_rather_than_a_refusal() {
+        for word in ["vegas", "space-station", "100vw", "gggggg"] {
+            let deck = format!("<!-- theme: neon style={word} -->\n# One");
+            assert_eq!(
+                theme_of(&deck).and_then(|l| l.knobs.get("style").cloned()),
+                Some(word.to_string()),
+                "{word} was refused"
+            );
+        }
+        // A hash that is not a colour is still not a keyword.
+        assert_eq!(theme_of("<!-- theme: neon x=#ff -->\n# One"), None);
+        assert_eq!(theme_of("<!-- theme: neon x=#gggggg -->\n# One"), None);
     }
 
     #[test]
