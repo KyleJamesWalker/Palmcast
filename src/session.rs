@@ -108,6 +108,10 @@ pub struct Parked {
     pub markdown: String,
     pub slides: Vec<Slide>,
     pub current: usize,
+    /// Held rather than banked, so the deck coming back scores once and not
+    /// twice. `score_table` counts these while they are parked.
+    pub votes: HashMap<usize, HashMap<String, Vec<usize>>>,
+    pub revealed: HashSet<usize>,
 }
 
 pub struct Session {
@@ -199,16 +203,25 @@ impl Session {
     /// that is up. Derived from the votes rather than counted as they arrive,
     /// so a late reveal or a correction cannot leave a stale total behind.
     fn earned(&self, who: &str) -> usize {
-        self.revealed
+        Self::points_on(&self.slides, &self.revealed, &self.votes, who)
+    }
+
+    /// `earned` against any deck, so a parked one still counts toward the board.
+    fn points_on(
+        slides: &[Slide],
+        revealed: &HashSet<usize>,
+        votes: &HashMap<usize, HashMap<String, Vec<usize>>>,
+        who: &str,
+    ) -> usize {
+        revealed
             .iter()
             .filter(|slide| {
-                let Some(question) = self.slides.get(**slide).and_then(|s| s.question.as_ref())
-                else {
+                let Some(question) = slides.get(**slide).and_then(|s| s.question.as_ref()) else {
                     return false;
                 };
                 // The point is for the answer, not for one part of it, so the
                 // selection has to be exactly right.
-                self.votes
+                votes
                     .get(*slide)
                     .and_then(|cast| cast.get(who))
                     .is_some_and(|chosen| {
@@ -220,6 +233,14 @@ impl Session {
             .count()
     }
 
+    /// What the parked host deck is still worth to this person.
+    fn parked_points(&self, who: &str) -> usize {
+        self.parked
+            .as_ref()
+            .map(|p| Self::points_on(&p.slides, &p.revealed, &p.votes, who))
+            .unwrap_or(0)
+    }
+
     /// The evening's total: what earlier talks were worth, plus the deck that
     /// is up.
     fn score_table(&self) -> ServerMsg {
@@ -228,7 +249,9 @@ impl Session {
             .iter()
             .map(|(who, name)| ScoreRow {
                 name: name.clone(),
-                score: self.banked.get(who).copied().unwrap_or(0) + self.earned(who),
+                score: self.banked.get(who).copied().unwrap_or(0)
+                    + self.earned(who)
+                    + self.parked_points(who),
             })
             .collect();
         items.sort_by(|a, b| b.score.cmp(&a.score).then(a.name.cmp(&b.name)));
@@ -303,6 +326,15 @@ impl Session {
             (_, _, true) => Role::Driver,
             _ => Role::Viewer,
         }
+    }
+
+    /// Whether a driver may see notes, answers and tallies.
+    ///
+    /// The baton is independent of the stage, so the host can hand the controls
+    /// to a speaker while the host deck is still up. A driver reads staff state
+    /// only for their own talk, never for whatever else is on screen.
+    pub fn driver_sees_staff_view(&self, token: &str) -> bool {
+        self.role_of(token) == Role::Driver && self.staged == self.baton
     }
 
     pub fn snapshot(&self) -> ServerMsg {
@@ -575,7 +607,9 @@ impl Session {
         if text.is_empty() || text.chars().count() > MAX_QUESTION_CHARS {
             return None;
         }
-        if self.questions.len() >= MAX_QUESTIONS {
+        // Only what is still open counts against the cap, so a long evening of
+        // questions asked and answered does not close the floor.
+        if self.questions.iter().filter(|q| !q.answered).count() >= MAX_QUESTIONS {
             return None;
         }
         let now = Instant::now();
@@ -593,6 +627,13 @@ impl Session {
         self.next_question_id += 1;
         // The asker's own vote, so a question starts at one rather than zero.
         let voters = HashSet::from([who.to_string()]);
+        // The list itself stays bounded, so an evening cannot grow it without
+        // limit. The oldest answered question is the one nobody is waiting on.
+        while self.questions.len() >= MAX_QUESTIONS
+            && let Some(oldest) = self.questions.iter().position(|q| q.answered)
+        {
+            self.questions.remove(oldest);
+        }
         self.questions.push(StoredQuestion {
             id: question_id,
             text: text.to_string(),
@@ -1001,24 +1042,24 @@ impl Session {
             return false;
         }
 
-        // What the talk that just ended was worth, before the votes behind it
-        // go. Without this the board resets every time the deck changes.
-        let owed: Vec<(String, usize)> = self
-            .votes
-            .values()
-            .flat_map(|cast| cast.keys())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .map(|who| (who.clone(), self.earned(who)))
-            .collect();
-        for (who, points) in owed {
-            *self.banked.entry(who).or_insert(0) += points;
-        }
-
         // Whatever is live now goes back where it came from, so an edit made
         // while a talk was up is the version that gets exported.
         match self.staged {
             Some(id) => {
+                // What the talk that just ended was worth, before the votes
+                // behind it go. A talk never comes back to its votes, so this
+                // is the only chance to keep them.
+                let owed: Vec<(String, usize)> = self
+                    .votes
+                    .values()
+                    .flat_map(|cast| cast.keys())
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .map(|who| (who.clone(), self.earned(who)))
+                    .collect();
+                for (who, points) in owed {
+                    *self.banked.entry(who).or_insert(0) += points;
+                }
                 if let Some(held) = self.lineup.iter_mut().find(|t| t.id == id) {
                     held.markdown = self.markdown.clone();
                 }
@@ -1028,11 +1069,13 @@ impl Session {
                     markdown: self.markdown.clone(),
                     slides: self.slides.clone(),
                     current: self.current,
+                    votes: std::mem::take(&mut self.votes),
+                    revealed: std::mem::take(&mut self.revealed),
                 });
             }
         }
 
-        match talk {
+        let returning = match talk {
             Some(id) => {
                 let markdown = self
                     .lineup
@@ -1043,28 +1086,34 @@ impl Session {
                 self.slides = deck::parse(&markdown);
                 self.markdown = markdown;
                 self.current = 0;
+                None
             }
             None => {
                 let back = self.parked.take().unwrap_or_else(|| Parked {
                     markdown: self.markdown.clone(),
                     slides: self.slides.clone(),
                     current: self.current,
+                    votes: HashMap::new(),
+                    revealed: HashSet::new(),
                 });
                 self.markdown = back.markdown;
                 self.slides = back.slides;
                 self.current = back.current.min(self.slides.len().saturating_sub(1));
+                Some((back.votes, back.revealed))
             }
-        }
+        };
 
         self.staged = talk;
         self.baton = talk;
         self.step = 0;
         self.rev += 1;
-        // Nothing held against a slide position survives a different deck.
-        self.votes.clear();
-        self.revealed.clear();
+        // The floor clears with the deck. The host deck's own votes come back
+        // with it, so a replayed round cannot score a second time.
         self.questions.clear();
         self.last_ask.clear();
+        let (votes, revealed) = returning.unwrap_or_default();
+        self.votes = votes;
+        self.revealed = revealed;
         self.touched = Instant::now();
         self.mark();
 
@@ -1234,9 +1283,17 @@ impl Registry {
         self.with(id, |s| s.role_of(token)).unwrap_or(Role::Viewer)
     }
 
+    /// What a socket holding this token may see, under one lock.
+    pub fn staff(&self, id: &str, token: &str) -> bool {
+        self.with(id, |s| {
+            s.role_of(token).edits() || s.driver_sees_staff_view(token)
+        })
+        .unwrap_or(false)
+    }
+
     pub fn cohost_token(&self, id: &str, token: &str) -> Option<String> {
         self.with(id, |s| {
-            s.role_of(token).drives().then(|| s.cohost_token.clone())
+            s.role_of(token).hosts().then(|| s.cohost_token.clone())
         })
         .flatten()
     }
@@ -1319,6 +1376,29 @@ impl Registry {
                 submissions_open: s.submissions_open,
                 parked: s.parked.as_ref().map(|p| p.markdown.clone()),
                 parked_current: s.parked.as_ref().map(|p| p.current).unwrap_or(0),
+                parked_votes: s
+                    .parked
+                    .as_ref()
+                    .map(|p| {
+                        p.votes
+                            .iter()
+                            .map(|(slide, cast)| {
+                                let cast = cast
+                                    .iter()
+                                    .map(|(who, chosen)| {
+                                        (who.clone(), Choice::from(chosen.clone()))
+                                    })
+                                    .collect();
+                                (*slide, cast)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                parked_revealed: s
+                    .parked
+                    .as_ref()
+                    .map(|p| p.revealed.clone())
+                    .unwrap_or_default(),
                 banked: s.banked.clone(),
                 opened_ms: millis(s.opened),
                 timeline: s
@@ -1450,6 +1530,18 @@ impl Registry {
                             markdown,
                             slides,
                             current,
+                            votes: item
+                                .parked_votes
+                                .into_iter()
+                                .map(|(slide, cast)| {
+                                    let cast = cast
+                                        .into_iter()
+                                        .map(|(who, chosen)| (who, chosen.into_vec()))
+                                        .collect();
+                                    (slide, cast)
+                                })
+                                .collect(),
+                            revealed: item.parked_revealed,
                         }
                     }),
                     baton: item.baton,
@@ -1691,6 +1783,205 @@ mod tests {
             panic!("no scores");
         };
         assert_eq!(items[0].score, 1, "the board reset between talks");
+    }
+
+    /// A host deck with a question on its second slide, and submissions open.
+    fn open_quiz_room() -> (Registry, String, String) {
+        let reg = registry();
+        let (id, mc) = reg
+            .create("# Welcome\n\n---\n\n- [x] yes\n- [ ] no")
+            .unwrap();
+        reg.with_mut(&id, |s| s.set_submissions(Role::Mc, true));
+        (reg, id, mc)
+    }
+
+    fn score_of(reg: &Registry, id: &str, name: &str) -> usize {
+        let ServerMsg::Scores { items } = reg.with(id, Session::score_table).unwrap() else {
+            panic!("no scores");
+        };
+        items
+            .iter()
+            .find(|row| row.name == name)
+            .map(|row| row.score)
+            .unwrap_or(0)
+    }
+
+    /// Answers the host question and reveals it, leaving Sam one point up.
+    fn ask_and_reveal(reg: &Registry, id: &str, mc: &str) {
+        reg.with_mut(id, |s| s.set_name("sam", "Sam"))
+            .flatten()
+            .unwrap();
+        reg.with_mut(id, |s| s.answer(1, "sam", &[0]))
+            .flatten()
+            .unwrap();
+        reg.with_mut(id, |s| s.reveal(mc, 1)).flatten().unwrap();
+    }
+
+    #[test]
+    fn the_host_deck_comes_back_with_its_votes_and_reveals() {
+        let (reg, id, mc) = open_quiz_room();
+        let (talk, _) = submit(&reg, &id, "ada", "# Ada");
+        ask_and_reveal(&reg, &id, &mc);
+
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+        reg.with_mut(&id, |s| s.stage(Role::Mc, None)).unwrap();
+
+        let caught = reg.with(&id, |s| s.catch_up(false)).unwrap();
+        assert!(
+            caught
+                .iter()
+                .any(|m| matches!(m, ServerMsg::Reveal { slide: 1, .. })),
+            "the reveal was lost while the talk was up"
+        );
+        assert!(
+            reg.with_mut(&id, |s| s.answer(1, "sam", &[1]))
+                .flatten()
+                .is_none(),
+            "a question that came back revealed took another vote"
+        );
+    }
+
+    #[test]
+    fn a_round_replayed_after_a_talk_does_not_score_twice() {
+        let (reg, id, mc) = open_quiz_room();
+        let (talk, _) = submit(&reg, &id, "ada", "# Ada");
+        ask_and_reveal(&reg, &id, &mc);
+        assert_eq!(score_of(&reg, &id, "Sam"), 1);
+
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+        assert_eq!(
+            score_of(&reg, &id, "Sam"),
+            1,
+            "the parked deck's point left the board"
+        );
+        reg.with_mut(&id, |s| s.stage(Role::Mc, None)).unwrap();
+
+        reg.with_mut(&id, |s| s.reveal(&mc, 1));
+        assert_eq!(
+            score_of(&reg, &id, "Sam"),
+            1,
+            "the replayed round banked a second point"
+        );
+    }
+
+    #[test]
+    fn parked_quiz_state_survives_a_restart() {
+        let (before, id, mc) = open_quiz_room();
+        let (talk, _) = submit(&before, &id, "ada", "# Ada");
+        ask_and_reveal(&before, &id, &mc);
+        before
+            .with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+
+        let after = registry();
+        assert_eq!(after.import(before.export()), 1);
+        after.with_mut(&id, |s| s.stage(Role::Mc, None)).unwrap();
+
+        let caught = after.with(&id, |s| s.catch_up(false)).unwrap();
+        assert!(
+            caught
+                .iter()
+                .any(|m| matches!(m, ServerMsg::Reveal { slide: 1, .. })),
+            "the reveal did not survive the restart"
+        );
+        assert_eq!(
+            score_of(&after, &id, "Sam"),
+            1,
+            "the parked point was lost across the restart"
+        );
+    }
+
+    #[test]
+    fn answered_questions_make_room_for_new_ones() {
+        let reg = registry();
+        let (id, _mc) = reg.create("# Welcome").unwrap();
+
+        // A distinct asker each time, because one asker is rate limited.
+        for i in 0..MAX_QUESTIONS {
+            assert!(
+                reg.with_mut(&id, |s| s.ask(&format!("asker-{i}"), "why"))
+                    .flatten()
+                    .is_some(),
+                "the floor closed at question {i}"
+            );
+        }
+        assert!(
+            reg.with_mut(&id, |s| s.ask("one-more", "why"))
+                .flatten()
+                .is_none(),
+            "the cap did not hold"
+        );
+
+        // The host deals with one, which frees a place for the next.
+        let first = reg
+            .with(&id, |s| s.questions.first().map(|q| q.id))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.mark_answered(Role::Mc, first))
+            .flatten()
+            .unwrap();
+        assert!(
+            reg.with_mut(&id, |s| s.ask("one-more", "why"))
+                .flatten()
+                .is_some(),
+            "an answered question still held a place on the floor"
+        );
+
+        // And the list stays bounded: the answered one made way rather than
+        // the list growing past the cap.
+        let (total, open) = reg
+            .with(&id, |s| {
+                (
+                    s.questions.len(),
+                    s.questions.iter().filter(|q| !q.answered).count(),
+                )
+            })
+            .unwrap();
+        assert_eq!(total, MAX_QUESTIONS, "the question list grew past its cap");
+        assert_eq!(open, MAX_QUESTIONS, "the answered question was not reused");
+    }
+
+    #[test]
+    fn a_driver_sees_staff_state_only_while_their_talk_is_staged() {
+        let (reg, id, mc) = open_room();
+        let (talk, speaker) = submit(&reg, &id, "ada", "# Ada");
+
+        // Handed the controls while the host's own deck is still on screen.
+        reg.with_mut(&id, |s| s.hand(Role::Mc, Some(talk))).unwrap();
+        assert_eq!(reg.role(&id, &speaker), Role::Driver);
+        assert!(
+            !reg.staff(&id, &speaker),
+            "a driver read the host deck's notes and answers"
+        );
+
+        // Their own talk goes up and the notes are theirs to see.
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+        assert!(
+            reg.staff(&id, &speaker),
+            "a speaker lost the notes for their own talk"
+        );
+
+        assert!(reg.staff(&id, &mc), "the host stopped being staff");
+        assert!(
+            !reg.staff(&id, "guessed"),
+            "a stranger was treated as staff"
+        );
+    }
+
+    #[test]
+    fn a_speaker_handed_the_controls_cannot_mint_a_cohost_link() {
+        let (reg, id, _mc) = open_room();
+        let (talk, speaker) = submit(&reg, &id, "ada", "# Ada");
+        reg.with_mut(&id, |s| s.hand(Role::Mc, Some(talk))).unwrap();
+
+        assert_eq!(reg.role(&id, &speaker), Role::Driver);
+        assert!(
+            reg.cohost_token(&id, &speaker).is_none(),
+            "a driver minted a cohost link and edited their way to the notes"
+        );
     }
 
     #[test]

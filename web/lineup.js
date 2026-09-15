@@ -78,8 +78,8 @@ export function renderLineup(root, lineup, opts = {}) {
         // Handing over and taking back are the same control, because the host
         // never has to find a different button to get the room back.
         talk.id === baton
-          ? button('Take back', () => opts.onHand?.(null), 'primary')
-          : button('Give controls', () => opts.onHand?.(talk.id)),
+          ? button('Take back', () => opts.onHand?.(null, staged), 'primary')
+          : button('Give controls', () => opts.onHand?.(talk.id, staged)),
         button('Drop', () => opts.onDrop?.(talk)),
       );
       row.append(actions);

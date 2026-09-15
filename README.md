@@ -413,7 +413,15 @@ knows who is next.
 
 The host reads a talk before it goes up, puts it on stage, and hands its speaker
 the controls. Staging parks the host deck and brings it back when the talk comes
-down. The leaderboard runs the whole evening rather than resetting per talk.
+down, with whatever the room had already voted on and been shown. The
+leaderboard runs the whole evening rather than resetting per talk.
+
+**Give controls** and staging are separate, so the host can hand the controls
+over before a talk goes up. Driving is not reading: a speaker sees speaker
+notes, correct answers and live tallies only for their own talk, and only while
+it is on stage. Hand them the controls over somebody else's deck and they can
+move it, reveal on it and put the QR up, but the notes and answers stay the
+host's. The console confirms before handing over in that case.
 
 Talks arrive in the order somebody typed fastest, which is nobody's idea of an
 evening. The arrows beside each row move a talk up or down, and every screen
