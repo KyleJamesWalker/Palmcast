@@ -1,0 +1,12 @@
+{
+  "name": "palmcast-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Browser smoke tests. Kept out of web/ so the shipped pages stay dependency-free.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}
