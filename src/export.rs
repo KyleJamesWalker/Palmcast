@@ -7,7 +7,43 @@ use std::io::{Cursor, Write};
 
 use serde::Serialize;
 
-use crate::session::{Cue, Session};
+use crate::images::Stored;
+use crate::session::Cue;
+use crate::wire::ScoreRow;
+
+/// Everything `bundle` reads, copied out from under the registry lock.
+///
+/// Zipping an evening walks every deck and every picture. Doing that inside
+/// `registry.with` held the one lock the whole instance shares for as long as
+/// the zip took, so every other room waited on one host pressing save.
+pub struct ExportView {
+    pub opened: std::time::SystemTime,
+    /// The host's own deck, whether it is on screen or parked behind a talk.
+    pub host_markdown: String,
+    pub staged: Option<u64>,
+    /// What is live right now, which for a staged talk is the deck its speaker
+    /// has been driving.
+    pub live_markdown: String,
+    pub talks: Vec<TalkView>,
+    pub questions: Vec<QuestionView>,
+    pub images: Vec<Stored>,
+    pub board: Vec<ScoreRow>,
+    pub timeline: Vec<Cue>,
+}
+
+pub struct TalkView {
+    pub id: u64,
+    pub title: String,
+    pub by: String,
+    pub markdown: String,
+    pub dropped: bool,
+}
+
+pub struct QuestionView {
+    pub text: String,
+    pub votes: usize,
+    pub answered: bool,
+}
 
 #[derive(Serialize)]
 struct TalkRecord {
@@ -91,7 +127,7 @@ fn vtt_time(offset: f64) -> String {
     format!("{h:02}:{m:02}:{s:02}.{milli:03}")
 }
 
-fn vtt(session: &Session) -> String {
+fn vtt(session: &ExportView) -> String {
     let start = session.opened;
     let mut out = String::from("WEBVTT\n\n");
     let cues: &[Cue] = &session.timeline;
@@ -120,20 +156,15 @@ fn vtt(session: &Session) -> String {
 
 /// The whole evening as a zip. Stored rather than deflated: it is markdown and
 /// a little json, and storing keeps the dependency free of a codec.
-pub fn bundle(session: &Session) -> std::io::Result<Vec<u8>> {
+pub fn bundle(session: &ExportView) -> std::io::Result<Vec<u8>> {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options: zip::write::FileOptions<'_, ()> =
         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     let mut talks = Vec::new();
 
-    // The host deck, whether it is on screen or parked behind a talk.
-    let host_markdown = match (&session.parked, session.staged) {
-        (Some(parked), Some(_)) => parked.markdown.clone(),
-        _ => session.markdown.clone(),
-    };
     writer.start_file("00-host.md", options)?;
-    writer.write_all(host_markdown.as_bytes())?;
+    writer.write_all(session.host_markdown.as_bytes())?;
     talks.push(TalkRecord {
         id: None,
         title: "Host".to_string(),
@@ -144,12 +175,12 @@ pub fn bundle(session: &Session) -> std::io::Result<Vec<u8>> {
 
     // The running order as it stands. A talk the host took off was not part of
     // the evening, and numbering it would say it was.
-    let running = session.lineup.iter().filter(|t| t.dropped.is_none());
+    let running = session.talks.iter().filter(|t| !t.dropped);
     for (index, talk) in running.enumerate() {
         // A talk on stage is being driven live, so the live deck is the one the
         // speaker ended with.
         let markdown = if session.staged == Some(talk.id) {
-            session.markdown.clone()
+            session.live_markdown.clone()
         } else {
             talk.markdown.clone()
         };
@@ -175,7 +206,7 @@ pub fn bundle(session: &Session) -> std::io::Result<Vec<u8>> {
             .iter()
             .map(|q| QuestionRecord {
                 text: q.text.clone(),
-                votes: q.voters.len(),
+                votes: q.votes,
                 answered: q.answered,
             })
             .collect();
@@ -192,7 +223,7 @@ pub fn bundle(session: &Session) -> std::io::Result<Vec<u8>> {
     let record = Record {
         opened: stamp(session.opened),
         talks,
-        board: session.board(),
+        board: session.board.clone(),
         timeline: session
             .timeline
             .iter()

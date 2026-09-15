@@ -65,6 +65,9 @@ pub struct ScoreRow {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg {
+    /// The answer to a `ping`. Identical for every audience, so `redacted`
+    /// passes it through on the default arm.
+    Pong,
     Deck {
         rev: u64,
         current: usize,
@@ -80,6 +83,9 @@ pub enum ServerMsg {
         current: usize,
         step: usize,
     },
+    /// How many phones are in the room. Presenter only: it is drawn on the
+    /// console and nowhere else, and a room of four hundred does not need four
+    /// hundred copies of its own size.
     Viewers {
         count: usize,
     },
@@ -182,7 +188,7 @@ impl ServerMsg {
                 staged: *staged,
                 open: *open,
             }),
-            ServerMsg::Tally { .. } => None,
+            ServerMsg::Tally { .. } | ServerMsg::Viewers { .. } => None,
             other => Some(other.clone()),
         }
     }
@@ -191,6 +197,17 @@ impl ServerMsg {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
+    /// A liveness probe the page can send itself. Browsers do not expose
+    /// protocol level pings to JavaScript, so this is how a tab that just woke
+    /// finds out whether its socket survived the sleep.
+    Ping,
+    /// The first frame a presenter sends. Browsers cannot set a header on a
+    /// WebSocket, so the token travels here rather than in the URL, where a
+    /// proxy would log it. An audience socket sends it empty.
+    Auth {
+        #[serde(default)]
+        token: String,
+    },
     Goto {
         index: usize,
         /// How much of that slide to show. Absent means the whole of it, which
@@ -373,6 +390,15 @@ mod tests {
         assert!(owner.contains("Needs a rewrite"));
         assert!(!audience.contains("Needs a rewrite"), "{audience}");
         assert!(audience.contains("Borrow checking"));
+    }
+
+    #[test]
+    fn the_room_is_not_told_how_many_are_watching() {
+        let msg = ServerMsg::Viewers { count: 400 };
+        assert!(
+            msg.redacted().is_none(),
+            "the room was sent its own size, once per phone that arrived"
+        );
     }
 
     #[test]

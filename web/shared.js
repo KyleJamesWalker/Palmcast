@@ -57,12 +57,20 @@ export function connect(id, token, handlers) {
   let stopped = false;
   let backoff = 500;
 
+  // No token here: a proxy logs the request line, and the socket URL is part
+  // of it. The token goes in the first frame instead.
   const url = () => {
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
     const query = new URLSearchParams({ who: viewerId() });
-    if (token) query.set('token', token);
     return `${scheme}://${location.host}/s/${id}/ws?${query}`;
   };
+
+  // A socket the network dropped looks open until TCP gives up, which is
+  // minutes. These notice in seconds.
+  const BEAT = 30000;
+  const SILENCE = 70000;
+  let heard = Date.now();
+  let beat = null;
 
   const open = () => {
     // Every handler below belongs to this socket, not to whichever socket is
@@ -76,21 +84,44 @@ export function connect(id, token, handlers) {
     ws.onopen = () => {
       if (!live()) return;
       backoff = 500;
+      // Always first, and always sent: the server holds the opening state
+      // until it arrives, so an audience socket says it has no token rather
+      // than leaving the server to wait out the timeout.
+      ws.send(JSON.stringify({ type: 'auth', token: token ?? '' }));
+      heard = Date.now();
       handlers.status?.('live');
+      clearInterval(beat);
+      beat = setInterval(() => {
+        if (socket !== ws || stopped) return;
+        if (Date.now() - heard > SILENCE) {
+          // Nothing at all came back. Close it so the reconnect path runs
+          // rather than sitting on a socket that only looks open.
+          ws.close();
+          return;
+        }
+        ws.send(JSON.stringify({ type: 'ping' }));
+      }, BEAT);
     };
 
     ws.onmessage = (event) => {
       if (!live()) return;
+      heard = Date.now();
       let msg;
       try {
         msg = JSON.parse(event.data);
       } catch {
         return;
       }
+      // The answer to a probe is the answer itself: the socket is alive.
+      if (msg.type === 'pong') {
+        handlers.status?.('live');
+        return;
+      }
       handlers[msg.type]?.(msg);
     };
 
     ws.onclose = () => {
+      clearInterval(beat);
       if (!live()) return;
       handlers.status?.('offline');
       // A closed socket means the network went, or the room did. Those look
@@ -131,11 +162,36 @@ export function connect(id, token, handlers) {
         socket.send(JSON.stringify(msg));
       }
     },
+    /// Asks the socket to prove it is still there. A tab coming back from
+    /// sleep cannot tell a live socket from a dead one any other way.
+    ping() {
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        handlers.status?.('offline');
+        return;
+      }
+      handlers.status?.('syncing');
+      socket.send(JSON.stringify({ type: 'ping' }));
+      const asked = Date.now();
+      setTimeout(() => {
+        // No pong inside the window, so the socket is not coming back.
+        // Closing it puts the existing reconnect path to work.
+        if (socket?.readyState === WebSocket.OPEN && heard < asked) socket.close();
+      }, 5000);
+    },
     stop() {
       stopped = true;
+      clearInterval(beat);
       socket?.close();
     },
   };
+}
+
+/// Every authenticated call goes through here. The token rides a header rather
+/// than the query string, which a reverse proxy writes into its access log.
+export function authFetch(url, token, options = {}) {
+  const headers = new Headers(options.headers ?? {});
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  return fetch(url, { ...options, headers });
 }
 
 /// True only on a definite answer that the room is not there. An unreachable
@@ -245,6 +301,14 @@ export function deckTokenIn(hash) {
   // Base64url only. Anything else was not written by `pack`, and refusing it
   // here saves a round trip to a server that would refuse it too.
   return token && /^[A-Za-z0-9_-]+$/.test(token) ? token : null;
+}
+
+/// The create key an operator handed out, read the same way as `#d=`. A
+/// fragment never reaches the server, so the key stays out of its logs.
+export function createKeyIn(hash) {
+  const raw = String(hash ?? '').replace(/^#/, '');
+  if (!raw) return '';
+  return new URLSearchParams(raw).get('k') ?? '';
 }
 
 export function deckLinkFor(token, origin = globalThis.location?.origin ?? '') {

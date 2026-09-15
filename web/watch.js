@@ -1,4 +1,4 @@
-import { connect, copyText, sessionId, viewerId } from '/shared.js';
+import { authFetch, connect, copyText, sessionId, viewerId } from '/shared.js';
 import { renderLineup, rememberTalk, talksHeld, forgetTalk } from '/lineup.js';
 import { starterPrompt } from '/deckstate.js';
 import { renderOptions } from '/quiz.js';
@@ -167,8 +167,10 @@ document.getElementById('qr-join-url').textContent = joinHere;
 document.getElementById('qr-overlay-url').textContent = joinHere;
 
 // A phone that sleeps mid-talk comes back on the right slide, not a blank one.
+// The label follows the probe rather than being written here, because a socket
+// that survived the sleep has nothing else to correct it with.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') status.textContent = 'syncing';
+  if (document.visibilityState === 'visible') socket.ping();
 });
 
 reactionBar(document.getElementById('reactions'), (kind) => {
@@ -279,9 +281,7 @@ async function refreshMine() {
   const found = await Promise.all(
     held.map(async ({ talk, token }) => {
       try {
-        const res = await fetch(
-          `/api/sessions/${id}/talks/${talk}?token=${encodeURIComponent(token)}`,
-        );
+        const res = await authFetch(`/api/sessions/${id}/talks/${talk}`, token);
         if (res.status === 404) forgetTalk(id, talk);
         return res.ok ? await res.json() : null;
       } catch {
@@ -373,7 +373,8 @@ attachUpload({
   input: talkImageFile,
   textarea: talkDeck,
   session: id,
-  query: () => (editing === null ? {} : { talk: editing, token: tokenFor(editing) }),
+  query: () => (editing === null ? {} : { talk: editing }),
+  token: () => (editing === null ? '' : tokenFor(editing)),
   onError(message) {
     talkError.textContent = message;
     talkError.hidden = false;
@@ -402,7 +403,7 @@ talkForm.addEventListener('submit', async (event) => {
   }
   const rewriting = editing !== null;
   const url = rewriting
-    ? `/api/sessions/${id}/talks/${editing}?token=${encodeURIComponent(tokenFor(editing))}`
+    ? `/api/sessions/${id}/talks/${editing}`
     : `/api/sessions/${id}/talks`;
   const body = {
     title: talkTitle.value,
@@ -413,7 +414,7 @@ talkForm.addEventListener('submit', async (event) => {
   };
 
   try {
-    const res = await fetch(url, {
+    const res = await authFetch(url, rewriting ? tokenFor(editing) : '', {
       method: rewriting ? 'PUT' : 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),

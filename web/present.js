@@ -1,4 +1,5 @@
 import {
+  authFetch,
   clamp,
   connect,
   copyText,
@@ -91,7 +92,7 @@ attachUpload({
   input: els.deckImageFile,
   textarea: els.deckText,
   session: id,
-  query: () => ({ token: token ?? '' }),
+  token: () => token ?? '',
   onError(message) {
     els.deckStatus.textContent = message;
   },
@@ -263,7 +264,6 @@ function paintLineup() {
   els.submissions.hidden = myRole !== 'mc';
   // Every deck in the room, so it is the host's to take and nobody else's.
   els.export.hidden = myRole !== 'mc';
-  els.export.href = `/api/sessions/${id}/export?token=${encodeURIComponent(token ?? '')}`;
   renderLineup(els.lineup, lineup, {
     role: myRole,
     baton,
@@ -309,9 +309,7 @@ function paintLineup() {
       els.talkRead.hidden = false;
       els.talkPreview.innerHTML = '<p class="dim">Opening\u2026</p>';
       try {
-        const res = await fetch(
-          `/api/sessions/${id}/talks/${talk.id}?token=${encodeURIComponent(token ?? '')}`,
-        );
+        const res = await authFetch(`/api/sessions/${id}/talks/${talk.id}`, token);
         if (!res.ok) throw new Error(`server said ${res.status}`);
         const detail = await res.json();
         renderPreview(els.talkPreview, await previewDeck(detail.markdown));
@@ -370,7 +368,7 @@ function applyRole(role) {
 
 async function refreshRole() {
   try {
-    const res = await fetch(`/api/sessions/${id}/role?token=${encodeURIComponent(token ?? '')}`);
+    const res = await authFetch(`/api/sessions/${id}/role`, token);
     if (!res.ok) return;
     const role = (await res.text()).trim();
     applyRole(role);
@@ -515,7 +513,7 @@ async function openEditor() {
   els.deckStatus.textContent = 'Loading\u2026';
   els.editor.hidden = false;
   try {
-    const res = await fetch(`/api/sessions/${id}/markdown?token=${encodeURIComponent(token)}`);
+    const res = await authFetch(`/api/sessions/${id}/markdown`, token);
     if (!res.ok) throw new Error(`server said ${res.status}`);
     els.deckText.value = await res.text();
     // The revision this edit is based on, so a save can tell if it is stale.
@@ -544,8 +542,8 @@ els.deckSave.addEventListener('click', async () => {
   els.deckSave.disabled = true;
   els.deckStatus.textContent = 'Saving\u2026';
   try {
-    const query = editingRev === null ? '' : `&rev=${editingRev}`;
-    const res = await fetch(`/api/sessions/${id}?token=${encodeURIComponent(token)}${query}`, {
+    const query = editingRev === null ? '' : `?rev=${editingRev}`;
+    const res = await authFetch(`/api/sessions/${id}${query}`, token, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ markdown: els.deckText.value }),
@@ -612,10 +610,35 @@ els.deckLink.addEventListener('click', async () => {
   }, 2000);
 });
 
+els.export.addEventListener('click', async () => {
+  const label = els.export.textContent;
+  els.export.disabled = true;
+  els.export.textContent = 'Packing\u2026';
+  try {
+    const res = await authFetch(`/api/sessions/${id}/export`, token);
+    if (!res.ok) throw new Error(`server said ${res.status}`);
+    const blob = await res.blob();
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = `palmcast-${id}.zip`;
+    link.click();
+    URL.revokeObjectURL(href);
+    els.export.textContent = label;
+  } catch {
+    els.export.textContent = 'Could not save it';
+    setTimeout(() => {
+      els.export.textContent = label;
+    }, 2000);
+  } finally {
+    els.export.disabled = false;
+  }
+});
+
 els.cohost.addEventListener('click', async () => {
   const label = els.cohost.textContent;
   try {
-    const res = await fetch(`/api/sessions/${id}/cohost?token=${encodeURIComponent(token)}`);
+    const res = await authFetch(`/api/sessions/${id}/cohost`, token);
     if (!res.ok) throw new Error(`server said ${res.status}`);
     const cohost = await res.text();
     const link = `${location.origin}/s/${id}/present#t=${encodeURIComponent(cohost)}`;
@@ -637,7 +660,7 @@ els.cohost.addEventListener('click', async () => {
 // waits on it rather than guessing from the dom.
 const roleKnown = (async () => {
   try {
-    const res = await fetch(`/api/sessions/${id}/role?token=${encodeURIComponent(token ?? '')}`);
+    const res = await authFetch(`/api/sessions/${id}/role`, token);
     if (!res.ok) return 'mc';
     const role = (await res.text()).trim();
     applyRole(role);

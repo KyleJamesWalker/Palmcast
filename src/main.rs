@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 use palmcast::persist;
 use palmcast::routes::{self, App};
-use palmcast::session::Registry;
+use palmcast::session::{self, Registry};
 use palmcast::styles;
 use tracing_subscriber::EnvFilter;
 
@@ -56,6 +56,16 @@ struct Args {
     /// chose, and a public instance should say yes on purpose.
     #[arg(long, env = "PALMCAST_UPLOADS", default_value_t = false)]
     uploads: bool,
+
+    /// Require this key to start a room. The start page reads it from a `#k=`
+    /// fragment, so an operator hands out one link and the key never reaches a
+    /// server log. Unset leaves the instance open to anyone who can reach it.
+    #[arg(long, env = "PALMCAST_CREATE_KEY")]
+    create_key: Option<String>,
+
+    /// Rooms to hold at once. Each holds a deck, its votes and any pictures.
+    #[arg(long, env = "PALMCAST_MAX_SESSIONS", default_value_t = session::DEFAULT_MAX_SESSIONS)]
+    max_sessions: usize,
 }
 
 /// Read once at startup, not per request: a deck the operator named and the
@@ -82,7 +92,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let args = Args::parse();
-    let registry = Registry::new(Duration::from_secs(args.ttl_hours * 3600));
+    let registry = Registry::with_limit(
+        Duration::from_secs(args.ttl_hours * 3600),
+        args.max_sessions,
+    );
 
     // Same reasoning as the starter deck below: a directory the operator named
     // and this cannot read is a mistake worth stopping for, because the first
@@ -111,6 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if let Some(path) = &args.state_file {
+        persist::warn_if_unprotected(path);
         match persist::load(path) {
             Ok(saved) if saved.is_empty() => {}
             Ok(saved) => {
@@ -138,6 +152,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut tick = tokio::time::interval(Duration::from_secs(60));
             loop {
                 tick.tick().await;
+                // An instance nobody is using rewrote the same file every
+                // minute, cloning every room under the lock to do it.
+                if !saver.changed() {
+                    continue;
+                }
                 let saved = saver.export();
                 if let Err(error) = persist::save(&path, &saved) {
                     tracing::error!(%error, "periodic save failed");
@@ -145,6 +164,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+
+    // The room's size is told on a timer rather than on every arrival, so a
+    // QR code going up is one frame and not one per phone.
+    let counter = registry.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            tick.tick().await;
+            counter.flush_viewers();
+        }
+    });
 
     let sweeper = registry.clone();
     tokio::spawn(async move {
@@ -174,12 +204,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         starter,
         uploads: args.uploads,
         styles,
+        create_key: args.create_key.clone(),
+        ..App::default()
     };
     // The result is held rather than propagated, because a server that fell over
     // still has rooms worth keeping and `?` here would skip the save entirely.
-    let outcome = axum::serve(listener, routes::router_with(app))
-        .with_graceful_shutdown(shutdown())
-        .await;
+    // The connect info is what the rate limiter meters on.
+    let outcome = axum::serve(
+        listener,
+        routes::router_with(app).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown())
+    .await;
 
     if let Some(path) = &args.state_file {
         let saved = registry.export();

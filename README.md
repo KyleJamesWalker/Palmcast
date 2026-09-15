@@ -562,6 +562,8 @@ kept across a restart: a room coming back should come back on its slides.
 | `--uploads` | `PALMCAST_UPLOADS` | off | Keep pictures people upload, for the life of the room. |
 | `--theme-dir` | `PALMCAST_THEME_DIR` | none | A directory of CSS themes to serve on top of the built-in five. |
 | `--transition-dir` | `PALMCAST_TRANSITION_DIR` | none | A directory of CSS transitions to serve on top of the built-in 33. |
+| `--create-key` | `PALMCAST_CREATE_KEY` | none | Require this key to start a room. |
+| `--max-sessions` | `PALMCAST_MAX_SESSIONS` | `500` | Rooms to hold at once. |
 
 A link that outlives its room says so. Every view asks the server whether the
 session is still there, once on load and again whenever the socket drops. A view
@@ -606,15 +608,21 @@ which suits a laptop at a venue. Point it at a file and rooms come back: the
 deck, the current slide, the votes, the questions and the scores. The presenter
 keeps control, because the file holds the token too.
 
-That is also why the server writes the file with mode 600. Anyone who can read
-it can drive every room on the instance. The server saves once a minute and again on shutdown. It writes through a
-temporary file, so a stop midway leaves the previous state rather than half of
-this one. The server logs a file it cannot parse and starts empty, because an
-empty instance still works and a dead one does not.
+That is also why the server writes the file with mode 600 on Unix. Anyone who
+can read it can drive every room on the instance. There is no equivalent on
+Windows without an ACL dependency, so the file is left at whatever the platform
+gives it, and the server warns once at startup when `--state-file` is set there.
 
-A public instance also caps itself: 2000 sessions, 400 viewers per session, and
-500 participants per room. A participant id comes from the browser, so without
-that last cap a loop of fresh ids would grow memory and inflate a quiz tally.
+The server saves once a minute and again on shutdown, and only when something
+changed. It writes through a temporary file, so a stop midway leaves the
+previous state rather than half of this one. The server logs a file it cannot
+parse and starts empty, because an empty instance still works and a dead one
+does not.
+
+A public instance also caps itself: 500 sessions by default, 400 viewers per
+session, and 500 participants per room. A participant id comes from the
+browser, so without that last cap a loop of fresh ids would grow memory and
+inflate a quiz tally.
 
 ## Security model
 
@@ -634,8 +642,11 @@ every phone in the room renders it. The server therefore:
   before it compresses anything. Unpacking stops reading at the 256 KB deck
   limit, so a small token cannot ask for a large allocation.
 - Strips an image source the same way it strips a link, and draws an uploaded
-  picture only after decoding it. A header claiming more than 12,000 pixels an
-  edge is refused before anything is allocated for it.
+  picture only after decoding it. A header claiming more than 6,000 pixels an
+  edge is refused before anything is allocated for it, and a decode may not
+  allocate more than 128 MB whatever the header claims. A 48 megapixel phone
+  photograph still fits. Two pictures decode at once across the instance, and a
+  third is told the room is busy rather than queued behind them.
 - Takes a theme and a transition as a name and never as a stylesheet. A name is
   lowercase letters, digits and dashes, at most 32 of them, which is checked
   where the deck is parsed and again where the browser asks for the file. A deck
@@ -647,8 +658,45 @@ that address. The policy allows it, because that is what an image in a deck is,
 and whoever serves the picture sees the room. Run `--uploads` for a room that
 should tell an outsider nothing.
 
-The presenter token travels in the URL fragment, which browsers never send to the
-server. Copy the presenter link to move control to another device.
+The presenter token travels in the URL fragment, which browsers never send to
+the server. Copy the presenter link to move control to another device.
+
+Past the page load, the token never appears in a URL either. Authenticated HTTP
+calls send it as `Authorization: Bearer <token>`, and the socket sends it in an
+`auth` frame the moment it opens, because a browser cannot set a header on a
+WebSocket. A reverse proxy logs the request line, so a token in a query string
+lands in an access log; a header and a socket frame do not.
+
+For one release the server still accepts `?token=` on the HTTP endpoints and the
+socket URL, so tabs opened before the change keep working. It logs a warning
+when it reads one. That fallback goes in the release after.
+
+### Running an instance other people can reach
+
+Starting a room, previewing a deck and packing one into a link are the three
+things anyone can ask for without a token, so they are metered per address: ten
+rooms an hour, and sixty previews or packs a minute. Over that the server
+answers 429 and says so.
+
+Behind a proxy the peer address is the proxy, so `X-Forwarded-For` is read
+instead — but only when `--public-url` is set, because that flag is what says a
+proxy is really there. Without it the header is ignored, so nobody can pick
+their own bucket by claiming an address.
+
+`--create-key` closes the instance to everyone else. With it set, starting a
+room needs `Authorization: Bearer <key>`, and the start page reads the key from
+a `#k=` fragment, so an operator hands out one link:
+
+```
+https://palmcast.example/#k=the-key-you-chose
+```
+
+A fragment never reaches the server, so the key stays out of its access logs the
+same way a presenter token does. Without the key the server answers 403 and
+`this instance needs a key to start a room`.
+
+`--max-sessions` caps how many rooms exist at once, 500 by default. Each holds a
+deck, its votes and any pictures, so the ceiling is memory.
 
 ## Develop
 
