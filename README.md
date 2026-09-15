@@ -608,15 +608,21 @@ which suits a laptop at a venue. Point it at a file and rooms come back: the
 deck, the current slide, the votes, the questions and the scores. The presenter
 keeps control, because the file holds the token too.
 
-That is also why the server writes the file with mode 600. Anyone who can read
-it can drive every room on the instance. The server saves once a minute and again on shutdown. It writes through a
-temporary file, so a stop midway leaves the previous state rather than half of
-this one. The server logs a file it cannot parse and starts empty, because an
-empty instance still works and a dead one does not.
+That is also why the server writes the file with mode 600 on Unix. Anyone who
+can read it can drive every room on the instance. There is no equivalent on
+Windows without an ACL dependency, so the file is left at whatever the platform
+gives it, and the server warns once at startup when `--state-file` is set there.
 
-A public instance also caps itself: 2000 sessions, 400 viewers per session, and
-500 participants per room. A participant id comes from the browser, so without
-that last cap a loop of fresh ids would grow memory and inflate a quiz tally.
+The server saves once a minute and again on shutdown, and only when something
+changed. It writes through a temporary file, so a stop midway leaves the
+previous state rather than half of this one. The server logs a file it cannot
+parse and starts empty, because an empty instance still works and a dead one
+does not.
+
+A public instance also caps itself: 500 sessions by default, 400 viewers per
+session, and 500 participants per room. A participant id comes from the
+browser, so without that last cap a loop of fresh ids would grow memory and
+inflate a quiz tally.
 
 ## Security model
 

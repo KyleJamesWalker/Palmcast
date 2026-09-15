@@ -124,6 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if let Some(path) = &args.state_file {
+        persist::warn_if_unprotected(path);
         match persist::load(path) {
             Ok(saved) if saved.is_empty() => {}
             Ok(saved) => {

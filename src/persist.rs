@@ -183,9 +183,25 @@ fn restrict(path: &Path) -> io::Result<()> {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
 }
 
+/// No equivalent without pulling in a Windows ACL crate, so the file is left
+/// at whatever the platform gives it. `warn_if_unprotected` says so at startup
+/// rather than leaving the README's promise of mode 600 to stand.
 #[cfg(not(unix))]
 fn restrict(_path: &Path) -> io::Result<()> {
     Ok(())
+}
+
+/// Says once, at startup, when the state file cannot be given the permissions
+/// it needs. Nothing on Unix, where `restrict` does the job.
+pub fn warn_if_unprotected(path: &Path) {
+    #[cfg(not(unix))]
+    tracing::warn!(
+        "{} holds presenter tokens and cannot be restricted on this platform; \
+         any local user can read it",
+        path.display()
+    );
+    #[cfg(unix)]
+    let _ = path;
 }
 
 #[cfg(test)]
