@@ -65,6 +65,9 @@ pub struct ScoreRow {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg {
+    /// The answer to a `ping`. Identical for every audience, so `redacted`
+    /// passes it through on the default arm.
+    Pong,
     Deck {
         rev: u64,
         current: usize,
@@ -191,6 +194,10 @@ impl ServerMsg {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
+    /// A liveness probe the page can send itself. Browsers do not expose
+    /// protocol level pings to JavaScript, so this is how a tab that just woke
+    /// finds out whether its socket survived the sleep.
+    Ping,
     /// The first frame a presenter sends. Browsers cannot set a header on a
     /// WebSocket, so the token travels here rather than in the URL, where a
     /// proxy would log it. An audience socket sends it empty.

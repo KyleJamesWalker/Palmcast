@@ -21,7 +21,27 @@ pub struct Join {
 /// the moment the socket opens.
 const AUTH_WAIT: Duration = Duration::from_secs(5);
 
-pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
+/// How often a socket is pinged, and how long it may say nothing at all.
+///
+/// A phone that drops off the network leaves a half open connection that TCP
+/// will not notice for minutes, which inflates the viewer count and leaves the
+/// phone showing `live` over a stale deck. A test builds these short.
+#[derive(Clone, Copy)]
+pub struct Heartbeat {
+    pub beat: Duration,
+    pub idle: Duration,
+}
+
+impl Default for Heartbeat {
+    fn default() -> Self {
+        Self {
+            beat: Duration::from_secs(25),
+            idle: Duration::from_secs(60),
+        }
+    }
+}
+
+pub async fn serve(socket: WebSocket, registry: Registry, join: Join, beat: Heartbeat) {
     let Join { id, token, who } = join;
     let Some(mut rx) = registry.subscribe(&id) else {
         return;
@@ -75,8 +95,24 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
         handle(&registry, &id, token.as_deref(), &who, msg);
     }
 
+    let mut ticker = tokio::time::interval(beat.beat);
+    // The first tick is immediate, and a ping before the room has said anything
+    // is noise.
+    ticker.tick().await;
+    let mut heard = tokio::time::Instant::now();
+
     loop {
         tokio::select! {
+            _ = ticker.tick() => {
+                // Nothing at all, not even a pong, for the whole window. The
+                // far end is gone whatever TCP still believes.
+                if heard.elapsed() >= beat.idle {
+                    break;
+                }
+                if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
+                }
+            }
             outgoing = rx.recv() => {
                 match outgoing {
                     Ok(frame) => {
@@ -108,10 +144,20 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
             }
             incoming = stream.next() => {
                 let Some(Ok(frame)) = incoming else { break };
+                // Any frame is proof of life, a pong as much as a vote.
+                heard = tokio::time::Instant::now();
                 let Message::Text(text) = frame else { continue };
                 let Ok(msg) = serde_json::from_str::<ClientMsg>(&text) else {
                     continue;
                 };
+                // Answered here rather than in `handle`, because the reply goes
+                // to this socket and nowhere else.
+                if matches!(msg, ClientMsg::Ping) {
+                    if send(&mut sink, &ServerMsg::Pong, is_staff).await.is_err() {
+                        break;
+                    }
+                    continue;
+                }
                 handle(&registry, &id, token.as_deref(), &who, msg);
             }
         }
@@ -138,6 +184,8 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
         // Read once when the socket opened. A later one changes nothing, so a
         // viewer cannot talk its way into a presenter's socket.
         ClientMsg::Auth { .. } => {}
+        // Answered on the socket it arrived on, before this is reached.
+        ClientMsg::Ping => {}
         ClientMsg::Goto { index, step } => {
             registry.with_mut(id, |s| s.goto(token, index, step));
         }

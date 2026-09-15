@@ -21,7 +21,7 @@ use crate::origin;
 use crate::session::{EditError, Registry, Role, TalkError};
 use crate::share;
 use crate::styles::{self, Look, Styles};
-use crate::ws::{self, Join};
+use crate::ws::{self, Heartbeat, Join};
 
 pub const MAX_DECK_BYTES: usize = 256 * 1024;
 /// A deck is the largest thing anyone posts. The margin covers the JSON frame.
@@ -183,6 +183,9 @@ pub struct App {
     pub create_key: Option<String>,
     /// Per address, so one visitor cannot take the whole session cap.
     pub limiter: Arc<Limiter>,
+    /// How often a socket is pinged and how long it may say nothing. A test
+    /// builds these short; nothing else has reason to change them.
+    pub heartbeat: Heartbeat,
 }
 
 impl Default for App {
@@ -195,6 +198,7 @@ impl Default for App {
             styles: Arc::default(),
             create_key: None,
             limiter: Arc::default(),
+            heartbeat: Heartbeat::default(),
         }
     }
 }
@@ -836,11 +840,12 @@ async fn get_markdown(
 }
 
 async fn socket(
-    State(registry): State<Registry>,
+    State(app): State<App>,
     Path(id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
+    let registry = app.registry.clone();
     if !registry.exists(&id) {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -852,7 +857,7 @@ async fn socket(
     upgrade
         .max_message_size(MAX_WS_MESSAGE)
         .max_frame_size(MAX_WS_MESSAGE)
-        .on_upgrade(move |sock| ws::serve(sock, registry, join))
+        .on_upgrade(move |sock| ws::serve(sock, registry, join, app.heartbeat))
 }
 
 async fn qr(State(app): State<App>, Path(id): Path<String>, headers: HeaderMap) -> Response {

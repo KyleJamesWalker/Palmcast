@@ -33,6 +33,19 @@ async fn spawn_with_uploads() -> String {
     .await
 }
 
+/// An instance whose sockets give up on a silent phone in well under a second.
+async fn spawn_with_short_heartbeat() -> String {
+    serve(routes::router_with(routes::App {
+        registry: Registry::new(Duration::from_secs(3600)),
+        heartbeat: palmcast::ws::Heartbeat {
+            beat: Duration::from_millis(50),
+            idle: Duration::from_millis(200),
+        },
+        ..Default::default()
+    }))
+    .await
+}
+
 /// An instance that will not start a room without the operator's key.
 async fn spawn_with_create_key(key: &str) -> String {
     serve(routes::router_with(routes::App {
@@ -150,6 +163,67 @@ async fn the_presenter_does_receive_speaker_notes() {
 
     assert_eq!(opening["type"], "deck");
     assert_eq!(opening["slides"][0]["notes"], "the secret note");
+}
+
+/// A phone that drops off the network holds a half open connection until TCP
+/// gives up, which inflates the viewer count for minutes. The heartbeat notices
+/// instead.
+#[tokio::test]
+async fn a_socket_that_stops_answering_is_counted_out() {
+    let host = spawn_with_short_heartbeat().await;
+    let (id, _token) = create(&host, DECK).await;
+
+    let mut phone = open(&host, &id, None).await;
+    let _ = next_json(&mut phone).await;
+
+    let counted = || async {
+        reqwest::get(format!("http://{host}/healthz"))
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()["viewers"]
+            .as_u64()
+            .unwrap()
+    };
+    assert_eq!(counted().await, 1, "the phone was never counted");
+
+    // The socket stays open and stops being read, so tungstenite never answers
+    // a ping. That is what a phone off the network looks like from here.
+    let mut dropped = 0;
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        if counted().await == 0 {
+            dropped = 1;
+            break;
+        }
+    }
+    assert_eq!(dropped, 1, "a silent socket was still counted as watching");
+    drop(phone);
+}
+
+/// The page can ask whether its socket is still there, which is how a tab
+/// coming back from sleep tells a live one from a dead one.
+#[tokio::test]
+async fn a_socket_answers_a_ping_with_a_pong() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, DECK).await;
+
+    let mut phone = open(&host, &id, None).await;
+    let _ = next_json(&mut phone).await;
+    phone
+        .send(Message::Text(r#"{"type":"ping"}"#.into()))
+        .await
+        .unwrap();
+
+    let mut pong = false;
+    for _ in 0..12 {
+        if next_json(&mut phone).await["type"] == "pong" {
+            pong = true;
+            break;
+        }
+    }
+    assert!(pong, "a ping went unanswered");
 }
 
 /// One address cannot take the whole session cap and leave the instance with

@@ -189,6 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         styles,
         create_key: args.create_key.clone(),
         limiter: Arc::default(),
+        heartbeat: Default::default(),
     };
     // The result is held rather than propagated, because a server that fell over
     // still has rooms worth keeping and `?` here would skip the save entirely.

@@ -167,8 +167,10 @@ document.getElementById('qr-join-url').textContent = joinHere;
 document.getElementById('qr-overlay-url').textContent = joinHere;
 
 // A phone that sleeps mid-talk comes back on the right slide, not a blank one.
+// The label follows the probe rather than being written here, because a socket
+// that survived the sleep has nothing else to correct it with.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') status.textContent = 'syncing';
+  if (document.visibilityState === 'visible') socket.ping();
 });
 
 reactionBar(document.getElementById('reactions'), (kind) => {
