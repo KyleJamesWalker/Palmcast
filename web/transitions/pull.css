@@ -1,0 +1,12 @@
+/* The next slide is dragged in from the left, pulling the last one away. */
+@keyframes palmcast-out-pull {
+  to { transform: translateX(32%); opacity: 0; }
+}
+@keyframes palmcast-in-pull {
+  from { transform: translateX(-100%); }
+}
+
+html[data-transition="pull"] {
+  --transition-out: palmcast-out-pull;
+  --transition-in: palmcast-in-pull;
+}

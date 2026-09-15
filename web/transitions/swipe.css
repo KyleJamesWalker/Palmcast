@@ -1,0 +1,10 @@
+/* A diagonal edge crosses the screen, the next slide drifting in behind it. */
+@keyframes palmcast-in-swipe {
+  from { clip-path: polygon(0 0, 0 0, -40% 100%, -40% 100%); transform: translateX(-4%); }
+  to { clip-path: polygon(0 0, 140% 0, 100% 100%, 0 100%); transform: translateX(0); }
+}
+
+html[data-transition="swipe"] {
+  --transition-out: palmcast-hold;
+  --transition-in: palmcast-in-swipe;
+}

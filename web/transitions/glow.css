@@ -1,0 +1,12 @@
+/* The screen flares white and the next slide comes back out of it. */
+@keyframes palmcast-out-glow {
+  to { filter: brightness(14) saturate(0); opacity: 0; }
+}
+@keyframes palmcast-in-glow {
+  from { filter: brightness(14) saturate(0); opacity: 0; }
+}
+
+html[data-transition="glow"] {
+  --transition-out: palmcast-out-glow;
+  --transition-in: palmcast-in-glow;
+}

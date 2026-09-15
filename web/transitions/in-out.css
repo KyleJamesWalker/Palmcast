@@ -1,0 +1,14 @@
+/* The last slide shrinks away to nothing, then the next one grows into the gap. */
+@keyframes palmcast-out-in-out {
+  from { transform: scale(1); opacity: 1; }
+  45%, to { transform: scale(.55); opacity: 0; }
+}
+@keyframes palmcast-in-in-out {
+  from, 55% { transform: scale(.55); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+html[data-transition="in-out"] {
+  --transition-out: palmcast-out-in-out;
+  --transition-in: palmcast-in-in-out;
+}

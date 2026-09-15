@@ -1,0 +1,10 @@
+/* A hard edge crosses the screen from the left, leaving the next slide behind it. */
+@keyframes palmcast-in-wipe {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+
+html[data-transition="wipe"] {
+  --transition-out: palmcast-hold;
+  --transition-in: palmcast-in-wipe;
+}

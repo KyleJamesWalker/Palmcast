@@ -1,0 +1,10 @@
+/* The next slide opens through a star in the middle of the screen. */
+@keyframes palmcast-in-star {
+  from { clip-path: polygon(50% 50%, 50% 50%, 50% 50%, 50% 50%, 50% 50%, 50% 50%, 50% 50%, 50% 50%, 50% 50%, 50% 50%); }
+  to { clip-path: polygon(50% -75%, 64% 26%, 167% 26%, 78% 66%, 110% 165%, 50% 104%, -10% 165%, 22% 66%, -67% 26%, 36% 26%); }
+}
+
+html[data-transition="star"] {
+  --transition-out: palmcast-hold;
+  --transition-in: palmcast-in-star;
+}

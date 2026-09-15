@@ -1,0 +1,11 @@
+/* The slide being left bursts outwards off the screen. */
+@keyframes palmcast-out-explode {
+  to { transform: scale(2.6); opacity: 0; filter: blur(6px); }
+}
+
+html[data-transition="explode"] {
+  --transition-out: palmcast-out-explode;
+  --transition-in: palmcast-hold;
+  --transition-lift: 1;
+  --transition-drop: 0;
+}

@@ -1,0 +1,21 @@
+/* Legible from the back of the room, and for anyone who would rather not
+   squint. Black and white at full contrast, heavier strokes, and a higher
+   floor under the type size than the other themes use. */
+.viewer, .stage {
+  --ground: #000;
+  --raised: #141414;
+  --edge: #5c5c5c;
+  --ink: #fff;
+  --ink-dim: #d0d0d0;
+  --accent: #ffd400;
+  --accent-ink: #000;
+  color-scheme: dark;
+  background: var(--ground);
+  color: var(--ink);
+}
+
+.viewer .slide, .stage .slide { font-weight: 550; }
+.viewer .slide { font-size: clamp(24px, 6vw, 38px); }
+.stage .slide { font-size: clamp(34px, 5vw, 88px); }
+.viewer .slide :is(h1, h2, h3),
+.stage .slide :is(h1, h2, h3) { font-weight: 800; letter-spacing: -.015em; }

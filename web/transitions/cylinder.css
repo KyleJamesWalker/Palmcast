@@ -1,0 +1,12 @@
+/* The slides curve away as if wrapped round a drum. */
+@keyframes palmcast-out-cylinder {
+  to { transform: perspective(1200px) rotateX(70deg) scale(.7); opacity: 0; }
+}
+@keyframes palmcast-in-cylinder {
+  from { transform: perspective(1200px) rotateX(-70deg) scale(.7); opacity: 0; }
+}
+
+html[data-transition="cylinder"] {
+  --transition-out: palmcast-out-cylinder;
+  --transition-in: palmcast-in-cylinder;
+}

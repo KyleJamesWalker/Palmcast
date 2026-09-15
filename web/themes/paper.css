@@ -1,0 +1,21 @@
+/* A printed page: warm stock, serif headings, ink that stops short of black. */
+.viewer, .stage {
+  --ground: #f7f2e6;
+  --raised: #efe7d3;
+  --edge: #d8caab;
+  --ink: #2c2519;
+  --ink-dim: #6d6047;
+  --accent: #9c4a16;
+  --accent-ink: #fff8ee;
+  color-scheme: light;
+  background: var(--ground);
+  color: var(--ink);
+}
+
+.viewer .slide :is(h1, h2, h3),
+.stage .slide :is(h1, h2, h3) {
+  font-family: ui-serif, Georgia, "Times New Roman", serif;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.viewer .slide blockquote, .stage .slide blockquote { font-style: italic; }

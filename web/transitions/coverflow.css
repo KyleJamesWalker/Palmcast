@@ -1,0 +1,12 @@
+/* The last slide swings back and left while the next swings in from the right. */
+@keyframes palmcast-out-coverflow {
+  to { transform: perspective(1400px) translateX(-46%) rotateY(42deg) scale(.66); opacity: 0; }
+}
+@keyframes palmcast-in-coverflow {
+  from { transform: perspective(1400px) translateX(46%) rotateY(-42deg) scale(.66); opacity: 0; }
+}
+
+html[data-transition="coverflow"] {
+  --transition-out: palmcast-out-coverflow;
+  --transition-in: palmcast-in-coverflow;
+}

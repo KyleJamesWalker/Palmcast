@@ -1,0 +1,9 @@
+/* The next slide collapses inwards onto the page from far too large. */
+@keyframes palmcast-in-implode {
+  from { transform: scale(2.6); opacity: 0; filter: blur(6px); }
+}
+
+html[data-transition="implode"] {
+  --transition-out: palmcast-hold;
+  --transition-in: palmcast-in-implode;
+}

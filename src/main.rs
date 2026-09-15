@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use std::path::{Path, PathBuf};
@@ -6,6 +7,7 @@ use clap::Parser;
 use palmcast::persist;
 use palmcast::routes::{self, App};
 use palmcast::session::Registry;
+use palmcast::styles;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -36,6 +38,18 @@ struct Args {
     /// sample. For an instance that runs the same quiz or talk every time.
     #[arg(long, env = "PALMCAST_DECK")]
     deck: Option<PathBuf>,
+
+    /// Themes to serve on top of the built-in ones, as a directory of css
+    /// files. The file name is the name a deck asks for, so `dusk.css` is
+    /// `<!-- theme: dusk -->`. A file named after a built-in replaces it.
+    #[arg(long, env = "PALMCAST_THEME_DIR")]
+    theme_dir: Option<PathBuf>,
+
+    /// Transitions to serve on top of the built-in ones, on the same terms as
+    /// `--theme-dir`. `web/transitions` in the source tree is the worked
+    /// example: every built-in is an ordinary file in that shape.
+    #[arg(long, env = "PALMCAST_TRANSITION_DIR")]
+    transition_dir: Option<PathBuf>,
 
     /// Keep pictures people upload, for as long as the room that holds them.
     /// Off by default: it is the one thing here that holds bytes a stranger
@@ -69,6 +83,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
     let registry = Registry::new(Duration::from_secs(args.ttl_hours * 3600));
+
+    // Same reasoning as the starter deck below: a directory the operator named
+    // and this cannot read is a mistake worth stopping for, because the first
+    // deck of the evening is too late to find out its theme never loaded.
+    let styles = Arc::new(styles::load(
+        args.theme_dir.as_deref(),
+        args.transition_dir.as_deref(),
+    )?);
+    tracing::info!(
+        themes = styles.theme_names().len(),
+        transitions = styles.transition_names().len(),
+        "looks a deck may name"
+    );
 
     let starter = match &args.deck {
         Some(path) => {
@@ -146,6 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         public_url: args.public_url.clone(),
         starter,
         uploads: args.uploads,
+        styles,
     };
     // The result is held rather than propagated, because a server that fell over
     // still has rooms worth keeping and `?` here would skip the save entirely.

@@ -1,0 +1,10 @@
+/* The next slide opens out of the middle of the screen. */
+@keyframes palmcast-in-iris-in {
+  from { clip-path: circle(0% at 50% 50%); }
+  to { clip-path: circle(75% at 50% 50%); }
+}
+
+html[data-transition="iris-in"] {
+  --transition-out: palmcast-hold;
+  --transition-in: palmcast-in-iris-in;
+}

@@ -1,0 +1,6 @@
+/* The two slides cross fade. The keyframes are the pair base.css already
+   defines for the reduced motion fallback, so this file only names them. */
+html[data-transition="fade"] {
+  --transition-out: palmcast-out-fade;
+  --transition-in: palmcast-in-fade;
+}

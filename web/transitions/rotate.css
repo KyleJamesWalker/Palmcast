@@ -1,0 +1,12 @@
+/* The deck spins a quarter turn between slides. */
+@keyframes palmcast-out-rotate {
+  to { transform: rotate(84deg) scale(.4); opacity: 0; }
+}
+@keyframes palmcast-in-rotate {
+  from { transform: rotate(-84deg) scale(.4); opacity: 0; }
+}
+
+html[data-transition="rotate"] {
+  --transition-out: palmcast-out-rotate;
+  --transition-in: palmcast-in-rotate;
+}

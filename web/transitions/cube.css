@@ -1,0 +1,15 @@
+/* The slides are two faces of a box turning on its side. */
+@keyframes palmcast-out-cube {
+  to { transform: perspective(1600px) translateZ(-50vw) rotateY(-90deg); }
+}
+@keyframes palmcast-in-cube {
+  from { transform: perspective(1600px) translateZ(-50vw) rotateY(90deg); }
+}
+
+html[data-transition="cube"] {
+  --transition-out: palmcast-out-cube;
+  --transition-in: palmcast-in-cube;
+}
+
+html[data-transition="cube"]::view-transition-old(palmcast-surface),
+html[data-transition="cube"]::view-transition-new(palmcast-surface) { transform-origin: 50% 50%; }

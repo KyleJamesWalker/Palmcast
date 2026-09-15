@@ -7,5 +7,6 @@ pub mod persist;
 pub mod routes;
 pub mod session;
 pub mod share;
+pub mod styles;
 pub mod wire;
 pub mod ws;

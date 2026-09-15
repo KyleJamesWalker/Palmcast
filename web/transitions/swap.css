@@ -1,0 +1,12 @@
+/* The slides trade places, one going back and right, the other coming forward from the left. */
+@keyframes palmcast-out-swap {
+  to { transform: perspective(1400px) translate3d(38%, 0, -420px); opacity: 0; }
+}
+@keyframes palmcast-in-swap {
+  from { transform: perspective(1400px) translate3d(-38%, 0, -420px); opacity: 0; }
+}
+
+html[data-transition="swap"] {
+  --transition-out: palmcast-out-swap;
+  --transition-in: palmcast-in-swap;
+}

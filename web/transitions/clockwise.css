@@ -1,0 +1,16 @@
+/* A hand sweeps round the screen clockwise, drawing the next slide in behind it. */
+@property --palmcast-clockwise { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+
+@keyframes palmcast-in-clockwise {
+  from { --palmcast-clockwise: 0deg; }
+  to { --palmcast-clockwise: 360deg; }
+}
+
+html[data-transition="clockwise"] {
+  --transition-out: palmcast-hold;
+  --transition-in: palmcast-in-clockwise;
+}
+
+html[data-transition="clockwise"]::view-transition-new(palmcast-surface) {
+  mask-image: conic-gradient(from 0deg, #000 var(--palmcast-clockwise), #0000 0);
+}

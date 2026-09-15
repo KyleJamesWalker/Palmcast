@@ -1,0 +1,13 @@
+/* The last slide is swept off to the right, leaning as it goes. */
+@keyframes palmcast-out-swoosh {
+  to { transform: translateX(120%) skewX(-18deg); opacity: 0; }
+}
+@keyframes palmcast-in-swoosh {
+  from { transform: translateX(-16%); opacity: 0; }
+}
+
+html[data-transition="swoosh"] {
+  --transition-out: palmcast-out-swoosh;
+  --transition-in: palmcast-in-swoosh;
+  --transition-ease: cubic-bezier(.6, 0, .3, 1);
+}

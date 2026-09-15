@@ -1,0 +1,12 @@
+/* The next slide settles onto the last one, which sinks away under it. */
+@keyframes palmcast-out-overlap {
+  to { transform: scale(.88); opacity: 0; }
+}
+@keyframes palmcast-in-overlap {
+  from { transform: scale(1.14); opacity: 0; }
+}
+
+html[data-transition="overlap"] {
+  --transition-out: palmcast-out-overlap;
+  --transition-in: palmcast-in-overlap;
+}
