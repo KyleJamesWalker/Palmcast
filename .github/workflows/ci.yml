@@ -206,13 +206,13 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Download x86_64 binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: palmcast-x86_64-linux
           path: dist
 
       - name: Download aarch64 binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: palmcast-aarch64-linux
           path: dist
