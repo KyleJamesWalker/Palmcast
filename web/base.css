@@ -374,6 +374,78 @@ a { color: var(--accent); }
   border-color: var(--accent);
 }
 
+/* Suggestions for a deck directive. Docked under the editor by default, which
+   is where a phone wants them; floated at the caret where there is a pointer. */
+.complete {
+  margin-top: 6px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.complete.floating {
+  position: fixed;
+  z-index: 40;
+  margin: 0;
+  min-width: 260px;
+  max-width: min(420px, calc(100vw - 16px));
+  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+}
+.complete-hint {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--edge);
+}
+.complete-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.complete.floating .complete-list { max-height: 15rem; }
+.complete-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.complete-row.on { background: var(--edge); }
+.complete-value { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.complete-about {
+  color: var(--ink-dim);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Docked, the list is a row of chips: a phone has width and no hover. */
+@media (hover: none), (pointer: coarse) {
+  .complete-list {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 8px;
+    max-height: none;
+  }
+  .complete-row {
+    display: block;
+    flex: 0 0 auto;
+    min-height: var(--tap);
+    padding: 8px 14px;
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+  }
+  /* The description would not fit beside a chip, and the name is the thing
+     being chosen. */
+  .complete-about { display: none; }
+}
+
 /* A link too long to read, offered for selection when there is no clipboard. */
 input.url {
   display: block;

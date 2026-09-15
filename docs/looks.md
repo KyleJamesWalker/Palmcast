@@ -14,7 +14,27 @@ slide beside the picker; tapping that sample runs the transition again, which is
 the only way to compare two of them without picking each one twice. **This slide
 only** writes `_transition` instead, for a slide that should differ from the
 ones after it. The same box applies to the theme picker, where it writes
-`_theme`. Both pickers are on the start page and in the
+`_theme`.
+
+Typing a directive by hand offers the same choices. Open a `<!--` in either
+editor and the editor lists what can go there: the four directive names, then
+the looks this instance actually serves, then the durations a transition
+accepts. It suggests and never inserts on its own, so nothing is written until
+you take it with a tap, Enter or Tab; Escape puts the list away. The list floats
+at the cursor on a laptop and docks under the editor on a phone, where a
+floating list would sit behind the keyboard.
+
+That is the whole grammar, and there is no more of it to learn:
+
+```
+<!-- theme: <look> -->
+<!-- _theme: <look> -->
+<!-- transition: <look> [<time>] -->
+<!-- _transition: <look> [<time>] -->
+```
+
+A `<time>` is `500ms` or `1.5s`, up to sixty seconds, and only a transition
+takes one. Both pickers are on the start page and in the
 presenter console, and the directives below are what they write, so a deck
 written by hand and a deck written with them are the same deck.
 

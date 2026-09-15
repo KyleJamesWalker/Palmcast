@@ -12,6 +12,7 @@ import {
 } from '/shared.js';
 import { smartEditor } from '/editing.js';
 import { lookPickers } from '/lookpicker.js';
+import { attachCompleter } from '/completer.js';
 import { renderOptions } from '/quiz.js';
 import { agentPrompt, pruneBySlide, survivingSlides } from '/deckstate.js';
 import { renderLineup } from '/lineup.js';
@@ -75,7 +76,10 @@ const els = {
   deckImageFile: document.getElementById('deck-image-file'),
 };
 
-const editing = smartEditor(els.deckText, els.deckToolbar);
+let completer = null;
+const editing = smartEditor(els.deckText, els.deckToolbar, {
+  intercept: (event) => completer?.handleKey(event) ?? false,
+});
 
 lookPickers(editing, els.deckText, {
   theme: document.getElementById('deck-theme-pick'),
@@ -85,6 +89,8 @@ lookPickers(editing, els.deckText, {
   scope: document.getElementById('deck-transition-scope'),
   scopeField: document.getElementById('deck-scope-field'),
   demo: document.getElementById('deck-look-demo'),
+}).then((looks) => {
+  completer = attachCompleter(els.deckText, editing, looks);
 });
 
 attachUpload({

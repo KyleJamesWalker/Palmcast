@@ -403,7 +403,7 @@ export function editFor(name, doc) {
 /// change a textarea without emptying the browser's undo stack. Assigning to
 /// `value` would cost the author every keystroke before the one the button
 /// wrote, which is a worse trade than an old API.
-export function smartEditor(area, toolbar) {
+export function smartEditor(area, toolbar, opts = {}) {
   const read = () => ({ text: area.value, start: area.selectionStart, end: area.selectionEnd });
 
   const run = (edit) => {
@@ -429,6 +429,13 @@ export function smartEditor(area, toolbar) {
   };
 
   area.addEventListener('keydown', (event) => {
+    // A suggestion list gets first refusal, so Enter finishes a directive when
+    // one is open and breaks a line the rest of the time. Asked rather than
+    // ordered by listener registration, which is too easy to get wrong.
+    if (opts.intercept?.(event)) {
+      event.preventDefault();
+      return;
+    }
     const plain = !event.metaKey && !event.ctrlKey && !event.altKey;
     if (event.key === 'Enter' && plain && !event.shiftKey) {
       if (run(breakLine(read()))) event.preventDefault();
