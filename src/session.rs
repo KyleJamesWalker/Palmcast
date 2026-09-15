@@ -306,6 +306,10 @@ impl Session {
             rev: self.rev,
             current: self.current,
             step: self.step,
+            // Read off the live markdown rather than held as a field, so a
+            // staged talk brings its own theme without a second thing to keep
+            // in step with `self.markdown`.
+            theme: deck::theme_of(&self.markdown),
             slides: self.slides.clone(),
         }
     }
@@ -2666,6 +2670,7 @@ mod tests {
             rev: 1,
             current: 0,
             step: 0,
+            theme: None,
             slides: slides.clone(),
         }
         .redacted()
@@ -2710,6 +2715,43 @@ mod tests {
         assert_eq!(
             items[0].score, 1,
             "a vote from before multi select stopped counting"
+        );
+    }
+
+    #[test]
+    fn a_deck_that_names_a_theme_sends_it_with_the_slides() {
+        let reg = registry();
+        let (id, _) = reg.create("<!-- theme: paper -->\n# One").unwrap();
+        let ServerMsg::Deck { theme, .. } = reg.with(&id, Session::snapshot).unwrap() else {
+            panic!("not a deck");
+        };
+        assert_eq!(theme.as_deref(), Some("paper"));
+    }
+
+    #[test]
+    fn a_deck_that_names_no_theme_sends_none() {
+        let reg = registry();
+        let (id, _) = reg.create("# One").unwrap();
+        let ServerMsg::Deck { theme, .. } = reg.with(&id, Session::snapshot).unwrap() else {
+            panic!("not a deck");
+        };
+        assert_eq!(theme, None);
+    }
+
+    #[test]
+    fn a_staged_talk_brings_its_own_theme_to_the_room() {
+        let (reg, id, _) = open_room();
+        let (talk, _) = submit(&reg, &id, "ada", "<!-- theme: neon -->\n# My talk");
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+
+        let ServerMsg::Deck { theme, .. } = reg.with(&id, Session::snapshot).unwrap() else {
+            panic!("not a deck");
+        };
+        assert_eq!(
+            theme.as_deref(),
+            Some("neon"),
+            "the talk's theme did not reach the room"
         );
     }
 }

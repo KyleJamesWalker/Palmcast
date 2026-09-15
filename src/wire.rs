@@ -71,6 +71,9 @@ pub enum ServerMsg {
         /// How much of the current slide has come in. Zero is the slide as it
         /// first lands, before any of its staged items.
         step: usize,
+        /// The theme the deck asked for. `None` leaves the view on its own
+        /// default, which is what a deck that named nothing wants.
+        theme: Option<String>,
         slides: Vec<Slide>,
     },
     Move {
@@ -140,17 +143,20 @@ impl ServerMsg {
                 rev,
                 current,
                 step,
+                theme,
                 slides,
             } => Some(ServerMsg::Deck {
                 rev: *rev,
                 current: *current,
                 step: *step,
+                theme: theme.clone(),
                 slides: slides
                     .iter()
                     .map(|s| Slide {
                         html: s.html.clone(),
                         notes: String::new(),
                         steps: s.steps,
+                        transition: s.transition.clone(),
                         question: s.question.as_ref().map(|q| Question {
                             options: q.options.clone(),
                             multi: q.multi,
@@ -298,10 +304,12 @@ mod tests {
             rev: 1,
             current: 0,
             step: 0,
+            theme: None,
             slides: vec![Slide {
                 html: "<h1>Hi</h1>".into(),
                 notes: "the secret note".into(),
                 steps: 0,
+                transition: None,
                 question: Some(Question {
                     options: vec!["a".into(), "b".into()],
                     multi: false,
