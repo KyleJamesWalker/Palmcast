@@ -22,3 +22,10 @@ test('the deck teaches every rule it uses', () => {
   assert.match(SAMPLE, /\n\?\?\?\n/);
   assert.match(SAMPLE, /```markdown\n/);
 });
+
+// The sample is the format's documentation, so a rule it does not show is a
+// rule most people never find.
+test('the deck shows that a deck can pick a look', () => {
+  assert.match(SAMPLE, /^<!-- transition: /m, 'nothing demonstrates a transition');
+  assert.match(SAMPLE, /<!-- theme:/, 'nothing mentions a theme');
+});

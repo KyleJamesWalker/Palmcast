@@ -1,0 +1,9 @@
+/* The next slide rises from the bottom over a slide that stays put. */
+@keyframes palmcast-in-cover {
+  from { transform: translateY(100%); }
+}
+
+html[data-transition="cover"] {
+  --transition-out: palmcast-hold;
+  --transition-in: palmcast-in-cover;
+}

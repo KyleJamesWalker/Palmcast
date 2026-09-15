@@ -20,6 +20,7 @@ async fn spawn_with_deck(markdown: &str) -> String {
         public_url: None,
         starter: Some(markdown.to_string()),
         uploads: false,
+        styles: Default::default(),
     }))
     .await
 }
@@ -31,6 +32,7 @@ async fn spawn_with_uploads() -> String {
         public_url: None,
         starter: None,
         uploads: true,
+        styles: Default::default(),
     }))
     .await
 }
@@ -2344,4 +2346,121 @@ async fn the_policy_allows_a_picture_from_somewhere_else() {
     assert!(csp.contains("img-src 'self' data: https: http:"), "{csp}");
     assert!(csp.contains("script-src 'self'"), "{csp}");
     assert!(csp.contains("object-src 'none'"), "{csp}");
+}
+
+/// A look the deck names has to be a thing the room can actually fetch, and
+/// nothing else in the process may be fetchable the same way.
+#[tokio::test]
+async fn a_built_in_theme_and_transition_are_served_by_name() {
+    let host = spawn().await;
+
+    for path in [
+        "themes/ember.css",
+        "themes/paper.css",
+        "transitions/fade.css",
+    ] {
+        let res = reqwest::get(format!("http://{host}/{path}")).await.unwrap();
+        assert_eq!(res.status(), 200, "{path} was not served");
+        assert_eq!(
+            res.headers()["content-type"],
+            "text/css",
+            "{path} came back as the wrong type"
+        );
+        assert!(!res.text().await.unwrap().is_empty(), "{path} was empty");
+    }
+}
+
+#[tokio::test]
+async fn a_look_nobody_installed_is_not_found() {
+    let host = spawn().await;
+    for path in [
+        "themes/nope.css",
+        "transitions/nope.css",
+        "themes/..%2f..%2fCargo.toml",
+        "themes/%2e%2e%2fbase.css",
+    ] {
+        let res = reqwest::get(format!("http://{host}/{path}")).await.unwrap();
+        assert_eq!(res.status(), 404, "{path} was served");
+    }
+}
+
+#[tokio::test]
+async fn the_config_lists_every_look_the_room_may_ask_for() {
+    let host = spawn().await;
+    let config: Value = reqwest::get(format!("http://{host}/api/config"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let names = |key: &str| -> Vec<String> {
+        config[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    let themes = names("themes");
+    assert!(themes.iter().any(|t| t == "ember"), "{themes:?}");
+    assert!(themes.iter().any(|t| t == "neon"), "{themes:?}");
+
+    // A picker puts this next to the name, so an empty one is a blank row.
+    let about = config["themes"][0]["about"].as_str().unwrap();
+    assert!(
+        !about.is_empty(),
+        "the first theme describes itself as nothing"
+    );
+
+    let transitions = names("transitions");
+    assert!(transitions.iter().any(|t| t == "fade"), "{transitions:?}");
+    assert!(
+        transitions.iter().any(|t| t == "coverflow"),
+        "{transitions:?}"
+    );
+    assert_eq!(
+        transitions.len(),
+        34,
+        "the marp set plus none: {transitions:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_look_the_operator_added_at_startup_reaches_the_room() {
+    let dir = std::env::temp_dir().join(format!("pc-live-theme-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("midnight.css"), ".viewer { --ground: #000; }").unwrap();
+
+    let styles = std::sync::Arc::new(palmcast::styles::load(Some(&dir), None).unwrap());
+    let host = serve(routes::router_with(routes::App {
+        registry: Registry::new(Duration::from_secs(3600)),
+        public_url: None,
+        starter: None,
+        uploads: false,
+        styles,
+    }))
+    .await;
+
+    let body = reqwest::get(format!("http://{host}/themes/midnight.css"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(body, ".viewer { --ground: #000; }");
+
+    let config: Value = reqwest::get(format!("http://{host}/api/config"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let themes = config["themes"].as_array().unwrap();
+    assert!(
+        themes.iter().any(|t| t["name"] == "midnight"),
+        "the room was never told: {themes:?}"
+    );
 }

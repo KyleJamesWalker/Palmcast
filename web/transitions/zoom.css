@@ -1,0 +1,12 @@
+/* The last slide grows past the camera as the next one comes up to meet it. */
+@keyframes palmcast-out-zoom {
+  to { transform: scale(1.35); opacity: 0; }
+}
+@keyframes palmcast-in-zoom {
+  from { transform: scale(.72); opacity: 0; }
+}
+
+html[data-transition="zoom"] {
+  --transition-out: palmcast-out-zoom;
+  --transition-in: palmcast-in-zoom;
+}

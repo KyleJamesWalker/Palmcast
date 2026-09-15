@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Path, Query, Request, State, WebSocketUpgrade};
@@ -16,6 +17,7 @@ use crate::images;
 use crate::origin;
 use crate::session::{EditError, Registry, Role, TalkError};
 use crate::share;
+use crate::styles::{self, Look, Styles};
 use crate::ws::{self, Join};
 
 pub const MAX_DECK_BYTES: usize = 256 * 1024;
@@ -62,6 +64,9 @@ pub struct App {
     /// the operator turned it on, because it is the one feature here that holds
     /// bytes somebody else chose.
     pub uploads: bool,
+    /// The themes and transitions a deck here may name. Read once at startup
+    /// and shared, because every room in the room reads the same ones.
+    pub styles: Arc<Styles>,
 }
 
 impl axum::extract::FromRef<App> for Registry {
@@ -76,6 +81,7 @@ pub fn router(registry: Registry) -> Router {
         public_url: None,
         starter: None,
         uploads: false,
+        styles: Arc::new(styles::load(None, None).unwrap_or_default()),
     })
 }
 
@@ -87,6 +93,8 @@ pub fn router_with(app: App) -> Router {
         .route("/api/preview", post(preview_deck))
         .route("/api/starter", get(starter_deck))
         .route("/api/config", get(config))
+        .route("/themes/{file}", get(theme))
+        .route("/transitions/{file}", get(transition))
         .route(
             "/api/sessions/{id}/images",
             post(upload_image).layer(DefaultBodyLimit::max(images::MAX_UPLOAD_BYTES + 4096)),
@@ -332,6 +340,11 @@ async fn update_talk(
 #[derive(Serialize)]
 struct Config {
     uploads: bool,
+    /// Every look a deck here may ask for, each with what its own file says it
+    /// looks like. The views hold no list of their own: an instance the
+    /// operator added to has more than the binary ships.
+    themes: Vec<Look>,
+    transitions: Vec<Look>,
 }
 
 /// What this instance lets a view offer. A page that cannot upload should not
@@ -339,8 +352,65 @@ struct Config {
 async fn config(State(app): State<App>) -> Response {
     axum::Json(Config {
         uploads: app.uploads,
+        themes: app.styles.themes(),
+        transitions: app.styles.transitions(),
     })
     .into_response()
+}
+
+async fn theme(State(app): State<App>, Path(file): Path<String>, headers: HeaderMap) -> Response {
+    let sheet = name_of(&file).and_then(|name| app.styles.theme(&name));
+    stylesheet(sheet, &headers)
+}
+
+async fn transition(
+    State(app): State<App>,
+    Path(file): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let sheet = name_of(&file).and_then(|name| app.styles.transition(&name));
+    stylesheet(sheet, &headers)
+}
+
+/// The name inside `<name>.css`, and only if it is a name. A look is addressed
+/// by a name a deck may write, so anything that is not one is not found here
+/// rather than being looked up and happening to miss.
+fn name_of(file: &str) -> Option<String> {
+    crate::deck::style_name(file.strip_suffix(".css")?)
+}
+
+/// `no-cache` with an etag over the bytes, like every other asset: a room that
+/// already holds a look pays a 304 for it, and an operator who edits a file and
+/// restarts gets the new one past every cache.
+fn stylesheet(sheet: Option<&crate::styles::Sheet>, request: &HeaderMap) -> Response {
+    let Some(sheet) = sheet else {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+    if request
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(',')
+                .any(|candidate| candidate.trim() == sheet.etag)
+        })
+    {
+        return (
+            StatusCode::NOT_MODIFIED,
+            [(header::ETAG, sheet.etag.clone())],
+        )
+            .into_response();
+    }
+
+    (
+        [
+            (header::CONTENT_TYPE, "text/css".to_string()),
+            (header::CACHE_CONTROL, "no-cache".to_string()),
+            (header::ETAG, sheet.etag.clone()),
+        ],
+        sheet.css.clone(),
+    )
+        .into_response()
 }
 
 #[derive(Serialize)]

@@ -10,6 +10,7 @@ import {
   tokenFor,
 } from '/shared.js';
 import { smartEditor } from '/editing.js';
+import { lookPickers } from '/lookpicker.js';
 import { renderOptions } from '/quiz.js';
 import { agentPrompt, pruneBySlide, survivingSlides } from '/deckstate.js';
 import { renderLineup } from '/lineup.js';
@@ -34,6 +35,7 @@ const els = {
   nextBtn: document.getElementById('next-btn'),
   share: document.getElementById('share'),
   shareToggle: document.getElementById('share-toggle'),
+  qrToggle: document.getElementById('qr-toggle'),
   qr: document.getElementById('qr'),
   copy: document.getElementById('copy'),
   shareUrl: document.getElementById('share-url'),
@@ -72,7 +74,17 @@ const els = {
   deckImageFile: document.getElementById('deck-image-file'),
 };
 
-smartEditor(els.deckText, els.deckToolbar);
+const editing = smartEditor(els.deckText, els.deckToolbar);
+
+lookPickers(editing, els.deckText, {
+  theme: document.getElementById('deck-theme-pick'),
+  transition: document.getElementById('deck-transition-pick'),
+  themeField: document.getElementById('deck-theme-field'),
+  transitionField: document.getElementById('deck-transition-field'),
+  scope: document.getElementById('deck-transition-scope'),
+  scopeField: document.getElementById('deck-scope-field'),
+  demo: document.getElementById('deck-look-demo'),
+});
 
 attachUpload({
   button: els.deckImage,
@@ -202,6 +214,9 @@ const socket = connect(id, token, {
   react(msg) {
     burst(msg.kind);
   },
+  qr(msg) {
+    paintQr(msg.on);
+  },
   scores(msg) {
     renderScores(els.scores, msg.items, {
       emptyText: 'Nobody has joined the game yet.',
@@ -325,6 +340,9 @@ function applyRole(role) {
   els.editToggle.hidden = !staff;
   els.lineupToggle.hidden = role !== 'mc';
   els.shareToggle.hidden = role !== 'mc';
+  // Whoever drives: the person standing in front of the room is the one who
+  // sees somebody walk in late.
+  els.qrToggle.hidden = !(role === 'mc' || role === 'driver');
   if (!staff) {
     els.editor.hidden = true;
   }
@@ -423,6 +441,26 @@ document.addEventListener('keydown', (event) => {
   else if (intent === 'prev') back();
   else if (intent === 'first') go(0);
   else go(slides.length - 1, steps(slides, slides.length - 1));
+});
+
+/// Puts the way into the room on every screen in it, or takes it off.
+///
+/// The button follows the room rather than its own memory: the server says
+/// whether the code is up, so a second console and a reconnect agree with what
+/// the room is actually looking at.
+function paintQr(on) {
+  els.qrToggle.setAttribute('aria-pressed', String(on));
+  els.qrToggle.textContent = on ? 'Hide QR' : 'Show QR';
+  els.qrToggle.classList.toggle('primary', on);
+}
+paintQr(false);
+
+els.qrToggle.addEventListener('click', () => {
+  socket.send({ type: 'qr', on: els.qrToggle.getAttribute('aria-pressed') !== 'true' });
+  // What a presenter does next is carry on, and an arrow key goes to the
+  // focused button rather than the deck. Putting the code up must not cost
+  // them the keys that take it back down.
+  els.qrToggle.blur();
 });
 
 els.shareToggle.addEventListener('click', () => {

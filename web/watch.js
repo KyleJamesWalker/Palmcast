@@ -7,6 +7,8 @@ import { burst, reactionBar } from '/reactions.js';
 import { previewDeck, renderPreview } from '/preview.js';
 import { renderQuestions } from '/questions.js';
 import { renderScores } from '/scores.js';
+import { applyTheme, crossing, preload, swap } from '/looks.js';
+import { joinUrl, qrSrc, showJoin } from '/qr.js';
 import { applySteps } from '/steps.js';
 import { attachUpload, uploadsOn } from '/upload.js';
 
@@ -97,12 +99,17 @@ const socket = connect(id, null, {
     slides = msg.slides;
     current = msg.current;
     step = msg.step;
+    applyTheme(msg.theme);
+    // Every transition the deck can reach for, fetched now rather than at the
+    // press that needs it. A talk going on stage is the moment there is time.
+    preload(slides);
     paint();
   },
   move(msg) {
+    const plan = crossing(slides, current, msg.current);
     current = msg.current;
     step = msg.step;
-    paint();
+    swap(paint, plan);
   },
   reveal(msg) {
     revealed.set(msg.slide, msg);
@@ -110,6 +117,9 @@ const socket = connect(id, null, {
   },
   react(msg) {
     burst(msg.kind);
+  },
+  qr(msg) {
+    showJoin(qrOverlay, id, msg.on);
   },
   questions(msg) {
     questions = msg.items;
@@ -143,6 +153,15 @@ const socket = connect(id, null, {
     status.textContent = state;
   },
 });
+
+// The way in, for whoever is sitting next to somebody who missed it going up.
+// Both the panel code and the overlay carry the address the server would put
+// behind the code itself.
+const qrOverlay = document.getElementById('qr-overlay');
+const joinHere = joinUrl(id, location.origin);
+document.getElementById('qr-join-img').src = qrSrc(id);
+document.getElementById('qr-join-url').textContent = joinHere;
+document.getElementById('qr-overlay-url').textContent = joinHere;
 
 // A phone that sleeps mid-talk comes back on the right slide, not a blank one.
 document.addEventListener('visibilitychange', () => {

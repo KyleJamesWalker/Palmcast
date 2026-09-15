@@ -11,6 +11,21 @@ pub struct Slide {
     /// that arrives whole, which is every slide that holds no `*` list.
     #[serde(default)]
     pub steps: usize,
+    /// How the deck leaves this slide for the next one, when the author asked
+    /// for anything. The boundary belongs to the slide above it, so stepping
+    /// back over the same boundary runs the same animation reversed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transition: Option<Transition>,
+}
+
+/// A transition, as the deck named it. Whether the name is installed is the
+/// view's business: it holds the stylesheets and this does not.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Transition {
+    pub name: String,
+    /// Milliseconds. `None` leaves it to the transition's own stylesheet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<u32>,
 }
 
 /// A slide carrying a task list becomes a question. `- [x]` marks an answer.
@@ -28,21 +43,35 @@ pub struct Question {
 
 /// Slides split on a `---` line, speaker notes split from the body by `???`.
 pub fn parse(markdown: &str) -> Vec<Slide> {
-    let slides: Vec<Slide> = split_slides(markdown)
-        .iter()
-        .map(|raw| {
-            let (body, notes) = split_notes(raw);
-            let (prompt, question) = split_question(&body);
-            let (html, steps) = stage_items(&render(&prompt), &fragments(&prompt));
-            Slide {
-                html,
-                notes: notes.trim().to_string(),
-                question,
-                steps,
-            }
-        })
-        .filter(|s| !(s.html.trim().is_empty() && s.notes.is_empty() && s.question.is_none()))
-        .collect();
+    let mut slides: Vec<Slide> = Vec::new();
+    // A plain `transition` keeps applying until another one replaces it, so it
+    // outlives the slide that named it. An `_transition` never does.
+    let mut carried: Option<Transition> = None;
+
+    for raw in split_slides(markdown) {
+        let (raw, asked) = split_directives(&raw);
+        if let Some(named) = asked.transition {
+            carried = Some(named);
+        }
+        let transition = asked.spot.or_else(|| carried.clone());
+
+        let (body, notes) = split_notes(&raw);
+        let (prompt, question) = split_question(&body);
+        let (html, steps) = stage_items(&render(&prompt), &fragments(&prompt));
+        let notes = notes.trim().to_string();
+        // A slide holding nothing but a directive is not a slide, but it has
+        // already had its say: `carried` is set above this line, not below it.
+        if html.trim().is_empty() && notes.is_empty() && question.is_none() {
+            continue;
+        }
+        slides.push(Slide {
+            html,
+            notes,
+            question,
+            steps,
+            transition,
+        });
+    }
 
     if slides.is_empty() {
         return vec![Slide {
@@ -50,9 +79,107 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
             notes: String::new(),
             question: None,
             steps: 0,
+            transition: None,
         }];
     }
     slides
+}
+
+/// The theme the deck asked for, if it asked for one and the name is a name.
+///
+/// Deck wide wherever it is written, and the last one wins, because a theme
+/// that changed halfway through would repaint the room mid-talk.
+pub fn theme_of(markdown: &str) -> Option<String> {
+    let mut found = None;
+    let mut fence = Fence::default();
+    for line in markdown.lines() {
+        if fence.consume(line) {
+            continue;
+        }
+        if let Some(("theme", value)) = directive(line)
+            && let Some(name) = style_name(value)
+        {
+            found = Some(name);
+        }
+    }
+    found
+}
+
+#[derive(Default)]
+struct Directives {
+    transition: Option<Transition>,
+    spot: Option<Transition>,
+}
+
+/// Lifts the directive lines out of a slide and reads them.
+///
+/// They are stripped whether or not the value was usable. A deck that misspells
+/// a theme has made a mistake worth ignoring, not one worth printing across the
+/// slide in front of the room.
+fn split_directives(raw: &str) -> (String, Directives) {
+    let mut body = Vec::new();
+    let mut asked = Directives::default();
+    let mut fence = Fence::default();
+
+    for line in raw.lines() {
+        if fence.consume(line) {
+            body.push(line);
+            continue;
+        }
+        match directive(line) {
+            Some(("transition", value)) => asked.transition = transition(value),
+            Some(("_transition", value)) => asked.spot = transition(value),
+            // Read deck wide by `theme_of`, and dropped here so it never draws.
+            Some(("theme", _)) => {}
+            _ => body.push(line),
+        }
+    }
+    (body.join("\n"), asked)
+}
+
+/// A `<!-- name: value -->` line on its own. Any other comment is left alone,
+/// which means it renders as the text a deck's raw html already renders as.
+fn directive(line: &str) -> Option<(&str, &str)> {
+    let inner = line.trim().strip_prefix("<!--")?.strip_suffix("-->")?;
+    let (name, value) = inner.split_once(':')?;
+    Some((name.trim(), value.trim()))
+}
+
+/// `name` or `name <duration>`. A second word that is not a duration voids the
+/// whole thing rather than being ignored, so a typo is silent rather than half
+/// obeyed.
+fn transition(value: &str) -> Option<Transition> {
+    let mut words = value.split_whitespace();
+    let name = style_name(words.next()?)?;
+    let duration = match words.next() {
+        Some(raw) => Some(duration_ms(raw)?),
+        None => None,
+    };
+    words
+        .next()
+        .is_none()
+        .then_some(Transition { name, duration })
+}
+
+/// A name reaches a url and a class attribute, so the alphabet is narrow on
+/// purpose: anything outside it is refused here rather than escaped later.
+pub(crate) fn style_name(value: &str) -> Option<String> {
+    let name = value.trim();
+    let shaped = !name.is_empty()
+        && name.len() <= 32
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    shaped.then(|| name.to_string())
+}
+
+fn duration_ms(value: &str) -> Option<u32> {
+    if let Some(count) = value.strip_suffix("ms") {
+        return count.parse().ok();
+    }
+    let seconds: f64 = value.strip_suffix('s')?.parse().ok()?;
+    (seconds.is_finite() && (0.0..=60.0).contains(&seconds))
+        .then(|| (seconds * 1000.0).round() as u32)
 }
 
 /// Tracks fenced code blocks.
@@ -622,5 +749,118 @@ mod tests {
     fn an_unclosed_fence_swallows_the_rest_rather_than_splitting_it() {
         let deck = "# Oops\n\n```\nnever closed\n\n---\n\n# Two";
         assert_eq!(parse(deck).len(), 1);
+    }
+
+    #[test]
+    fn a_transition_directive_names_the_slide_it_sits_on() {
+        let slides = parse("<!-- transition: fade -->\n# Why Rust");
+        assert_eq!(
+            slides[0].transition.as_ref().map(|t| t.name.as_str()),
+            Some("fade")
+        );
+    }
+
+    #[test]
+    fn a_directive_line_is_not_drawn_on_the_slide() {
+        let slides = parse("<!-- transition: fade -->\n# Why Rust");
+        assert!(!slides[0].html.contains("transition"), "{}", slides[0].html);
+        assert!(slides[0].html.contains("Why Rust"));
+    }
+
+    #[test]
+    fn a_transition_carries_on_to_the_slides_after_it() {
+        let slides = parse("<!-- transition: cover -->\n# One\n\n---\n\n# Two");
+        assert_eq!(
+            slides[1].transition.as_ref().map(|t| t.name.as_str()),
+            Some("cover")
+        );
+    }
+
+    #[test]
+    fn an_underscored_transition_applies_to_its_own_slide_only() {
+        let deck = "<!-- transition: cover -->\n# One\n\n---\n\n<!-- _transition: none -->\n# Two\n\n---\n\n# Three";
+        let slides = parse(deck);
+        assert_eq!(
+            slides[1].transition.as_ref().map(|t| t.name.as_str()),
+            Some("none")
+        );
+        assert_eq!(
+            slides[2].transition.as_ref().map(|t| t.name.as_str()),
+            Some("cover")
+        );
+    }
+
+    #[test]
+    fn a_duration_rides_with_the_name() {
+        let slides = parse(
+            "<!-- transition: fade 1s -->\n# One\n\n---\n\n<!-- transition: fade 250ms -->\n# Two",
+        );
+        assert_eq!(slides[0].transition.as_ref().unwrap().duration, Some(1000));
+        assert_eq!(slides[1].transition.as_ref().unwrap().duration, Some(250));
+    }
+
+    #[test]
+    fn a_theme_is_read_wherever_it_is_written() {
+        assert_eq!(
+            theme_of("# One\n\n---\n\n<!-- theme: paper -->\n# Two").as_deref(),
+            Some("paper")
+        );
+    }
+
+    #[test]
+    fn the_last_theme_wins() {
+        assert_eq!(
+            theme_of("<!-- theme: neon -->\n# One\n\n---\n\n<!-- theme: paper -->\n# Two")
+                .as_deref(),
+            Some("paper")
+        );
+    }
+
+    #[test]
+    fn a_name_that_could_be_a_path_or_markup_is_refused() {
+        for bad in ["../secret", "a/b", "fade\"", "<script>", "UPPER", "a b"] {
+            let deck = format!("<!-- transition: {bad} -->\n# One");
+            assert_eq!(parse(&deck)[0].transition, None, "accepted {bad}");
+            let deck = format!("<!-- theme: {bad} -->\n# One");
+            assert_eq!(theme_of(&deck), None, "accepted {bad}");
+        }
+    }
+
+    #[test]
+    fn a_directive_inside_a_fence_is_code() {
+        let deck = "# Docs\n\n```html\n<!-- transition: fade -->\n```";
+        let slides = parse(deck);
+        assert_eq!(slides[0].transition, None);
+        assert!(
+            slides[0].html.contains("transition"),
+            "the example was eaten"
+        );
+    }
+
+    #[test]
+    fn a_deck_with_no_directives_says_so() {
+        let slides = parse("# Plain");
+        assert_eq!(slides[0].transition, None);
+        assert_eq!(theme_of("# Plain"), None);
+    }
+
+    /// The sample deck shows the directives off in a bullet, so a line that
+    /// merely mentions one has to stay a line that mentions one.
+    #[test]
+    fn a_directive_quoted_in_a_bullet_is_text() {
+        let slides = parse("# Rules\n\n- `<!-- theme: neon -->` paints it");
+        assert_eq!(slides[0].transition, None);
+        assert_eq!(theme_of("- `<!-- theme: neon -->` paints it"), None);
+        assert!(
+            slides[0].html.contains("theme: neon"),
+            "the example was eaten: {}",
+            slides[0].html
+        );
+    }
+
+    #[test]
+    fn a_directive_needs_the_line_to_itself() {
+        let slides = parse("Text before <!-- transition: fade --> and after");
+        assert_eq!(slides[0].transition, None);
     }
 }

@@ -1,0 +1,5 @@
+/* No animation. The deck cuts from one slide to the next. */
+html[data-transition="none"] {
+  --transition-out: none;
+  --transition-in: none;
+}

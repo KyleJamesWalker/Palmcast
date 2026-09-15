@@ -1,0 +1,13 @@
+/* The slide being left topples forward out of the frame. */
+@keyframes palmcast-out-fall {
+  from { transform: rotate(0) translateY(0); }
+  to { transform: rotate(14deg) translateY(120%); opacity: 0; }
+}
+
+html[data-transition="fall"] {
+  --transition-out: palmcast-out-fall;
+  --transition-in: palmcast-hold;
+  --transition-lift: 1;
+  --transition-drop: 0;
+  --transition-ease: cubic-bezier(.5, 0, .9, .4);
+}

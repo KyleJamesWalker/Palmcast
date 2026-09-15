@@ -1,0 +1,16 @@
+/* A wiper swings up from the bottom left corner, clearing the next slide into view. */
+@property --palmcast-wiper { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+
+@keyframes palmcast-in-wiper {
+  from { --palmcast-wiper: 0deg; }
+  to { --palmcast-wiper: 180deg; }
+}
+
+html[data-transition="wiper"] {
+  --transition-out: palmcast-hold;
+  --transition-in: palmcast-in-wiper;
+}
+
+html[data-transition="wiper"]::view-transition-new(palmcast-surface) {
+  mask-image: conic-gradient(from 270deg at 0% 100%, #000 var(--palmcast-wiper), #0000 0);
+}

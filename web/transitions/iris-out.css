@@ -1,0 +1,12 @@
+/* The last slide closes to a point in the middle of the screen. */
+@keyframes palmcast-out-iris-out {
+  from { clip-path: circle(75% at 50% 50%); }
+  to { clip-path: circle(0% at 50% 50%); }
+}
+
+html[data-transition="iris-out"] {
+  --transition-out: palmcast-out-iris-out;
+  --transition-in: palmcast-hold;
+  --transition-lift: 1;
+  --transition-drop: 0;
+}

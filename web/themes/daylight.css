@@ -1,0 +1,14 @@
+/* For a room with the lights on, or a phone held in the sun. The accent is a
+   burnt orange rather than the amber, which disappears against white. */
+.viewer, .stage {
+  --ground: #fbfaf7;
+  --raised: #eeebe3;
+  --edge: #d3cec2;
+  --ink: #17161a;
+  --ink-dim: #5d5a53;
+  --accent: #b1500a;
+  --accent-ink: #fffaf3;
+  color-scheme: light;
+  background: var(--ground);
+  color: var(--ink);
+}

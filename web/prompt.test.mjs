@@ -129,3 +129,20 @@ test('the starter prompt shows what a topic looks like', () => {
   const prompt = starterPrompt();
   assert.match(prompt, /50 question quiz on opossum facts/);
 });
+
+test('the rules cover the two directives a deck may carry', () => {
+  assert.match(DECK_RULES, /<!-- theme:/, 'an agent cannot guess a deck can pick a theme');
+  assert.match(DECK_RULES, /<!-- transition:/, 'nor that it can pick a transition');
+  assert.match(DECK_RULES, /_transition/, 'nor that one slide can differ');
+});
+
+test('the rules name the themes every instance has', () => {
+  for (const theme of ['ember', 'daylight', 'bold', 'paper', 'neon']) {
+    assert.ok(DECK_RULES.includes(theme), `the rules never mention ${theme}`);
+  }
+});
+
+test('the rules still say a deck cannot carry a stylesheet of its own', () => {
+  assert.match(DECK_RULES, /Raw HTML is shown as text/);
+  assert.match(DECK_RULES, /cannot carry|names one|never carries/i);
+});

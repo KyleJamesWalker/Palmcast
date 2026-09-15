@@ -1,0 +1,12 @@
+/* Both slides travel left together, like film through a gate. */
+@keyframes palmcast-out-slide {
+  to { transform: translateX(-100%); }
+}
+@keyframes palmcast-in-slide {
+  from { transform: translateX(100%); }
+}
+
+html[data-transition="slide"] {
+  --transition-out: palmcast-out-slide;
+  --transition-in: palmcast-in-slide;
+}

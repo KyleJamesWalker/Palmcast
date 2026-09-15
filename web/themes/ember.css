@@ -1,0 +1,19 @@
+/* The look Palmcast ships with: dark ground, warm white text, one amber
+   accent. Built to be read at arm's length on a phone in a dim room without
+   lighting up the table.
+
+   It restates the whole palette rather than leaving the defaults alone,
+   because a deck that names `ember` may be following one that named something
+   else, and a theme has to be able to put everything back. */
+.viewer, .stage {
+  --ground: #0b0b0d;
+  --raised: #17171b;
+  --edge: #2a2a31;
+  --ink: #f4f1ea;
+  --ink-dim: #9a978f;
+  --accent: #f5a623;
+  --accent-ink: #1a1206;
+  color-scheme: dark;
+  background: var(--ground);
+  color: var(--ink);
+}

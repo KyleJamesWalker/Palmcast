@@ -1,0 +1,10 @@
+/* The next slide opens through a diamond in the middle of the screen. */
+@keyframes palmcast-in-diamond {
+  from { clip-path: polygon(50% 50%, 50% 50%, 50% 50%, 50% 50%); }
+  to { clip-path: polygon(50% -60%, 160% 50%, 50% 160%, -60% 50%); }
+}
+
+html[data-transition="diamond"] {
+  --transition-out: palmcast-hold;
+  --transition-in: palmcast-in-diamond;
+}

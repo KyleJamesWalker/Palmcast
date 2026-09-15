@@ -1,0 +1,15 @@
+/* The slides swing on a hinge at the bottom left corner. */
+@keyframes palmcast-out-pivot {
+  to { transform: rotate(52deg); opacity: 0; }
+}
+@keyframes palmcast-in-pivot {
+  from { transform: rotate(-52deg); opacity: 0; }
+}
+
+html[data-transition="pivot"] {
+  --transition-out: palmcast-out-pivot;
+  --transition-in: palmcast-in-pivot;
+}
+
+html[data-transition="pivot"]::view-transition-old(palmcast-surface),
+html[data-transition="pivot"]::view-transition-new(palmcast-surface) { transform-origin: 0 100%; }

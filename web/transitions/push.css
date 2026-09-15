@@ -1,0 +1,12 @@
+/* The next slide shoves the last one off to the left. */
+@keyframes palmcast-out-push {
+  to { transform: translateX(-32%); opacity: 0; }
+}
+@keyframes palmcast-in-push {
+  from { transform: translateX(100%); }
+}
+
+html[data-transition="push"] {
+  --transition-out: palmcast-out-push;
+  --transition-in: palmcast-in-push;
+}

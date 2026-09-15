@@ -1,0 +1,7 @@
+/* The slide being left fades away, uncovering the next one. */
+html[data-transition="fade-out"] {
+  --transition-out: palmcast-out-fade;
+  --transition-in: palmcast-hold;
+  --transition-lift: 1;
+  --transition-drop: 0;
+}

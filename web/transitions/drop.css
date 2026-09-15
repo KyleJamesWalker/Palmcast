@@ -1,0 +1,12 @@
+/* The next slide falls in from above and settles. */
+@keyframes palmcast-in-drop {
+  from { transform: translateY(-110%); }
+  60% { transform: translateY(2.5%); }
+  to { transform: translateY(0); }
+}
+
+html[data-transition="drop"] {
+  --transition-out: palmcast-hold;
+  --transition-in: palmcast-in-drop;
+  --transition-ease: cubic-bezier(.3, .8, .4, 1);
+}

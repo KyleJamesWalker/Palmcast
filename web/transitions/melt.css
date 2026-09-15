@@ -1,0 +1,13 @@
+/* The last slide runs down the screen and blurs away. */
+@keyframes palmcast-out-melt {
+  from { transform: translateY(0) scaleY(1); filter: blur(0); }
+  to { transform: translateY(34%) scaleY(1.5); filter: blur(10px); opacity: 0; }
+}
+
+html[data-transition="melt"] {
+  --transition-out: palmcast-out-melt;
+  --transition-in: palmcast-hold;
+  --transition-lift: 1;
+  --transition-drop: 0;
+  --transition-ease: cubic-bezier(.7, 0, .8, .3);
+}

@@ -477,3 +477,172 @@ input.url:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* A staged list item, before the room has been walked to it. Marked so an
    author reading a preview can see what is staged, and the room never can. */
 .preview-card .step { opacity: .55; }
+
+/* Slide transitions.
+
+   The reading surface is captured and swapped, not the whole page: the phone's
+   footer and the Room panel have nothing to do with the slide and should not
+   travel with it. `.viewer` and `.stage` are that surface, one per view, which
+   is the same pair a theme paints.
+
+   A deck names a transition; the stylesheet for that name sets the two
+   variables below. A name nothing installed leaves them unset, which resolves
+   to `none` and snaps, so an unknown name costs a deck nothing. */
+/* The surface paints its own ground rather than letting the body's show
+   through. Every transition puts one slide over the other, so a surface the
+   page shows through is two slides of text at once. A theme repaints this;
+   nothing may leave it transparent. */
+.viewer, .stage {
+  view-transition-name: palmcast-surface;
+  background: var(--ground);
+}
+::view-transition-group(palmcast-surface) { overflow: clip; }
+
+/* Everything that is not the reading surface — the footer, the status pill,
+   the reaction bar — swaps at once. Left alone the browser cross fades it on
+   its own 250ms default, which the deck never asked for and which fights any
+   transition that slides the surface past it. */
+::view-transition-old(root) { animation: none; opacity: 0; }
+::view-transition-new(root) { animation: none; opacity: 1; }
+
+::view-transition-old(palmcast-surface),
+::view-transition-new(palmcast-surface) {
+  animation-duration: var(--transition-duration, .5s);
+  animation-timing-function: var(--transition-ease, ease);
+  animation-fill-mode: both;
+}
+::view-transition-old(palmcast-surface) { animation-name: var(--transition-out, none); }
+::view-transition-new(palmcast-surface) { animation-name: var(--transition-in, none); }
+
+/* Stepping back over a boundary runs the same pair the other way round, so no
+   transition has to carry a second set of keyframes for going backwards. */
+html[data-back]::view-transition-old(palmcast-surface) {
+  animation-name: var(--transition-in, none);
+  animation-direction: reverse;
+}
+html[data-back]::view-transition-new(palmcast-surface) {
+  animation-name: var(--transition-out, none);
+  animation-direction: reverse;
+}
+
+/* Which slide is painted in front. Going forward the incoming one is, unless
+   the transition lifts the outgoing one instead, as anything that uncovers the
+   next slide has to. Going back the pair swaps, so the slide being left stays
+   in front of the one underneath it and a transition needs no second opinion
+   about direction. */
+::view-transition-old(palmcast-surface) { z-index: var(--transition-lift, 0); }
+::view-transition-new(palmcast-surface) { z-index: var(--transition-drop, 1); }
+html[data-back]::view-transition-old(palmcast-surface) { z-index: var(--transition-drop, 1); }
+html[data-back]::view-transition-new(palmcast-surface) { z-index: var(--transition-lift, 0); }
+
+/* For a transition where one side holds still while the other moves. Naming it
+   is not the same as leaving the side unset: unset keeps the browser's own
+   cross fade, and this keeps the slide exactly as it is. */
+@keyframes palmcast-hold { from, to { opacity: 1; } }
+@keyframes palmcast-out-fade { to { opacity: 0; } }
+@keyframes palmcast-in-fade { from { opacity: 0; } }
+
+/* Someone whose phone asks for less motion gets a cross fade, whatever the
+   deck named. The room still stays together; the animation just stops being
+   something that moves across the screen. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(palmcast-surface),
+  html[data-back]::view-transition-old(palmcast-surface) {
+    animation-name: palmcast-out-fade;
+    animation-direction: normal;
+  }
+  ::view-transition-new(palmcast-surface),
+  html[data-back]::view-transition-new(palmcast-surface) {
+    animation-name: palmcast-in-fade;
+    animation-direction: normal;
+  }
+}
+
+/* The two pickers above the deck editor, and the small surface that shows what
+   they do. The demo carries `viewer` because that is exactly what it is: the
+   same reading surface the room gets, at the size of a thumbnail, so a theme
+   paints it and a transition moves it without either knowing about it. */
+.looks { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.look-field { display: flex; align-items: center; gap: 6px; flex: 1 1 210px; min-width: 0; }
+.look-label { flex: 0 0 auto; font-size: 13px; color: var(--ink-dim); }
+.pick {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  padding: 0 10px;
+}
+.pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.look-demo {
+  height: 128px;
+  margin-bottom: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+.look-demo .slide { width: 100%; font-size: 17px; }
+.look-demo .slide h2 { font-size: 1.2em; margin: 0 0 .3em; }
+.look-demo .slide p { margin: 0; }
+.look-scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 44px;
+  font-size: 13px;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.look-scope input { width: 18px; height: 18px; accent-color: var(--accent); }
+
+/* Tapping it runs the transition again, which is the only way to compare two
+   of them without picking each one twice. */
+.look-demo { cursor: pointer; }
+
+/* The way into the room, on every screen at once. The presenter puts it up for
+   somebody who walked in late, so it covers the slide rather than sitting
+   beside it: the point is that the whole room is looking at the same thing. */
+.qr-overlay {
+  position: fixed;
+  inset: 0;
+  /* Over the slide and the reactions, under the notice that the room is over. */
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3vmin;
+  padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+  background: var(--ground);
+  text-align: center;
+}
+.qr-overlay h2 { margin: 0; font-size: clamp(20px, 3.4vw, 48px); }
+/* The code carries its own white, because a dark one does not scan. */
+.qr-overlay img {
+  width: min(58vmin, 460px);
+  height: auto;
+  padding: 2.4vmin;
+  border-radius: 12px;
+  background: #fff;
+}
+.qr-url {
+  margin: 0;
+  font-size: clamp(14px, 2.2vw, 28px);
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+
+/* The same code, small, in the Room panel. Somebody who missed the code going
+   up can hand their neighbour a phone instead of asking the presenter. */
+.qr-join { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.qr-join img { width: 112px; height: auto; padding: 8px; border-radius: 10px; background: #fff; }
+.qr-join .url { margin: 0; font-size: 13px; overflow-wrap: anywhere; }

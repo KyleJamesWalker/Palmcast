@@ -1,0 +1,11 @@
+/* The slide being left drops away and uncovers the next one. */
+@keyframes palmcast-out-reveal {
+  to { transform: translateY(100%); }
+}
+
+html[data-transition="reveal"] {
+  --transition-out: palmcast-out-reveal;
+  --transition-in: palmcast-hold;
+  --transition-lift: 1;
+  --transition-drop: 0;
+}
