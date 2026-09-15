@@ -125,6 +125,12 @@ pub enum ServerMsg {
         /// The talk whose owner drives, or None while the host does.
         talk: Option<u64>,
     },
+    /// Every screen in the room showing the way in, so somebody who arrived
+    /// late can join off the phone next to them. Everyone sees it, including
+    /// the stage screen, which is the one the whole room is already facing.
+    Qr {
+        on: bool,
+    },
     /// The presenter opening the answer to everyone.
     Reveal {
         slide: usize,
@@ -233,6 +239,10 @@ pub enum ClientMsg {
     },
     Reveal {
         slide: usize,
+    },
+    /// The presenter putting the way in on every screen, or taking it off.
+    Qr {
+        on: bool,
     },
     React {
         kind: Reaction,

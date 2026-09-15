@@ -105,6 +105,9 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
         ClientMsg::Goto { index, step } => {
             registry.with_mut(id, |s| s.goto(token, index, step));
         }
+        ClientMsg::Qr { on } => {
+            registry.with_mut(id, |s| s.show_qr(token, on));
+        }
         // The reveal also moves the board, and both leave under the one lock.
         ClientMsg::Reveal { slide } => {
             registry.with_mut(id, |s| s.reveal(token, slide));

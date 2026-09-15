@@ -150,6 +150,10 @@ pub struct Session {
     /// The talk whose owner drives. `None` means the host drives.
     pub baton: Option<u64>,
     pub submissions_open: bool,
+    /// Whether every screen is showing the way into the room. Deliberately not
+    /// persisted: a room coming back from a restart should come back on its
+    /// slides, not on a QR nobody is standing in front of any more.
+    pub qr_open: bool,
     /// Points from talks that have already come down.
     ///
     /// A score is derived from the votes so a late reveal or a correction can
@@ -383,6 +387,7 @@ impl Session {
             self.score_table(),
             self.lineup_msg(),
             self.baton_msg(),
+            ServerMsg::Qr { on: self.qr_open },
         ];
         out.extend(self.reveals());
         if is_staff {
@@ -403,6 +408,10 @@ impl Session {
         self.current = index;
         self.step = step.min(self.steps_at(index));
         self.touched = Instant::now();
+        // Moving the deck says the sharing is over. Without this a presenter
+        // who flips the room to a QR and carries on talking leaves the room
+        // reading a QR code instead of the slides.
+        self.close_qr();
         self.mark();
         let msg = ServerMsg::Move {
             current: index,
@@ -410,6 +419,32 @@ impl Session {
         };
         self.emit(&msg);
         Some(msg)
+    }
+
+    /// Puts the way into the room on every screen, or takes it off.
+    ///
+    /// Whoever drives, which is the host or a speaker holding the controls:
+    /// the person standing in front of the room is the one who knows somebody
+    /// just walked in.
+    pub fn show_qr(&mut self, token: &str, on: bool) -> Option<ServerMsg> {
+        if !self.role_of(token).drives() || self.qr_open == on {
+            return None;
+        }
+        self.qr_open = on;
+        self.touched = Instant::now();
+        let msg = ServerMsg::Qr { on };
+        self.emit(&msg);
+        Some(msg)
+    }
+
+    /// Takes the QR down if it was up, telling the room. Silent when it was
+    /// already down, so an ordinary slide change costs no frame.
+    fn close_qr(&mut self) {
+        if !self.qr_open {
+            return;
+        }
+        self.qr_open = false;
+        self.emit(&ServerMsg::Qr { on: false });
     }
 
     pub fn replace_deck(
@@ -1173,6 +1208,7 @@ impl Registry {
                 parked: None,
                 baton: None,
                 submissions_open: false,
+                qr_open: false,
                 banked: HashMap::new(),
                 timeline: Vec::new(),
                 opened: SystemTime::now(),
@@ -1418,6 +1454,9 @@ impl Registry {
                     }),
                     baton: item.baton,
                     submissions_open: item.submissions_open,
+                    // Never restored: a room coming back should come back on
+                    // its slides.
+                    qr_open: false,
                     banked: item.banked,
                     timeline: item
                         .timeline
@@ -2752,6 +2791,86 @@ mod tests {
             theme.as_deref(),
             Some("neon"),
             "the talk's theme did not reach the room"
+        );
+    }
+
+    fn qr_state(msgs: &[ServerMsg]) -> Option<bool> {
+        msgs.iter().find_map(|m| match m {
+            ServerMsg::Qr { on } => Some(*on),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn the_presenter_can_put_a_qr_on_every_screen() {
+        let (reg, id, mc) = open_room();
+        assert!(
+            reg.with_mut(&id, |s| s.show_qr(&mc, true))
+                .flatten()
+                .is_some()
+        );
+        assert_eq!(
+            reg.with(&id, |s| qr_state(&s.catch_up(false))).unwrap(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn a_phone_joining_is_always_told_whether_the_qr_is_up() {
+        let (reg, id, mc) = open_room();
+        assert_eq!(
+            reg.with(&id, |s| qr_state(&s.catch_up(false))).unwrap(),
+            Some(false),
+            "a fresh socket was left to guess"
+        );
+        reg.with_mut(&id, |s| s.show_qr(&mc, true));
+        reg.with_mut(&id, |s| s.show_qr(&mc, false));
+        assert_eq!(
+            reg.with(&id, |s| qr_state(&s.catch_up(false))).unwrap(),
+            Some(false),
+            "a socket that lagged through the flip would stay stuck on it"
+        );
+    }
+
+    #[test]
+    fn the_room_cannot_put_a_qr_on_its_own_screens() {
+        let (reg, id, _) = open_room();
+        assert!(
+            reg.with_mut(&id, |s| s.show_qr("not-the-token", true))
+                .flatten()
+                .is_none()
+        );
+        assert_eq!(
+            reg.with(&id, |s| qr_state(&s.catch_up(false))).unwrap(),
+            Some(false)
+        );
+    }
+
+    /// A presenter who flips the room to a QR and then carries on talking has
+    /// left the room looking at a QR instead of the slides. Moving the deck is
+    /// unambiguous about being done with it.
+    #[test]
+    fn moving_the_deck_takes_the_qr_back_down() {
+        let (reg, id, mc) = open_room();
+        reg.with_mut(&id, |s| s.show_qr(&mc, true));
+        reg.with_mut(&id, |s| s.goto(&mc, 1, 0));
+        assert_eq!(
+            reg.with(&id, |s| qr_state(&s.catch_up(false))).unwrap(),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn a_speaker_driving_their_own_talk_can_share_the_room() {
+        let (reg, id, _) = open_room();
+        let (talk, speaker) = submit(&reg, &id, "ada", "# Ada\n\n---\n\n# Two");
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)));
+        reg.with_mut(&id, |s| s.hand(Role::Mc, Some(talk)));
+        assert!(
+            reg.with_mut(&id, |s| s.show_qr(&speaker, true))
+                .flatten()
+                .is_some(),
+            "the person in front of the room could not share it"
         );
     }
 }
