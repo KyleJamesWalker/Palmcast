@@ -103,6 +103,17 @@ test('the preview card reacts to the knobs on the line, not just the look', asyn
   await caretAfter(area, 'heading=#ff8800 -->');
   expect(await knob()).toEqual({ heading: '#ff8800', accent: '#ffb020' });
 
+  // And the card actually shows both: the heading paints the title, the accent
+  // the edge of the quote. A card showing only a title could show neither.
+  const shown = await demo.evaluate((el) => ({
+    title: getComputedStyle(el.querySelector('h2')).color,
+    edge: getComputedStyle(el.querySelector('blockquote')).borderLeftColor,
+    fits: el.scrollHeight <= el.clientHeight,
+  }));
+  expect(shown.edge).toBe('rgb(255, 176, 32)');
+  expect(shown.title).not.toBe('rgb(255, 176, 32)');
+  expect(shown.fits).toBe(true);
+
   // Taking one away puts the look's own value back, because the knob is
   // removed from the element and the stylesheet's own declaration shows again.
   await area.fill('<!-- theme: neon accent=#ffb020 -->\n\n# One');

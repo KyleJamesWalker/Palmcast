@@ -672,6 +672,7 @@ html[data-back]::view-transition-new(palmcast-surface) { z-index: var(--transiti
 .look-demo .slide { width: 100%; font-size: 17px; }
 .look-demo .slide h2 { font-size: 1.2em; margin: 0 0 .3em; }
 .look-demo .slide p { margin: 0; }
+.look-demo .slide blockquote { margin: .4em 0 0; font-size: .82em; }
 .look-scope {
   display: flex;
   align-items: center;

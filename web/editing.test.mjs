@@ -401,19 +401,28 @@ test('a directive the server would refuse is in force of nothing here either', (
 });
 
 test('readLook mirrors the value grammar the server reads', () => {
-  assert.deepEqual(readLook('neon'), { name: 'neon', knobs: {} });
+  assert.deepEqual(readLook('neon'), { name: 'neon', duration: null, knobs: {} });
   assert.deepEqual(readLook('neon heading=#ff8800'), {
     name: 'neon',
+    duration: null,
     knobs: { heading: '#ff8800' },
   });
   // Presets are words, and so are values a stylesheet reads rather than paints.
   assert.deepEqual(readLook('neon style=space-station'), {
     name: 'neon',
+    duration: null,
     knobs: { style: 'space-station' },
   });
 
-  // A duration only where one is allowed, and only before the knobs.
-  assert.deepEqual(readLook('cover 1s', true), { name: 'cover', knobs: {} });
+  // A duration only where one is allowed, and only before the knobs. It comes
+  // back in milliseconds, which is what the view transition wants.
+  assert.deepEqual(readLook('cover 1s', true), { name: 'cover', duration: 1000, knobs: {} });
+  assert.deepEqual(readLook('cover 250ms', true), { name: 'cover', duration: 250, knobs: {} });
+  assert.deepEqual(readLook('cover 1.5s distance=40%', true), {
+    name: 'cover',
+    duration: 1500,
+    knobs: { distance: '40%' },
+  });
   assert.equal(readLook('neon 1s'), null, 'a theme took a duration');
   assert.equal(readLook('cover 90s', true), null, 'a minute and a half was allowed');
 

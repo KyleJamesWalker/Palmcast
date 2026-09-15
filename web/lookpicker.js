@@ -17,9 +17,12 @@ import {
 
 /// Two slides for the demo to move between. Short enough to read at a glance
 /// while something is animating them.
+// A blockquote as well as a heading, because a look's accent paints the edge of
+// one and its heading paints the other. A card showing only a heading could not
+// show half of what a look lets you change.
 const FACES = [
-  '<h2>One</h2><p>A slide, and the one after it.</p>',
-  '<h2>Two</h2><p>That is the transition you picked.</p>',
+  '<h2>One</h2><p>A slide, and the one after it.</p><blockquote>The accent runs down this edge.</blockquote>',
+  '<h2>Two</h2><p>That is the transition you picked.</p><blockquote>And the heading is up there.</blockquote>',
 ];
 
 function fill(select, looks, kind) {
@@ -58,8 +61,10 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
     els.demo.hidden = false;
   };
 
-  /// Whatever the transition in force was asked to change, for the next run.
+  /// What the transition in force was asked to change, and how long it should
+  /// take, held for the next run of the demo.
   let turned = null;
+  let timed = null;
 
   /// Runs a transition on the demo, forwards, alternating which slide arrives.
   const play = async (name) => {
@@ -68,7 +73,12 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
     await ensure(name);
     const step = demoFaces(face);
     face = step.to;
-    swap(() => paint(step.to), { name, back: step.back, knobs: turned ?? undefined });
+    swap(() => paint(step.to), {
+      name,
+      back: step.back,
+      duration: timed ?? undefined,
+      knobs: turned ?? undefined,
+    });
   };
 
   // The caret is where the transition lands, and a select takes focus when it
@@ -153,6 +163,7 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
     const moved = held(here.transition?.name, looks.transitions);
     if (els.transition.value !== moved) els.transition.value = moved;
     turned = moved ? (here.transition?.knobs ?? null) : null;
+    timed = moved ? (here.transition?.duration ?? null) : null;
 
     // The box says what the line the caret is on actually does, so ticking it
     // and unticking it are both readable rather than a mode to remember.

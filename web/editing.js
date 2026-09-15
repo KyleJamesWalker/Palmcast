@@ -291,8 +291,12 @@ export function readLook(value, takesDuration = false) {
   if (!name || !NAME.test(name)) return null;
 
   // Positional, and only when it is not already a knob.
+  let duration = null;
   if (takesDuration && words.length && !words[0].includes('=')) {
-    if (!isDuration(words.shift())) return null;
+    const given = words.shift();
+    if (!isDuration(given)) return null;
+    const ms = MS.exec(given);
+    duration = ms ? Number(ms[1]) : Math.round(Number(SECONDS.exec(given)[1]) * 1000);
   }
 
   const knobs = {};
@@ -304,7 +308,7 @@ export function readLook(value, takesDuration = false) {
     if (!NAME.test(key) || !held || !isKnobValue(held)) return null;
     knobs[key] = held;
   }
-  return { name, knobs };
+  return { name, duration, knobs };
 }
 
 /// The directive the caret's own line is, or null when the line is prose.
