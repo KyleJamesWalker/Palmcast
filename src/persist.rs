@@ -58,6 +58,12 @@ pub struct PersistedSession {
     pub parked: Option<String>,
     #[serde(default)]
     pub parked_current: usize,
+    /// The parked deck's quiz state, so a restart mid-talk does not hand the
+    /// host deck back as if its questions had never been asked.
+    #[serde(default)]
+    pub parked_votes: HashMap<usize, HashMap<String, Choice>>,
+    #[serde(default)]
+    pub parked_revealed: HashSet<usize>,
     /// Points from talks that have already come down. Derived scores cannot
     /// survive the deck they were derived from, so they are banked.
     #[serde(default)]
