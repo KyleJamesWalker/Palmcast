@@ -96,3 +96,45 @@ test('a finished directive stops offering, and prose never starts', async ({ pag
   await area.type('# Why we moved off ');
   await expect(page.locator('.complete')).toBeHidden();
 });
+
+test('clicking into a finished directive replaces the word, not grows it', async ({ page }) => {
+  const area = await editor(page);
+  await area.fill('<!-- theme: neon -->');
+
+  // The caret put between the "ne" and the "on", the way a click lands.
+  await area.evaluate((el: HTMLTextAreaElement) => {
+    el.focus();
+    el.setSelectionRange(14, 14);
+    el.dispatchEvent(new Event('click', { bubbles: true }));
+  });
+
+  await expect(page.locator('.complete')).toBeVisible();
+  await expect(rows(page)).toHaveText(['neon']);
+  await page.keyboard.press('Enter');
+
+  // Not "neonon", which is what replacing only the typed half would give.
+  await expect(area).toHaveValue('<!-- theme: neon -->');
+});
+
+test('a look can be changed from the middle of the one already there', async ({ page }) => {
+  const area = await editor(page);
+  await area.fill('<!-- transition: fade 1s -->');
+
+  // Caret at the start of "fade", so nothing is typed to filter on and the
+  // whole list is offered. Landing inside the word would narrow it to the word
+  // itself, which replaces fade with fade and proves nothing.
+  await area.evaluate((el: HTMLTextAreaElement) => {
+    el.focus();
+    const at = el.value.indexOf('fade');
+    el.setSelectionRange(at, at);
+    el.dispatchEvent(new Event('click', { bubbles: true }));
+  });
+
+  await expect(page.locator('.complete')).toBeVisible();
+  await page.keyboard.press('Enter');
+
+  // The whole look is replaced and the duration beside it is untouched.
+  const after = await area.inputValue();
+  expect(after).toMatch(/^<!-- transition: \S+ 1s -->$/);
+  expect(after).not.toContain('fade');
+});

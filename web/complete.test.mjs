@@ -50,11 +50,56 @@ test('the grammar runs out after a name and a duration', () => {
   assert.equal(at('<!-- transition: cover 1s |'), null);
 });
 
+/// Taking the first suggestion, so a test reads as what the author would see.
+const take = (marked, looks = LOOKS) => {
+  const start = marked.indexOf('|');
+  const text = marked.replace('|', '');
+  const found = completionsAt({ text, start }, looks);
+  if (!found) return null;
+  const chosen = found.items[0].value;
+  return text.slice(0, found.from) + chosen + text.slice(found.to);
+};
+
 test('the range covers what was already typed, and nothing else', () => {
   const found = at('<!-- theme: ne|');
   assert.deepEqual(names(found), ['neon']);
   assert.equal(found.query, 'ne');
   assert.equal(found.to - found.from, 2, 'accepting would not have replaced the partial word');
+});
+
+test('a suggestion taken mid word replaces the word rather than growing it', () => {
+  // The caret lands in the middle of a word when somebody clicks into a line
+  // they already finished, which is the common way to change one's mind.
+  assert.equal(take('<!-- theme: ne|on -->'), '<!-- theme: neon -->');
+  assert.equal(take('<!-- the|me: neon -->'), '<!-- theme: neon -->');
+  assert.equal(take('<!-- transition: co|ver 1s -->'), '<!-- transition: cover 1s -->');
+});
+
+test('a suggestion taken before a finished word replaces that word', () => {
+  assert.equal(take('<!-- |theme: neon -->'), '<!-- theme: neon -->');
+  assert.equal(take('<!-- theme: |neon -->'), '<!-- theme: ember -->');
+});
+
+test('the closing marks are never eaten, even with no space before them', () => {
+  assert.equal(take('<!-- theme: ne|on-->'), '<!-- theme: neon-->');
+  assert.equal(take('<!-- theme: |neon-->'), '<!-- theme: ember-->');
+});
+
+test('a duration is replaced whole, and the look beside it is left alone', () => {
+  // Nothing typed before the caret, so the whole list is offered and the first
+  // of it replaces the duration already there.
+  assert.equal(take('<!-- transition: cover |1s -->'), '<!-- transition: cover 300ms -->');
+  // With the caret inside it, `1` narrows the list to 1s, and the range still
+  // covers the whole of what was there rather than half of it.
+  const found = at('<!-- transition: cover 1|s -->');
+  assert.deepEqual(names(found), ['1s']);
+  assert.equal(take('<!-- transition: cover 1|s -->'), '<!-- transition: cover 1s -->');
+});
+
+test('typing at the end of a word still replaces only what was typed', () => {
+  // Nothing ahead of the caret, so this is the case that was already right.
+  assert.equal(take('<!-- theme: ne|'), '<!-- theme: neon');
+  assert.equal(take('<!-- theme: neon| -->'), '<!-- theme: neon -->');
 });
 
 test('prose is not a directive', () => {
@@ -87,7 +132,16 @@ test('a server answering bare names instead of objects still works', () => {
   assert.equal(found.items[0].about, '');
 });
 
-test('directiveAt finds the opening and what has been typed since', () => {
-  assert.deepEqual(directiveAt('<!-- theme: ne', 14), { open: 0, inner: ' theme: ne' });
+test('directiveAt finds the opening, what precedes the caret, and what follows', () => {
+  assert.deepEqual(directiveAt('<!-- theme: ne', 14), {
+    open: 0,
+    inner: ' theme: ne',
+    after: '',
+  });
+  assert.deepEqual(directiveAt('<!-- theme: neon -->', 14), {
+    open: 0,
+    inner: ' theme: ne',
+    after: 'on ',
+  });
   assert.equal(directiveAt('nothing here', 5), null);
 });

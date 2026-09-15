@@ -35,7 +35,13 @@ export function directiveAt(text, caret) {
   // A comment already closed before the caret is one the caret is past.
   const closed = text.indexOf('-->', open);
   if (closed !== -1 && closed + 3 <= caret) return null;
-  return { open, inner: text.slice(open + 4, caret) };
+  let lineEnd = text.indexOf('\n', caret);
+  if (lineEnd === -1) lineEnd = text.length;
+  // What follows the caret, up to the closing marks. A suggestion taken with
+  // the caret inside a word replaces the whole word, so `after` is how much of
+  // it is still ahead.
+  const stop = closed === -1 ? lineEnd : Math.min(closed, lineEnd);
+  return { open, inner: text.slice(open + 4, caret), after: text.slice(caret, stop) };
 }
 
 /// Prefix matches first, then anything else holding the query. Forty
@@ -68,7 +74,9 @@ export function completionsAt(doc, looks = { themes: [], transitions: [] }) {
     const word = inner.match(/^\s*([a-z_]*)$/i);
     if (!word) return null;
     const query = word[1];
-    return slot('name', start, query, rank(DIRECTIVES, query));
+    // A directive name is letters and underscores, and stops at its own colon.
+    const ahead = found.after.match(/^[a-z_]*/i)[0];
+    return slot('name', start, query, ahead, rank(DIRECTIVES, query));
   }
 
   const name = inner.slice(0, colon).trim();
@@ -81,17 +89,23 @@ export function completionsAt(doc, looks = { themes: [], transitions: [] }) {
   const done = rest.slice(0, rest.length - query.length).trim();
   const words = done ? done.split(/\s+/).length : 0;
 
-  if (words === 0) return slot('value', start, query, rank(pool, query));
+  // A value and a duration are both single words, and `after` already stops at
+  // the closing marks, so the rest of the word is whatever is not a space.
+  const ahead = found.after.match(/^\S*/)[0];
+  if (words === 0) return slot('value', start, query, ahead, rank(pool, query));
   if (words === 1 && TAKES_DURATION.has(name)) {
-    return slot('param', start, query, rank(DURATIONS, query));
+    return slot('param', start, query, ahead, rank(DURATIONS, query));
   }
   // The grammar takes a name and at most one duration. Past that there is
   // nothing left to offer, and offering anyway would be a guess.
   return null;
 }
 
-function slot(kind, caret, query, items) {
-  return { kind, query, from: caret - query.length, to: caret, items };
+/// `query` is what was typed before the caret, which is what the list filters
+/// on. The range covers that and the rest of the word as well, so taking a
+/// suggestion from the middle of one replaces it rather than growing it.
+function slot(kind, caret, query, ahead, items) {
+  return { kind, query, from: caret - query.length, to: caret + ahead.length, items };
 }
 
 /// The looks a directive may name, or null when the name is not one we know.
