@@ -4,14 +4,28 @@
 // The list comes from the server rather than from a list held here, so a theme
 // the operator dropped in a directory turns up in the picker without a rebuild.
 
-import { setTheme, setTransition, themeIn } from '/editing.js';
-import { applyTheme, demoFaces, ensure, installedLooks, optionsFor, swap } from '/looks.js';
+import { directiveLineAt, looksAt, setTheme, setTransition } from '/editing.js';
+import {
+  applyLookKnobs,
+  applyTheme,
+  demoFaces,
+  ensure,
+  installedLooks,
+  optionsFor,
+  swap,
+} from '/looks.js';
 
 /// Two slides for the demo to move between. Short enough to read at a glance
 /// while something is animating them.
+// A blockquote as well as a heading, because a look's accent paints the edge of
+// one and its heading paints the other. A card showing only a heading could not
+// show half of what a look lets you change.
+// An h1, because that is where a look puts its heading colour at full
+// strength. An h2 is mixed toward the page in most looks, which washes out the
+// one thing somebody is comparing.
 const FACES = [
-  '<h2>One</h2><p>A slide, and the one after it.</p>',
-  '<h2>Two</h2><p>That is the transition you picked.</p>',
+  '<h1>One</h1><p>A slide, and the one after it.</p><blockquote>The accent runs down this edge.</blockquote>',
+  '<h1>Two</h1><p>That is the transition you picked.</p><blockquote>And the heading is up there.</blockquote>',
 ];
 
 function fill(select, looks, kind) {
@@ -50,6 +64,11 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
     els.demo.hidden = false;
   };
 
+  /// What the transition in force was asked to change, and how long it should
+  /// take, held for the next run of the demo.
+  let turned = null;
+  let timed = null;
+
   /// Runs a transition on the demo, forwards, alternating which slide arrives.
   const play = async (name) => {
     if (!name) return;
@@ -57,7 +76,12 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
     await ensure(name);
     const step = demoFaces(face);
     face = step.to;
-    swap(() => paint(step.to), { name, back: step.back });
+    swap(() => paint(step.to), {
+      name,
+      back: step.back,
+      duration: timed ?? undefined,
+      knobs: turned ?? undefined,
+    });
   };
 
   // The caret is where the transition lands, and a select takes focus when it
@@ -118,20 +142,75 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
     }
   });
 
-  /// Keeps the theme picker showing what the deck actually says, including
-  /// after an edit the author typed by hand.
-  const sync = () => {
-    // A slide scoped look is not the deck's, so reading the deck wide one here
-    // would snap the picker back the moment a scoped pick was made.
-    if (els.scope.checked) return;
-    const named = themeIn(area.value) ?? '';
-    if (els.theme.value !== named) {
-      els.theme.value = looks.themes.some((l) => l.name === named) ? named : '';
-      applyTheme(els.theme.value);
+  /// Keeps both pickers, the reach and the preview showing what is in force
+  /// where the caret is, rather than what the deck opens with.
+  ///
+  /// A deck sets a look once and then writes slides under it, so the caret is
+  /// almost never on the line that decided the look it is sitting in. Reading
+  /// the deck wide directive alone told an author about a slide they were not
+  /// looking at.
+  const follow = (text = area.value, caret = area.selectionStart) => {
+    const here = looksAt(text, caret);
+    const held = (name, list) => (list.some((l) => l.name === name) ? name : '');
+
+    const theme = held(here.theme?.name, looks.themes);
+    if (els.theme.value !== theme) {
+      els.theme.value = theme;
+      applyTheme(theme);
     }
+    // The knobs as well as the name, or the preview shows a look the deck is
+    // not asking for. Set on the demo itself, which is the `.viewer` the theme
+    // paints, so they land where the stylesheet reads them.
+    applyLookKnobs(theme ? here.theme?.knobs : null, els.demo);
+
+    const moved = held(here.transition?.name, looks.transitions);
+    if (els.transition.value !== moved) els.transition.value = moved;
+    turned = moved ? (here.transition?.knobs ?? null) : null;
+    timed = moved ? (here.transition?.duration ?? null) : null;
+
+    // The box says what the line the caret is on actually does, so ticking it
+    // and unticking it are both readable rather than a mode to remember.
+    const named = here.theme ?? here.transition;
+    if (named) els.scope.checked = named.scoped;
+
+    // Shown when the caret is standing on a directive: that is the moment an
+    // author is asking what it looks like.
+    if (directiveLineAt(text, caret)) show();
   };
-  area.addEventListener('input', sync);
-  sync();
+
+  // While a suggestion is being looked at, the card is showing text that is
+  // not in the editor yet. An arrow key moves the list rather than the caret,
+  // so re-reading the editor on its keyup would undo the look just shown.
+  let peeking = false;
+
+  area.addEventListener('input', () => follow());
+  area.addEventListener('click', () => follow());
+  area.addEventListener('keyup', (event) => {
+    if (!peeking && MOVES.has(event.key)) follow();
+  });
+  follow();
+
+  /// Shows what the deck would look like if some text were in it, so moving
+  /// through a list of colours repaints the card on the way past rather than
+  /// only once something has been chosen. Null goes back to what is really
+  /// there.
+  looks.preview = (text, caret) => {
+    peeking = text !== null;
+    return peeking ? follow(text, caret) : follow();
+  };
 
   return looks;
 }
+
+/// Keys that move the caret without changing anything, which still change what
+/// the pickers should be showing.
+const MOVES = new Set([
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+]);

@@ -109,7 +109,10 @@ lookPickers(editing, editor, {
   scopeField: document.getElementById('scope-field'),
   demo: document.getElementById('look-demo'),
 }).then((looks) => {
-  completer = attachCompleter(editor, editing, looks);
+  completer = attachCompleter(editor, editing, looks, {
+    // Moving through a list of looks repaints the preview on the way past.
+    onPeek: looks.preview,
+  });
 });
 
 // A shared link beats whatever draft is in this browser, and then becomes the

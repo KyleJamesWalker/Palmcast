@@ -168,7 +168,14 @@ test('an unknown name is nobody\'s edit', () => {
   assert.equal(editFor('nonsense', doc('|')), null);
 });
 
-import { setTheme, setTransition, themeIn } from './editing.js';
+import {
+  directiveLineAt,
+  looksAt,
+  readLook,
+  setTheme,
+  setTransition,
+  themeIn,
+} from './editing.js';
 
 const at = (text, cursor) => ({ text, start: cursor, end: cursor });
 
@@ -297,4 +304,129 @@ test('switching the reach rewrites the directive rather than adding a second', (
   const edit = setTheme({ text, start: 2, end: 2 }, 'ember', false);
   const out = text.slice(0, edit.from) + edit.insert + text.slice(edit.to);
   assert.equal((out.match(/theme:/g) || []).length, 1, out);
+});
+
+const DECK = [
+  '<!-- theme: ember -->',
+  '<!-- transition: fade -->',
+  '',
+  '# One',
+  '',
+  '---',
+  '',
+  '<!-- _theme: neon -->',
+  '<!-- _transition: cover -->',
+  '',
+  '# Two',
+  '',
+  '---',
+  '',
+  '# Three',
+].join('\n');
+
+const inForce = (heading) => looksAt(DECK, DECK.indexOf(heading) + 2);
+
+test('the caret reads the deck wide theme and the transition carried to it', () => {
+  const here = inForce('# One');
+  assert.equal(here.theme.name, 'ember');
+  assert.equal(here.theme.scoped, false);
+  assert.equal(here.transition.name, 'fade');
+  assert.equal(here.transition.scoped, false);
+});
+
+test("a slide's own look beats both, and says it is its own", () => {
+  const here = inForce('# Two');
+  assert.equal(here.theme.name, 'neon');
+  assert.equal(here.theme.scoped, true);
+  assert.equal(here.transition.name, 'cover');
+  assert.equal(here.transition.scoped, true);
+});
+
+test('neither carries to the slide after the one that named it', () => {
+  const here = inForce('# Three');
+  assert.equal(here.theme.name, 'ember');
+  assert.equal(here.transition.name, 'fade');
+  assert.equal(here.theme.scoped, false);
+});
+
+test('a theme written late still reaches a slide above it, as it does on the server', () => {
+  const late = '# One\n\n---\n\n<!-- theme: paper -->\n# Two';
+  assert.equal(looksAt(late, 2).theme.name, 'paper');
+  // A transition written late does not, because it carries forward only.
+  const moved = '# One\n\n---\n\n<!-- transition: cover -->\n# Two';
+  assert.equal(looksAt(moved, 2).transition, null);
+});
+
+test('the knobs come back with the name, for whatever wants them', () => {
+  const deck = '<!-- theme: neon heading=#ff8800 -->\n# One';
+  assert.equal(looksAt(deck, deck.length).theme.value, 'neon heading=#ff8800');
+});
+
+test('a deck naming nothing is in force of nothing', () => {
+  const here = looksAt('# Just a talk', 4);
+  assert.equal(here.theme, null);
+  assert.equal(here.transition, null);
+});
+
+test('a directive inside a fence is code, not a directive', () => {
+  const fenced = '```\n<!-- theme: neon -->\n```\n\n# One';
+  assert.equal(looksAt(fenced, fenced.length).theme, null);
+  assert.equal(directiveLineAt(fenced, 6), null);
+});
+
+test('directiveLineAt says whether the caret is standing on one', () => {
+  assert.equal(directiveLineAt(DECK, 4).name, 'theme');
+  assert.equal(directiveLineAt(DECK, DECK.indexOf('# One') + 2), null);
+});
+
+test('the knobs on the line come back with the look in force', () => {
+  const deck = '<!-- theme: neon accent=#ffb020 heading=#ff8800 -->\n\n# One';
+  const here = looksAt(deck, deck.length);
+  assert.equal(here.theme.name, 'neon');
+  assert.deepEqual(here.theme.knobs, { accent: '#ffb020', heading: '#ff8800' });
+});
+
+test('a transition keeps its duration positional and its knobs after', () => {
+  const deck = '<!-- transition: cover 1s distance=40% -->\n\n# One';
+  const here = looksAt(deck, deck.length);
+  assert.equal(here.transition.name, 'cover');
+  assert.deepEqual(here.transition.knobs, { distance: '40%' });
+});
+
+test('a directive the server would refuse is in force of nothing here either', () => {
+  // A stray word refuses the whole directive, so the preview must not paint
+  // half of it.
+  assert.equal(looksAt('<!-- theme: neon rubbish -->\n# One', 40).theme, null);
+  assert.equal(looksAt('<!-- theme: neon x=url(evil) -->\n# One', 40).theme, null);
+});
+
+test('readLook mirrors the value grammar the server reads', () => {
+  assert.deepEqual(readLook('neon'), { name: 'neon', duration: null, knobs: {} });
+  assert.deepEqual(readLook('neon heading=#ff8800'), {
+    name: 'neon',
+    duration: null,
+    knobs: { heading: '#ff8800' },
+  });
+  // Presets are words, and so are values a stylesheet reads rather than paints.
+  assert.deepEqual(readLook('neon style=space-station'), {
+    name: 'neon',
+    duration: null,
+    knobs: { style: 'space-station' },
+  });
+
+  // A duration only where one is allowed, and only before the knobs. It comes
+  // back in milliseconds, which is what the view transition wants.
+  assert.deepEqual(readLook('cover 1s', true), { name: 'cover', duration: 1000, knobs: {} });
+  assert.deepEqual(readLook('cover 250ms', true), { name: 'cover', duration: 250, knobs: {} });
+  assert.deepEqual(readLook('cover 1.5s distance=40%', true), {
+    name: 'cover',
+    duration: 1500,
+    knobs: { distance: '40%' },
+  });
+  assert.equal(readLook('neon 1s'), null, 'a theme took a duration');
+  assert.equal(readLook('cover 90s', true), null, 'a minute and a half was allowed');
+
+  for (const bad of ['neon x=url(x)', 'neon x=var(--a)', 'neon x=', 'neon =v', 'neon x=#ff']) {
+    assert.equal(readLook(bad), null, `${bad} was read`);
+  }
 });

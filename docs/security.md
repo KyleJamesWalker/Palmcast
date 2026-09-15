@@ -27,7 +27,12 @@ every phone in the room renders it. The server therefore:
   allocate more than 128 MB whatever the header claims. A 48 megapixel phone
   photograph still fits. Two pictures decode at once across the instance, and a
   third is told the room is busy rather than queued behind them.
-- Takes a theme and a transition as a name and never as a stylesheet. A name is
+- Takes a theme and a transition as a name and never as a stylesheet. A deck may
+  also turn a knob a look declared, which is a value and still never a
+  stylesheet: a colour, a time, a number or a share, and nothing else. The value
+  reaches the page through `setProperty`, so it lands on one custom property and
+  cannot become a rule. That closed list is what stops a knob holding `url(...)`
+  and making every phone in the room fetch an address the deck chose. A name is
   lowercase letters, digits and dashes, at most 32 of them, which is checked
   where the deck is parsed and again where the browser asks for the file. A deck
   cannot reach a path, smuggle a quote into an attribute, or carry CSS of its

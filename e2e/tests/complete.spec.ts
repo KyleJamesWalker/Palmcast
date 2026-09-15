@@ -52,11 +52,38 @@ test('after the colon it offers the looks this instance actually serves', async 
 test('a transition offers a duration after its name, and a theme does not', async ({ page }) => {
   const area = await editor(page);
   await area.type('<!-- transition: fade ');
-  await expect(page.locator('.complete-hint')).toHaveText('How long it takes');
+  await expect(page.locator('.complete-hint')).toHaveText('How long it takes, or a knob');
   await expect(rows(page)).toHaveText(['300ms', '600ms', '1s', '2s']);
 
+  // A theme takes no duration, and ember declares no knobs, so there is
+  // nothing left for it to offer.
   await area.fill('');
+  await area.type('<!-- theme: ember ');
+  await expect(page.locator('.complete')).toBeHidden();
+});
+
+test('a look that declares knobs offers them, with what it currently uses', async ({ page }) => {
+  const area = await editor(page);
   await area.type('<!-- theme: neon ');
+
+  await expect(page.locator('.complete-hint')).toHaveText('What this look lets you change');
+  await expect(rows(page)).toHaveText(['style=']);
+
+  await area.type('st');
+  await expect(rows(page)).toHaveText(['style=']);
+  await page.keyboard.press('Enter');
+  await expect(area).toHaveValue('<!-- theme: neon style=');
+
+  // And then the moods it offers. A preset is its own value, so the name is
+  // all there is to read.
+  await expect(page.locator('.complete-hint')).toHaveText('Its own value, to start from');
+  await expect(rows(page)).toHaveText(['midnight', 'vegas', 'tampa', 'sunset', 'deep-space']);
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(area).toHaveValue('<!-- theme: neon style=vegas');
+
+  // The only knob it has is now turned, so there is nothing left to offer.
+  await area.type(' ');
   await expect(page.locator('.complete')).toBeHidden();
 });
 

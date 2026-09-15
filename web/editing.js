@@ -255,6 +255,149 @@ function directiveLines(text, name) {
   return found;
 }
 
+/// The shapes a look's name and a knob's value may take, mirrored from the
+/// server so the preview shows what the room will see. A value the server would
+/// refuse is one the preview must not paint with either.
+const NAME = /^[a-z0-9-]{1,32}$/;
+const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+const MS = /^(\d+)ms$/;
+const SECONDS = /^(\d+(?:\.\d+)?)s$/;
+const NUMBER = /^-?\d+(?:\.\d+)?$/;
+const SHARE = /^-?\d+(?:\.\d+)?%$/;
+
+function isDuration(word) {
+  if (MS.test(word)) return true;
+  const seconds = SECONDS.exec(word);
+  return Boolean(seconds) && Number(seconds[1]) <= 60;
+}
+
+function isKnobValue(word) {
+  return (
+    word.length <= 32 &&
+    (HEX.test(word) || isDuration(word) || NUMBER.test(word) || SHARE.test(word) || NAME.test(word))
+  );
+}
+
+/// A directive's value as the server reads it: a name, a duration where one is
+/// allowed, then `key=value` knobs. Null for anything the server would refuse,
+/// including a stray word, because it refuses the whole directive rather than
+/// applying the part it understood.
+export function readLook(value, takesDuration = false) {
+  const words = String(value ?? '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const name = words.shift();
+  if (!name || !NAME.test(name)) return null;
+
+  // Positional, and only when it is not already a knob.
+  let duration = null;
+  if (takesDuration && words.length && !words[0].includes('=')) {
+    const given = words.shift();
+    if (!isDuration(given)) return null;
+    const ms = MS.exec(given);
+    duration = ms ? Number(ms[1]) : Math.round(Number(SECONDS.exec(given)[1]) * 1000);
+  }
+
+  const knobs = {};
+  for (const word of words) {
+    const at = word.indexOf('=');
+    if (at === -1) return null;
+    const key = word.slice(0, at);
+    const held = word.slice(at + 1);
+    if (!NAME.test(key) || !held || !isKnobValue(held)) return null;
+    knobs[key] = held;
+  }
+  return { name, duration, knobs };
+}
+
+/// The directive the caret's own line is, or null when the line is prose.
+export function directiveLineAt(text, caret) {
+  const [from, to] = lineBounds(text, caret);
+  if (inFence(text, from + 1)) return null;
+  return directiveOn(text.slice(from, to));
+}
+
+/// Where each slide starts and ends, by the rule the server splits on: a lone
+/// `---` or `----` with a blank line above it, outside a code fence.
+function slideRanges(text) {
+  const lines = text.split('\n');
+  const ranges = [];
+  let start = 0;
+  let at = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const bar = lines[i].trimEnd();
+    const breaks =
+      (bar === '---' || bar === '----') &&
+      (i === 0 || lines[i - 1].trim() === '') &&
+      !inFence(text, at + 1);
+    if (breaks) {
+      ranges.push([start, at]);
+      start = at + lines[i].length + 1;
+    }
+    at += lines[i].length + 1;
+  }
+  ranges.push([start, text.length]);
+  return ranges;
+}
+
+/// Every directive on the lines between `from` and `to`, outside a fence.
+function directivesIn(text, from, to) {
+  const found = [];
+  let at = from;
+  for (const line of text.slice(from, to).split('\n')) {
+    const on = directiveOn(line);
+    if (on && !inFence(text, at + 1)) found.push(on);
+    at += line.length + 1;
+  }
+  return found;
+}
+
+/// The look in force where the caret is, by the same rules the server reads.
+///
+/// A theme is deck wide and the last one wins wherever it sits. A transition
+/// carries from the slide it is written on until another replaces it. A slide's
+/// own `_theme` or `_transition` beats either, for that slide alone.
+///
+/// This is what lets a picker show what the caret is standing in rather than
+/// what the deck opens with, which are usually not the same thing.
+export function looksAt(text, caret) {
+  const slides = slideRanges(text);
+  const index = Math.max(
+    0,
+    slides.findIndex(([from, to]) => caret >= from && caret <= to),
+  );
+
+  let theme = null;
+  let transition = null;
+
+  // Deck wide, from anywhere: the last one wins wherever it sits.
+  for (const on of directivesIn(text, 0, text.length)) {
+    const read = readLook(on.value);
+    if (on.name === 'theme' && read) theme = { ...read, value: on.value, scoped: false };
+  }
+  // Carried, from the top down to the slide the caret is in.
+  for (let i = 0; i <= index && i < slides.length; i += 1) {
+    for (const on of directivesIn(text, slides[i][0], slides[i][1])) {
+      const read = readLook(on.value, true);
+      if (on.name === 'transition' && read) transition = { ...read, value: on.value, scoped: false };
+    }
+  }
+  // And this slide's own, which beats both.
+  for (const on of directivesIn(text, slides[index][0], slides[index][1])) {
+    if (on.name === '_theme') {
+      const read = readLook(on.value);
+      if (read) theme = { ...read, value: on.value, scoped: true };
+    }
+    if (on.name === '_transition') {
+      const read = readLook(on.value, true);
+      if (read) transition = { ...read, value: on.value, scoped: true };
+    }
+  }
+
+  return { theme, transition };
+}
+
 /// The theme the deck already names, or null. The last one wins, as it does on
 /// the server, so that is the one a picker should be showing.
 export function themeIn(text) {

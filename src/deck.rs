@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use pulldown_cmark::{CowStr, Event, Options, Parser, Tag, html};
 use serde::Serialize;
 
@@ -19,7 +21,7 @@ pub struct Slide {
     /// A look for this slide alone, from `_theme`. `None` leaves the slide on
     /// whatever the deck asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub theme: Option<String>,
+    pub theme: Option<Look>,
 }
 
 /// A transition, as the deck named it. Whether the name is installed is the
@@ -30,6 +32,21 @@ pub struct Transition {
     /// Milliseconds. `None` leaves it to the transition's own stylesheet.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<u32>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub knobs: BTreeMap<String, String>,
+}
+
+/// A look a deck named, and whatever it asked to change about it.
+///
+/// A look declares a knob by defining `--knob-<name>` in its own stylesheet, so
+/// the names and the defaults live in the file rather than in a manifest beside
+/// it. A deck that names no knobs, or a look that declares none, behaves
+/// exactly as it did before there were any.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Look {
+    pub name: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub knobs: BTreeMap<String, String>,
 }
 
 /// A slide carrying a task list becomes a question. `- [x]` marks an answer.
@@ -95,7 +112,7 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
 ///
 /// Deck wide wherever it is written, and the last one wins. A slide that wants
 /// its own look says `_theme`, which is on the slide and never carries.
-pub fn theme_of(markdown: &str) -> Option<String> {
+pub fn theme_of(markdown: &str) -> Option<Look> {
     let mut found = None;
     let mut fence = Fence::default();
     for line in markdown.lines() {
@@ -103,19 +120,29 @@ pub fn theme_of(markdown: &str) -> Option<String> {
             continue;
         }
         if let Some(("theme", value)) = directive(line)
-            && let Some(name) = style_name(value)
+            && let Some(look) = look(value)
         {
-            found = Some(name);
+            found = Some(look);
         }
     }
     found
+}
+
+/// A look's name and the knobs a deck turned on it.
+fn look(value: &str) -> Option<Look> {
+    let mut words = value.split_whitespace();
+    let name = style_name(words.next()?)?;
+    Some(Look {
+        name,
+        knobs: knobs(words)?,
+    })
 }
 
 #[derive(Default)]
 struct Directives {
     transition: Option<Transition>,
     spot: Option<Transition>,
-    spot_theme: Option<String>,
+    spot_theme: Option<Look>,
 }
 
 /// Lifts the directive lines out of a slide and reads them.
@@ -136,7 +163,7 @@ fn split_directives(raw: &str) -> (String, Directives) {
         match directive(line) {
             Some(("transition", value)) => asked.transition = transition(value),
             Some(("_transition", value)) => asked.spot = transition(value),
-            Some(("_theme", value)) => asked.spot_theme = style_name(value),
+            Some(("_theme", value)) => asked.spot_theme = look(value),
             // Read deck wide by `theme_of`, and dropped here so it never draws.
             Some(("theme", _)) => {}
             _ => body.push(line),
@@ -157,16 +184,21 @@ fn directive(line: &str) -> Option<(&str, &str)> {
 /// whole thing rather than being ignored, so a typo is silent rather than half
 /// obeyed.
 fn transition(value: &str) -> Option<Transition> {
-    let mut words = value.split_whitespace();
+    let mut words = value.split_whitespace().peekable();
     let name = style_name(words.next()?)?;
-    let duration = match words.next() {
-        Some(raw) => Some(duration_ms(raw)?),
+    // The duration stays where it was, before any knobs: it is positional and
+    // every deck written so far puts it there.
+    let duration = match words.peek().filter(|word| !word.contains('=')) {
+        Some(raw) => Some(duration_ms(raw)?).inspect(|_| {
+            words.next();
+        }),
         None => None,
     };
-    words
-        .next()
-        .is_none()
-        .then_some(Transition { name, duration })
+    Some(Transition {
+        name,
+        duration,
+        knobs: knobs(words)?,
+    })
 }
 
 /// A name reaches a url and a class attribute, so the alphabet is narrow on
@@ -179,6 +211,58 @@ pub(crate) fn style_name(value: &str) -> Option<String> {
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
     shaped.then(|| name.to_string())
+}
+
+/// Reads `key=value` pairs off the tail of a directive.
+///
+/// The value alphabet is closed on purpose. A custom property holding
+/// `url(...)` would make every phone in the room fetch an address the deck
+/// chose, so nothing but a colour, a time, a number or a percentage gets
+/// through.
+///
+/// `None` for anything that is not a pair, which refuses the whole directive
+/// rather than applying half of it. A deck that meant something by the word it
+/// got wrong is better off seeing nothing happen than seeing most of it happen.
+fn knobs<'a>(words: impl Iterator<Item = &'a str>) -> Option<BTreeMap<String, String>> {
+    let mut out = BTreeMap::new();
+    for word in words {
+        let (key, value) = word.split_once('=')?;
+        out.insert(style_name(key)?, knob_value(value)?);
+    }
+    Some(out)
+}
+
+/// A value a stylesheet can be handed without it being able to reach anywhere.
+fn knob_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 32 {
+        return None;
+    }
+    // A bare word as well as a measurement, because a look can offer presets
+    // and map them itself: `--knob-style: vegas` means whatever the stylesheet
+    // says it means. A word is the same narrow alphabet as a look's own name,
+    // so it can no more reach a path or close a quote than the name can.
+    let shaped = is_hex_colour(value)
+        || duration_ms(value).is_some()
+        || is_number(value)
+        || value
+            .strip_suffix('%')
+            .is_some_and(|rest| is_number(rest) && !rest.is_empty())
+        || style_name(value).is_some();
+    shaped.then(|| value.to_string())
+}
+
+/// `#rgb`, `#rgba`, `#rrggbb` or `#rrggbbaa`. Named colours are left out: the
+/// list is long, and a knob is set by a picker far more often than by hand.
+fn is_hex_colour(value: &str) -> bool {
+    let Some(digits) = value.strip_prefix('#') else {
+        return false;
+    };
+    matches!(digits.len(), 3 | 4 | 6 | 8) && digits.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn is_number(value: &str) -> bool {
+    !value.is_empty() && value.parse::<f64>().is_ok_and(f64::is_finite)
 }
 
 fn duration_ms(value: &str) -> Option<u32> {
@@ -855,11 +939,16 @@ mod tests {
         assert_eq!(slides[1].transition.as_ref().unwrap().duration, Some(250));
     }
 
+    /// Just the name, for the tests that do not care about knobs.
+    fn named(look: Option<Look>) -> Option<String> {
+        look.map(|l| l.name)
+    }
+
     #[test]
     fn a_theme_is_read_wherever_it_is_written() {
         assert_eq!(
-            theme_of("# One\n\n---\n\n<!-- theme: paper -->\n# Two").as_deref(),
-            Some("paper")
+            named(theme_of("# One\n\n---\n\n<!-- theme: paper -->\n# Two")),
+            Some("paper".to_string())
         );
     }
 
@@ -870,17 +959,135 @@ mod tests {
         );
         assert_eq!(slides.len(), 3);
         assert_eq!(slides[0].theme, None, "the first slide claimed a look");
-        assert_eq!(slides[1].theme.as_deref(), Some("neon"));
+        assert_eq!(named(slides[1].theme.clone()), Some("neon".to_string()));
         assert_eq!(
             slides[2].theme, None,
             "a _theme carried past the slide that asked for it"
         );
         // The deck wide theme is untouched by any of it.
         assert_eq!(
-            theme_of("<!-- theme: ember -->\n# One\n\n---\n\n<!-- _theme: neon -->\n# Two")
-                .as_deref(),
-            Some("ember")
+            named(theme_of(
+                "<!-- theme: ember -->\n# One\n\n---\n\n<!-- _theme: neon -->\n# Two"
+            )),
+            Some("ember".to_string())
         );
+    }
+
+    #[test]
+    fn a_deck_can_turn_a_knob_a_look_declared() {
+        let look = theme_of("<!-- theme: neon heading=#ff8800 accent=#0f0 -->\n# One").unwrap();
+        assert_eq!(look.name, "neon");
+        assert_eq!(
+            look.knobs.get("heading").map(String::as_str),
+            Some("#ff8800")
+        );
+        assert_eq!(look.knobs.get("accent").map(String::as_str), Some("#0f0"));
+
+        // A slide can turn them for itself, and carries none to the next.
+        let slides = parse("<!-- _theme: neon heading=#ff8800 -->\n# One\n\n---\n\n# Two");
+        assert_eq!(
+            slides[0].theme.as_ref().unwrap().knobs.len(),
+            1,
+            "the slide did not take the knob"
+        );
+        assert_eq!(slides[1].theme, None);
+    }
+
+    #[test]
+    fn a_knob_takes_a_colour_a_time_a_number_or_a_share_and_nothing_else() {
+        for good in [
+            "#fff",
+            "#ffff",
+            "#ff8800",
+            "#ff8800cc",
+            "400ms",
+            "1.5s",
+            "12",
+            "0.5",
+            "40%",
+        ] {
+            let deck = format!("<!-- theme: neon x={good} -->\n# One");
+            assert_eq!(
+                theme_of(&deck).map(|l| l.knobs),
+                Some(BTreeMap::from([("x".to_string(), good.to_string())])),
+                "{good} was refused"
+            );
+        }
+    }
+
+    /// The whole point of the closed alphabet. A custom property is handed to a
+    /// stylesheet, and one holding `url(...)` would make every phone in the
+    /// room fetch an address the deck chose.
+    #[test]
+    fn a_knob_can_never_carry_css_of_its_own() {
+        for bad in [
+            "url(http://evil.example/x.png)",
+            "url('x')",
+            "red;background:url(x)",
+            "expression(alert(1))",
+            "var(--ground)",
+            "calc(1px+2px)",
+            "'quoted'",
+            "\"quoted\"",
+            "}",
+        ] {
+            let deck = format!("<!-- theme: neon x={bad} -->\n# One");
+            assert_eq!(theme_of(&deck), None, "{bad:?} was let through");
+        }
+    }
+
+    /// The keyword alphabet is the same one a look's own name uses, so it
+    /// admits words that are not measurements. They are inert: a custom
+    /// property holding `100vw` or `gggggg` is a value a stylesheet either
+    /// reads or ignores, and neither can become a rule.
+    #[test]
+    fn a_word_shaped_value_is_a_keyword_rather_than_a_refusal() {
+        for word in ["vegas", "space-station", "100vw", "gggggg"] {
+            let deck = format!("<!-- theme: neon style={word} -->\n# One");
+            assert_eq!(
+                theme_of(&deck).and_then(|l| l.knobs.get("style").cloned()),
+                Some(word.to_string()),
+                "{word} was refused"
+            );
+        }
+        // A hash that is not a colour is still not a keyword.
+        assert_eq!(theme_of("<!-- theme: neon x=#ff -->\n# One"), None);
+        assert_eq!(theme_of("<!-- theme: neon x=#gggggg -->\n# One"), None);
+    }
+
+    #[test]
+    fn a_knob_name_is_a_name_and_a_word_that_is_not_a_pair_refuses_the_lot() {
+        // Half a directive applied is worse than none of it.
+        assert_eq!(theme_of("<!-- theme: neon rubbish -->\n# One"), None);
+        assert_eq!(theme_of("<!-- theme: neon ../x=#fff -->\n# One"), None);
+        assert_eq!(theme_of("<!-- theme: neon =#fff -->\n# One"), None);
+    }
+
+    #[test]
+    fn a_transition_keeps_its_duration_positional_and_takes_knobs_after_it() {
+        let slides = parse("<!-- transition: cover 1s distance=40% -->\n# One\n\n---\n\n# Two");
+        let moved = slides[0].transition.as_ref().unwrap();
+        assert_eq!(moved.name, "cover");
+        assert_eq!(moved.duration, Some(1000));
+        assert_eq!(moved.knobs.get("distance").map(String::as_str), Some("40%"));
+
+        // And without a duration the knobs still read, because a knob is never
+        // mistaken for a time: it has an `=` in it.
+        let slides = parse("<!-- transition: cover distance=40% -->\n# One\n\n---\n\n# Two");
+        let moved = slides[0].transition.as_ref().unwrap();
+        assert_eq!(moved.duration, None);
+        assert_eq!(moved.knobs.get("distance").map(String::as_str), Some("40%"));
+    }
+
+    #[test]
+    fn a_look_that_turns_no_knobs_is_exactly_what_it_always_was() {
+        let look = theme_of("<!-- theme: neon -->\n# One").unwrap();
+        assert_eq!(look.name, "neon");
+        assert!(look.knobs.is_empty());
+        // And serializes without the field at all, so a page reading the old
+        // shape sees the old shape.
+        let json = serde_json::to_string(&look).unwrap();
+        assert_eq!(json, r#"{"name":"neon"}"#, "{json}");
     }
 
     #[test]
@@ -897,9 +1104,10 @@ mod tests {
     #[test]
     fn the_last_theme_wins() {
         assert_eq!(
-            theme_of("<!-- theme: neon -->\n# One\n\n---\n\n<!-- theme: paper -->\n# Two")
-                .as_deref(),
-            Some("paper")
+            named(theme_of(
+                "<!-- theme: neon -->\n# One\n\n---\n\n<!-- theme: paper -->\n# Two"
+            )),
+            Some("paper".to_string())
         );
     }
 

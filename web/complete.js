@@ -44,16 +44,19 @@ export function directiveAt(text, caret) {
   return { open, inner: text.slice(open + 4, caret), after: text.slice(caret, stop) };
 }
 
+/// What a row is matched and read by: its label where it has one, because that
+/// is the word somebody is typing. A named colour is chosen by typing `cy`, not
+/// by typing the hex behind it.
+const shown = (item) => (item.label ?? item.value).toLowerCase();
+
 /// Prefix matches first, then anything else holding the query. Forty
 /// transitions is too many to read, and the one being typed should be at the
 /// top rather than wherever the alphabet put it.
 export function rank(items, query) {
   const want = query.trim().toLowerCase();
   if (!want) return items;
-  const starts = items.filter((i) => i.value.toLowerCase().startsWith(want));
-  const holds = items.filter(
-    (i) => !i.value.toLowerCase().startsWith(want) && i.value.toLowerCase().includes(want),
-  );
+  const starts = items.filter((i) => shown(i).startsWith(want));
+  const holds = items.filter((i) => !shown(i).startsWith(want) && shown(i).includes(want));
   return [...starts, ...holds];
 }
 
@@ -93,12 +96,55 @@ export function completionsAt(doc, looks = { themes: [], transitions: [] }) {
   // the closing marks, so the rest of the word is whatever is not a space.
   const ahead = found.after.match(/^\S*/)[0];
   if (words === 0) return slot('value', start, query, ahead, rank(pool, query));
-  if (words === 1 && TAKES_DURATION.has(name)) {
-    return slot('param', start, query, ahead, rank(DURATIONS, query));
+
+  // Past the name, the word being typed is a knob once it has its `=`.
+  const split = query.indexOf('=');
+  if (split !== -1) {
+    const declared = knobsOf(name, rest, looks);
+    const knob = declared.find((k) => k.name === query.slice(0, split));
+    if (!knob) return null;
+    const typed = query.slice(split + 1);
+    // What the look offers, if it offered anything, and otherwise the value it
+    // falls back to. Either way the point is the same: knowing what a look
+    // already uses is most of what makes a knob usable at all.
+    const offers = Array.isArray(knob.options) ? knob.options : [];
+    const items = offers.length
+      ? offers.map((choice) => ({
+          // The name is what a look called it and what somebody picks by. The
+          // value is what goes in the deck, and is not worth reading on a phone.
+          value: choice.value,
+          label: choice.name,
+          about: choice.name === choice.value ? '' : choice.value,
+        }))
+      : [{ value: knob.value, about: 'what this look uses' }];
+    return slot('knobvalue', start, typed, ahead, rank(items, typed));
   }
-  // The grammar takes a name and at most one duration. Past that there is
-  // nothing left to offer, and offering anyway would be a guess.
-  return null;
+
+  const taken = new Set(
+    (rest.slice(0, rest.length - query.length).match(/\S+=/g) ?? []).map((w) => w.slice(0, -1)),
+  );
+  const offered = knobsOf(name, rest, looks)
+    .filter((knob) => !taken.has(knob.name))
+    .map((knob) => ({ value: `${knob.name}=`, about: `defaults to ${knob.value}` }));
+
+  // A transition's duration is positional, so it is only still on offer while
+  // nothing has taken its place.
+  if (words === 1 && TAKES_DURATION.has(name)) {
+    return slot('param', start, query, ahead, rank([...DURATIONS, ...offered], query));
+  }
+  if (!offered.length) return null;
+  return slot('knob', start, query, ahead, rank(offered, query));
+}
+
+/// The knobs the look named in this directive declared, from the instance's own
+/// config. A look that declared none offers none, which is every look written
+/// before there were any.
+function knobsOf(directive, value, looks) {
+  const named = String(value ?? '').trim().split(/\s+/)[0];
+  const pool = directive.startsWith('_') ? directive.slice(1) : directive;
+  const list = pool === 'theme' ? looks.themes : looks.transitions;
+  const found = (Array.isArray(list) ? list : []).find((look) => look?.name === named);
+  return Array.isArray(found?.knobs) ? found.knobs : [];
 }
 
 /// `query` is what was typed before the caret, which is what the list filters

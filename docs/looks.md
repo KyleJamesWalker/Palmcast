@@ -16,6 +16,12 @@ only** writes `_transition` instead, for a slide that should differ from the
 ones after it. The same box applies to the theme picker, where it writes
 `_theme`.
 
+All three follow the cursor. Move it into a slide and the pickers, the box and
+the preview show what is in force *there*: the deck's own look, or the one that
+slide set for itself. A deck names a look once and then writes slides under it,
+so the cursor is almost never on the line that decided the look it is sitting
+in.
+
 Typing a directive by hand offers the same choices. Open a `<!--` in either
 editor and the editor lists what can go there: the four directive names, then
 the looks this instance actually serves, then the durations a transition
@@ -34,7 +40,134 @@ That is the whole grammar, and there is no more of it to learn:
 ```
 
 A `<time>` is `500ms` or `1.5s`, up to sixty seconds, and only a transition
-takes one. Both pickers are on the start page and in the
+takes one.
+
+## Change one thing about a look
+
+A look can offer knobs, and a deck can turn them:
+
+```markdown
+<!-- theme: neon heading=#ff8800 -->
+```
+
+`neon` ships with a cyan heading and a magenta accent. That line keeps neon and
+paints the headings orange instead. It works on `_theme` too, so one slide can
+differ, and on `transition` and `_transition` after the duration:
+
+```markdown
+<!-- _transition: cover 1s distance=40% -->
+```
+
+The editor lists what each look offers and what it currently uses, so there is
+nothing to look up: type a space after the name and the knobs appear.
+
+### Declaring one, as an operator
+
+A look declares a knob by defining a custom property named `--knob-<name>` in
+its own stylesheet, and using it in its own rules. The value in the file is the
+default, so the names and the defaults cannot drift apart from what uses them:
+
+```css
+.viewer, .stage {
+  --knob-heading: #3ef0ff;
+  --knob-accent: #ff3ea5;
+  --accent: var(--knob-accent);
+}
+
+.viewer .slide h1, .stage .slide h1 {
+  color: var(--knob-heading);
+  /* Mixed rather than written out, so the glow follows the knob. */
+  text-shadow: 0 0 18px color-mix(in srgb, var(--knob-heading) 45%, transparent);
+}
+```
+
+There is no manifest to keep in step. The server reads the declarations out of
+the file, the same way it reads the description out of the opening comment, and
+serves them on `/api/config` for the pickers to offer.
+
+A look that declares none behaves exactly as it always did, and so does a deck
+that turns none.
+
+### Offering choices
+
+A knob can name the values it expects, in a second property beside it:
+
+```css
+--knob-heading: #3ef0ff;
+--knob-heading-options: cyan #3ef0ff, orange #ff8800, rose #ff3ea5;
+```
+
+`neon` takes the other road: its only knob is a mood, because picking a pair
+that belongs together is one tap and picking two colours is two.
+
+The editor offers those **by name** and writes the value: you pick `cyan`, the
+deck gets `#3ef0ff`. The hex sits beside the name on a laptop and is left out
+altogether on a phone, where the name is the whole point. Moving through the
+list repaints the preview card on the way past, so the colours are compared by
+looking rather than by reading.
+
+The list is a suggestion and not a rule: any value the grammar allows still
+works, so a deck can ask for a colour the look never thought of.
+
+CSS has no way of its own to declare a list of options. `@property` can
+enumerate keywords in its `syntax` descriptor, but only to validate them, and it
+cannot map a name to a value. So the list is an ordinary custom property, which
+keeps it in the stylesheet with everything else.
+
+### Presets a look maps itself
+
+The values do not have to be colours. A knob can take a bare word and the look
+can decide what it means:
+
+```css
+.viewer, .stage {
+  --knob-style: midnight;
+  --knob-style-options: midnight, vegas, tampa;
+
+  --accent: var(--lit-accent, #ff3ea5);
+}
+
+@container style(--knob-style: vegas) {
+  .viewer, .stage { --lit-heading: #ff2d95; --lit-accent: #ffd166; }
+}
+
+.viewer .slide h1, .stage .slide h1 { color: var(--lit-heading, #3ef0ff); }
+```
+
+That is `neon`, shortened. The fallbacks are the look's own colours, so the
+default mood needs no block of its own and a browser without style queries shows
+what the look ships as.
+
+The knob is set on the reading surface **and** on the root, because a container
+never matches its own query: the surface has to sit inside something holding the
+value rather than be that thing. That is why the query above can name
+`.viewer` itself.
+
+A name on its own in the options list is its own value, so `vegas` offers
+`vegas`. `@container style()` is how a stylesheet reads a custom property back
+and changes rules on it, which is what turns one word into a whole heading and
+accent combination.
+
+Offer one or the other for the same colour, not both. A look exposing `style`
+*and* `heading` will find the preset wins, because the query writes closer to
+the slide than the knob does.
+
+Style queries need a recent browser. One without them ignores the blocks and
+shows the look's own defaults, which is the same thing a deck naming no knob
+gets.
+
+### What a knob may hold
+
+A colour (`#f80`, `#ff8800`, `#ff8800cc`), a time (`400ms`, `1.5s`), a number,
+a share (`40%`), or a bare word in the same narrow alphabet a look's own name
+uses: lowercase letters, digits and dashes, up to 32 of them. Nothing else.
+
+That list is short on purpose. A knob becomes a custom property in the room's
+stylesheet, and one holding `url(...)` would make every phone in the room fetch
+an address the deck chose. A deck still cannot carry CSS of its own; it can only
+hand a look a value of a shape the server already understands. Anything outside
+the list is refused, and a word that is not a `name=value` pair refuses the whole
+directive rather than applying half of it. Both pickers are on the start page and in the
 presenter console, and the directives below are what they write, so a deck
 written by hand and a deck written with them are the same deck.
 

@@ -21,10 +21,41 @@ pub struct Look {
     /// The file's own opening comment, to a sentence or two. Empty when the
     /// file has none, because an operator is not obliged to explain theirs.
     pub about: String,
+    /// What a deck may change about it, with the value the file itself uses as
+    /// the default. Empty for a look that declares none, which is every look
+    /// written before there were any.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub knobs: Vec<Knob>,
 }
+
+/// One custom property a look put its name to.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Knob {
+    pub name: String,
+    /// The value the stylesheet falls back to, which is what a picker should
+    /// open on.
+    pub value: String,
+    /// Named choices the look suggests, from `--knob-<name>-options`. A picker
+    /// offers these; the value is still whatever the grammar allows, so a look
+    /// that names none is not a look that only takes what it named.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<Choice>,
+}
+
+/// One named value a look suggests for a knob.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Choice {
+    pub name: String,
+    pub value: String,
+}
+
+/// The suffix that turns a declaration into a list of choices rather than a
+/// knob of its own.
+const OPTIONS: &str = "-options";
 
 pub struct Sheet {
     pub css: String,
+    pub knobs: Vec<Knob>,
     /// Quoted, ready for the header. Over the bytes themselves, so an operator
     /// who edits a file and restarts gets it past every cache.
     pub etag: String,
@@ -73,6 +104,7 @@ fn looks(from: &BTreeMap<String, Sheet>) -> Vec<Look> {
         .map(|(name, sheet)| Look {
             name: name.clone(),
             about: sheet.about.clone(),
+            knobs: sheet.knobs.clone(),
         })
         .collect()
 }
@@ -155,8 +187,79 @@ fn sheet(css: String) -> Sheet {
     Sheet {
         etag: format!("\"{acc:016x}\""),
         about: about(&css),
+        knobs: knobs(&css),
         css,
     }
+}
+
+/// The knobs a look put its name to, as `--knob-<name>: <value>;`.
+///
+/// Read out of the stylesheet rather than a manifest beside it, the same way
+/// `about` is, so the names and their defaults cannot drift apart from the
+/// rules that use them. A file declaring none is a file nothing changes about.
+fn knobs(css: &str) -> Vec<Knob> {
+    let mut found: Vec<Knob> = Vec::new();
+    for (at, _) in css.match_indices("--knob-") {
+        let rest = &css[at + "--knob-".len()..];
+        let Some((name, rest)) = rest.split_once(':') else {
+            continue;
+        };
+        // A declaration, not a `var(--knob-x)` reading one back.
+        let Some(name) = style_name(name) else {
+            continue;
+        };
+        let value = rest.split([';', '}']).next().unwrap_or_default().trim();
+        if value.is_empty() || value.len() > 200 || value.contains("var(") {
+            continue;
+        }
+        if found.iter().any(|knob| knob.name == name) {
+            continue;
+        }
+        found.push(Knob {
+            name,
+            value: value.to_string(),
+            options: Vec::new(),
+        });
+    }
+
+    // `--knob-heading-options` describes `--knob-heading`; it is not a knob.
+    let (lists, mut knobs): (Vec<Knob>, Vec<Knob>) = found
+        .into_iter()
+        .partition(|knob| knob.name.ends_with(OPTIONS));
+    for list in lists {
+        let of = list.name.trim_end_matches(OPTIONS).to_string();
+        if let Some(knob) = knobs.iter_mut().find(|knob| knob.name == of) {
+            knob.options = choices(&list.value);
+        }
+    }
+
+    knobs.sort_by(|a, b| a.name.cmp(&b.name));
+    knobs
+}
+
+/// The choices a look offers for one knob.
+///
+/// Two shapes, because looks want two different things. `cyan #3ef0ff, orange
+/// #ff8800` names colours, and the value is what a picker shows beside the
+/// name. `vegas, tampa, space-station` names presets the stylesheet maps for
+/// itself, and the name is the value.
+///
+/// A malformed entry is dropped rather than refusing the list: a look offering
+/// three of its four choices is more use than one offering none.
+fn choices(value: &str) -> Vec<Choice> {
+    value
+        .split(',')
+        .filter_map(|entry| {
+            let mut words = entry.split_whitespace();
+            let name = style_name(words.next()?)?;
+            let value = match words.next() {
+                Some(given) if !given.is_empty() && given.len() <= 32 => given.to_string(),
+                Some(_) => return None,
+                None => name.clone(),
+            };
+            words.next().is_none().then_some(Choice { name, value })
+        })
+        .collect()
 }
 
 /// What a file says about itself, for a picker to put next to the name.
@@ -199,6 +302,101 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn a_look_declares_its_own_knobs_and_most_declare_none() {
+        let looks = load(None, None).unwrap();
+
+        let neon = looks
+            .themes()
+            .into_iter()
+            .find(|l| l.name == "neon")
+            .expect("no neon");
+        // One knob, and it is a mood rather than a colour: picking a pair that
+        // belongs together is a tap, and picking two colours is not.
+        assert_eq!(
+            neon.knobs
+                .iter()
+                .map(|k| k.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["style"],
+            "neon did not surface the knob its stylesheet declares"
+        );
+        let style = &neon.knobs[0];
+        assert_eq!(style.value, "midnight");
+        assert_eq!(
+            style
+                .options
+                .iter()
+                .map(|c| (c.name.as_str(), c.value.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("midnight", "midnight"),
+                ("vegas", "vegas"),
+                ("tampa", "tampa"),
+                ("sunset", "sunset"),
+                ("deep-space", "deep-space"),
+            ],
+            "a preset's name is its own value, and that did not come through"
+        );
+
+        // Every other built-in declares none, and is what it always was.
+        for look in looks.themes().into_iter().filter(|l| l.name != "neon") {
+            assert!(
+                look.knobs.is_empty(),
+                "{} surfaced knobs it does not declare",
+                look.name
+            );
+        }
+    }
+
+    #[test]
+    fn a_look_can_offer_presets_it_maps_itself() {
+        // A list of bare names, for a knob whose value the stylesheet reads
+        // rather than paints with. The name is the value.
+        let found = knobs(
+            ".a { --knob-style: vegas; \
+             --knob-style-options: vegas, tampa, italy, la, space-station; }",
+        );
+        assert_eq!(found.len(), 1, "the options list was taken for a knob");
+        assert_eq!(found[0].name, "style");
+        assert_eq!(found[0].value, "vegas");
+        assert_eq!(
+            found[0]
+                .options
+                .iter()
+                .map(|c| (c.name.as_str(), c.value.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("vegas", "vegas"),
+                ("tampa", "tampa"),
+                ("italy", "italy"),
+                ("la", "la"),
+                ("space-station", "space-station"),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_options_list_for_a_knob_that_is_not_there_is_dropped() {
+        let found = knobs(".a { --knob-ghost-options: one, two; }");
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn reading_a_knob_back_is_not_declaring_one() {
+        // `var(--knob-x)` is a use, and a use is not a declaration.
+        let found = knobs(".a { color: var(--knob-heading); --knob-real: #fff; }");
+        assert_eq!(
+            found,
+            vec![Knob {
+                name: "real".into(),
+                value: "#fff".into(),
+                options: Vec::new(),
+            }],
+            "a var() reading a knob was taken for a declaration"
+        );
     }
 
     #[test]
@@ -343,7 +541,9 @@ mod tests {
             "{}",
             neon.about
         );
-        assert!(neon.about.contains("cyan"), "{}", neon.about);
+        // The second sentence as well as the first, which is the point: one
+        // sentence rarely says what a look is.
+        assert!(neon.about.contains("accent"), "{}", neon.about);
     }
 
     #[test]
