@@ -12,6 +12,7 @@ import {
 } from '/shared.js';
 import { smartEditor } from '/editing.js';
 import { lookPickers } from '/lookpicker.js';
+import { attachCompleter } from '/completer.js';
 import { previewDeck, renderPreview } from '/preview.js';
 import { starterPrompt } from '/deckstate.js';
 import { SAMPLE } from '/sample.js';
@@ -91,7 +92,10 @@ editor.addEventListener('input', () => {
 });
 refresh();
 
-const editing = smartEditor(editor, document.getElementById('toolbar'));
+let completer = null;
+const editing = smartEditor(editor, document.getElementById('toolbar'), {
+  intercept: (event) => completer?.handleKey(event) ?? false,
+});
 
 // An instance that serves no looks, or cannot say, leaves both selects hidden.
 // That case is handled inside; anything else is a fault worth seeing in the
@@ -104,6 +108,8 @@ lookPickers(editing, editor, {
   scope: document.getElementById('transition-scope'),
   scopeField: document.getElementById('scope-field'),
   demo: document.getElementById('look-demo'),
+}).then((looks) => {
+  completer = attachCompleter(editor, editing, looks);
 });
 
 // A shared link beats whatever draft is in this browser, and then becomes the

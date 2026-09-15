@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `_theme` paints one slide in a look of its own, leaving the rest of the deck
   on whatever `theme` named. The deck editor's "This slide only" box writes it.
+- Both deck editors suggest directives as you type one: the names, the looks the
+  instance serves, and the durations a transition takes. Floats at the cursor on
+  a laptop, docks under the editor on a phone.
 - Playwright smoke suite in `e2e/`, run in CI after the unit tests.
 - `--create-key`, `--max-sessions`, `--create-per-hour` and `--pack-per-minute`.
 - Per-address rate limits on starting a room, previewing and packing a deck.
