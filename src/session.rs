@@ -328,6 +328,15 @@ impl Session {
         }
     }
 
+    /// Whether a driver may see notes, answers and tallies.
+    ///
+    /// The baton is independent of the stage, so the host can hand the controls
+    /// to a speaker while the host deck is still up. A driver reads staff state
+    /// only for their own talk, never for whatever else is on screen.
+    pub fn driver_sees_staff_view(&self, token: &str) -> bool {
+        self.role_of(token) == Role::Driver && self.staged == self.baton
+    }
+
     pub fn snapshot(&self) -> ServerMsg {
         ServerMsg::Deck {
             rev: self.rev,
@@ -1265,9 +1274,17 @@ impl Registry {
         self.with(id, |s| s.role_of(token)).unwrap_or(Role::Viewer)
     }
 
+    /// What a socket holding this token may see, under one lock.
+    pub fn staff(&self, id: &str, token: &str) -> bool {
+        self.with(id, |s| {
+            s.role_of(token).edits() || s.driver_sees_staff_view(token)
+        })
+        .unwrap_or(false)
+    }
+
     pub fn cohost_token(&self, id: &str, token: &str) -> Option<String> {
         self.with(id, |s| {
-            s.role_of(token).drives().then(|| s.cohost_token.clone())
+            s.role_of(token).hosts().then(|| s.cohost_token.clone())
         })
         .flatten()
     }
@@ -1864,6 +1881,47 @@ mod tests {
             score_of(&after, &id, "Sam"),
             1,
             "the parked point was lost across the restart"
+        );
+    }
+
+    #[test]
+    fn a_driver_sees_staff_state_only_while_their_talk_is_staged() {
+        let (reg, id, mc) = open_room();
+        let (talk, speaker) = submit(&reg, &id, "ada", "# Ada");
+
+        // Handed the controls while the host's own deck is still on screen.
+        reg.with_mut(&id, |s| s.hand(Role::Mc, Some(talk))).unwrap();
+        assert_eq!(reg.role(&id, &speaker), Role::Driver);
+        assert!(
+            !reg.staff(&id, &speaker),
+            "a driver read the host deck's notes and answers"
+        );
+
+        // Their own talk goes up and the notes are theirs to see.
+        reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+            .unwrap();
+        assert!(
+            reg.staff(&id, &speaker),
+            "a speaker lost the notes for their own talk"
+        );
+
+        assert!(reg.staff(&id, &mc), "the host stopped being staff");
+        assert!(
+            !reg.staff(&id, "guessed"),
+            "a stranger was treated as staff"
+        );
+    }
+
+    #[test]
+    fn a_speaker_handed_the_controls_cannot_mint_a_cohost_link() {
+        let (reg, id, _mc) = open_room();
+        let (talk, speaker) = submit(&reg, &id, "ada", "# Ada");
+        reg.with_mut(&id, |s| s.hand(Role::Mc, Some(talk))).unwrap();
+
+        assert_eq!(reg.role(&id, &speaker), Role::Driver);
+        assert!(
+            reg.cohost_token(&id, &speaker).is_none(),
+            "a driver minted a cohost link and edited their way to the notes"
         );
     }
 

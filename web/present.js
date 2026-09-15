@@ -270,7 +270,16 @@ function paintLineup() {
     onStage(talk) {
       socket.send({ type: 'stage', talk });
     },
-    onHand(talk) {
+    onHand(talk, staged) {
+      // Driving is not reading: the speaker moves the deck that is up without
+      // its notes or answers. Worth saying before the host taps it.
+      if (talk !== null && staged !== talk) {
+        const what = staged === null ? 'The host deck is' : 'Another talk is';
+        const ok = confirm(
+          `${what} on screen. The speaker will drive it but will not see its notes. Continue?`,
+        );
+        if (!ok) return;
+      }
       socket.send({ type: 'hand', talk });
     },
     onMove(talk, index) {

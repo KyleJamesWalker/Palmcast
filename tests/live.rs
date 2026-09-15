@@ -2014,6 +2014,64 @@ async fn the_note_behind_a_drop_reaches_the_speaker_and_not_the_room() {
     assert_eq!(detail["markdown"], "# Borrow checking");
 }
 
+/// The baton is independent of the stage, so the host can hand the controls
+/// over while their own deck is still on screen. The speaker drives it without
+/// reading it.
+#[tokio::test]
+async fn a_driver_does_not_read_the_host_deck_it_is_driving() {
+    let host = spawn().await;
+    let (id, mc) = create(&host, DECK).await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "submissions", "open": true }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (talk, speaker) = put_up(&host, &id, "ada-browser", TALK_WITH_NOTES).await;
+
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "hand", "talk": talk }),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut driver = open(&host, &id, Some(&speaker)).await;
+    let opening = next_json(&mut driver).await;
+    assert_eq!(opening["type"], "deck");
+    let raw = opening.to_string();
+    assert!(
+        !raw.contains("the secret note"),
+        "the host's notes went to a speaker driving the host deck: {raw}"
+    );
+    for slide in opening["slides"].as_array().unwrap() {
+        assert_eq!(slide["notes"], "");
+    }
+
+    // Their own talk goes up, and the resync carries what is theirs.
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "stage", "talk": talk }),
+    )
+    .await;
+
+    let mut mine = None;
+    for _ in 0..24 {
+        let msg = next_json(&mut driver).await;
+        if msg["type"] == "deck" && msg["slides"][0]["notes"] == "mine to say" {
+            mine = Some(msg);
+            break;
+        }
+    }
+    assert!(
+        mine.is_some(),
+        "a speaker never received the notes for their own staged talk"
+    );
+}
+
+const TALK_WITH_NOTES: &str = "# Ada\n\n???\nmine to say\n\n---\n\n# Two";
+
 /// Ordering the evening is the host's, and a talk moved on one phone moves on
 /// every phone.
 #[tokio::test]

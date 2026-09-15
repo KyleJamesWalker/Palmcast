@@ -2,7 +2,7 @@ use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::session::{Registry, Role, Session};
+use crate::session::{Registry, Session};
 use crate::wire::{ClientMsg, Frame, ServerMsg};
 
 pub struct Join {
@@ -91,8 +91,7 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
 /// Read fresh rather than captured, because the host can hand the controls over
 /// while a socket is open.
 fn staff_now(registry: &Registry, id: &str, token: Option<&str>) -> bool {
-    let role = token.map(|t| registry.role(id, t)).unwrap_or(Role::Viewer);
-    role.edits() || role.drives()
+    token.is_some_and(|t| registry.staff(id, t))
 }
 
 /// Every branch re-checks the token inside the registry, so a forged frame from
