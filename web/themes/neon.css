@@ -21,17 +21,19 @@
 
 /* Each mood is a heading and an accent that belong together. The fallbacks are
    midnight, so a browser without style queries shows the look this ships as. */
+/* One hue each, so two moods are never a question of which is which:
+   cyan, pink, coral, amber, violet. */
 @container style(--knob-style: vegas) {
   .viewer, .stage { --lit-heading: #ff2d95; --lit-accent: #ffd166; }
 }
 @container style(--knob-style: tampa) {
-  .viewer, .stage { --lit-heading: #00e5c0; --lit-accent: #ff7043; }
+  .viewer, .stage { --lit-heading: #ff7043; --lit-accent: #00e5c0; }
 }
 @container style(--knob-style: sunset) {
-  .viewer, .stage { --lit-heading: #ffb37a; --lit-accent: #c792ea; }
+  .viewer, .stage { --lit-heading: #ffc857; --lit-accent: #c792ea; }
 }
 @container style(--knob-style: deep-space) {
-  .viewer, .stage { --lit-heading: #8ab4ff; --lit-accent: #b388ff; }
+  .viewer, .stage { --lit-heading: #b388ff; --lit-accent: #64ffda; }
 }
 
 .viewer .slide h1, .stage .slide h1 {

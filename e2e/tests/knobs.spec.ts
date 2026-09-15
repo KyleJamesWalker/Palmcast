@@ -67,3 +67,55 @@ test('a look that declares no knobs is untouched by any of it', async ({ page, c
   // Nothing set on the element at all, so the stylesheet is entirely in charge.
   expect(state.inline ?? '').not.toContain('--knob-');
 });
+
+/// Rough CIELAB distance, so "you can tell them apart" is measured rather than
+/// asserted. Anything over 20 is obvious at a glance.
+function apart(a: string, b: string): number {
+  const rgb = (s: string) => s.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+  const lab = ([r, g, bl]: number[]) => {
+    const f = (v: number) => {
+      v /= 255;
+      return v > 0.04045 ? ((v + 0.055) / 1.055) ** 2.4 : v / 12.92;
+    };
+    const [R, G, B] = [f(r), f(g), f(bl)];
+    const x = (R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047;
+    const y = R * 0.2126 + G * 0.7152 + B * 0.0722;
+    const z = (R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883;
+    const g2 = (t: number) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+    return [116 * g2(y) - 16, 500 * (g2(x) - g2(y)), 200 * (g2(y) - g2(z))];
+  };
+  const [l1, a1, b1] = lab(rgb(a));
+  const [l2, a2, b2] = lab(rgb(b));
+  return Math.hypot(l1 - l2, a1 - a2, b1 - b2);
+}
+
+test("neon's moods are told apart by looking, not by reading the name", async ({
+  page,
+  context,
+}) => {
+  const moods = ['midnight', 'vegas', 'tampa', 'sunset', 'deep-space'];
+  const id = await startRoom(
+    page,
+    ['<!-- theme: neon -->', '', '# One']
+      .concat(moods.flatMap((m) => ['', '---', '', `<!-- _theme: neon style=${m} -->`, '', `# ${m}`]))
+      .join('\n'),
+  );
+  const audience = await joinAudience(context, id);
+
+  const seen: string[] = [];
+  for (const mood of moods) {
+    await page.locator('#next-btn').click();
+    await expect(audience.locator('#slide')).toContainText(mood);
+    seen.push(
+      await audience.evaluate(() => getComputedStyle(document.querySelector('#slide h1')!).color),
+    );
+  }
+
+  // Every pair, because two moods looking alike is the failure worth catching.
+  for (let i = 0; i < seen.length; i += 1) {
+    for (let j = i + 1; j < seen.length; j += 1) {
+      const gap = apart(seen[i], seen[j]);
+      expect(gap, `${moods[i]} and ${moods[j]} are ${gap.toFixed(1)} apart`).toBeGreaterThan(20);
+    }
+  }
+});

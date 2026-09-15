@@ -20,9 +20,12 @@ import {
 // A blockquote as well as a heading, because a look's accent paints the edge of
 // one and its heading paints the other. A card showing only a heading could not
 // show half of what a look lets you change.
+// An h1, because that is where a look puts its heading colour at full
+// strength. An h2 is mixed toward the page in most looks, which washes out the
+// one thing somebody is comparing.
 const FACES = [
-  '<h2>One</h2><p>A slide, and the one after it.</p><blockquote>The accent runs down this edge.</blockquote>',
-  '<h2>Two</h2><p>That is the transition you picked.</p><blockquote>And the heading is up there.</blockquote>',
+  '<h1>One</h1><p>A slide, and the one after it.</p><blockquote>The accent runs down this edge.</blockquote>',
+  '<h1>Two</h1><p>That is the transition you picked.</p><blockquote>And the heading is up there.</blockquote>',
 ];
 
 function fill(select, looks, kind) {

@@ -89,7 +89,7 @@ test('the preview card reacts to the knobs on the line, not just the look', asyn
   const painted = () =>
     demo.evaluate((el) => ({
       knob: getComputedStyle(el).getPropertyValue('--knob-style').trim(),
-      title: getComputedStyle(el.querySelector('h2')).color,
+      title: getComputedStyle(el.querySelector('h1')).color,
       edge: getComputedStyle(el.querySelector('blockquote')).borderLeftColor,
       fits: el.scrollHeight <= el.clientHeight,
     }));
@@ -162,7 +162,7 @@ test('moving through a list of looks repaints the card on the way past', async (
   await page.keyboard.press('ArrowDown');
   expect(await edge()).toBe('rgb(255, 209, 102)');
   await page.keyboard.press('ArrowDown');
-  expect(await edge()).toBe('rgb(255, 112, 67)');
+  expect(await edge()).toBe('rgb(0, 229, 192)');
 
   // Nothing was taken, so what the deck actually says comes back.
   await page.keyboard.press('Escape');
