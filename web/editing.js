@@ -255,6 +255,58 @@ function directiveLines(text, name) {
   return found;
 }
 
+/// The shapes a look's name and a knob's value may take, mirrored from the
+/// server so the preview shows what the room will see. A value the server would
+/// refuse is one the preview must not paint with either.
+const NAME = /^[a-z0-9-]{1,32}$/;
+const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+const MS = /^(\d+)ms$/;
+const SECONDS = /^(\d+(?:\.\d+)?)s$/;
+const NUMBER = /^-?\d+(?:\.\d+)?$/;
+const SHARE = /^-?\d+(?:\.\d+)?%$/;
+
+function isDuration(word) {
+  if (MS.test(word)) return true;
+  const seconds = SECONDS.exec(word);
+  return Boolean(seconds) && Number(seconds[1]) <= 60;
+}
+
+function isKnobValue(word) {
+  return (
+    word.length <= 32 &&
+    (HEX.test(word) || isDuration(word) || NUMBER.test(word) || SHARE.test(word) || NAME.test(word))
+  );
+}
+
+/// A directive's value as the server reads it: a name, a duration where one is
+/// allowed, then `key=value` knobs. Null for anything the server would refuse,
+/// including a stray word, because it refuses the whole directive rather than
+/// applying the part it understood.
+export function readLook(value, takesDuration = false) {
+  const words = String(value ?? '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const name = words.shift();
+  if (!name || !NAME.test(name)) return null;
+
+  // Positional, and only when it is not already a knob.
+  if (takesDuration && words.length && !words[0].includes('=')) {
+    if (!isDuration(words.shift())) return null;
+  }
+
+  const knobs = {};
+  for (const word of words) {
+    const at = word.indexOf('=');
+    if (at === -1) return null;
+    const key = word.slice(0, at);
+    const held = word.slice(at + 1);
+    if (!NAME.test(key) || !held || !isKnobValue(held)) return null;
+    knobs[key] = held;
+  }
+  return { name, knobs };
+}
+
 /// The directive the caret's own line is, or null when the line is prose.
 export function directiveLineAt(text, caret) {
   const [from, to] = lineBounds(text, caret);
@@ -317,27 +369,29 @@ export function looksAt(text, caret) {
 
   // Deck wide, from anywhere: the last one wins wherever it sits.
   for (const on of directivesIn(text, 0, text.length)) {
-    if (on.name === 'theme' && on.value) theme = { ...pick(on), scoped: false };
+    const read = readLook(on.value);
+    if (on.name === 'theme' && read) theme = { ...read, value: on.value, scoped: false };
   }
   // Carried, from the top down to the slide the caret is in.
   for (let i = 0; i <= index && i < slides.length; i += 1) {
     for (const on of directivesIn(text, slides[i][0], slides[i][1])) {
-      if (on.name === 'transition' && on.value) transition = { ...pick(on), scoped: false };
+      const read = readLook(on.value, true);
+      if (on.name === 'transition' && read) transition = { ...read, value: on.value, scoped: false };
     }
   }
   // And this slide's own, which beats both.
   for (const on of directivesIn(text, slides[index][0], slides[index][1])) {
-    if (on.name === '_theme' && on.value) theme = { ...pick(on), scoped: true };
-    if (on.name === '_transition' && on.value) transition = { ...pick(on), scoped: true };
+    if (on.name === '_theme') {
+      const read = readLook(on.value);
+      if (read) theme = { ...read, value: on.value, scoped: true };
+    }
+    if (on.name === '_transition') {
+      const read = readLook(on.value, true);
+      if (read) transition = { ...read, value: on.value, scoped: true };
+    }
   }
 
   return { theme, transition };
-}
-
-/// The name a directive asked for, and the whole of what it said, so a caller
-/// that wants the knobs too has them.
-function pick(on) {
-  return { name: on.value.split(/\s+/)[0], value: on.value };
 }
 
 /// The theme the deck already names, or null. The last one wins, as it does on

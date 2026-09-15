@@ -79,3 +79,45 @@ test('standing on a directive line shows the preview', async ({ page }) => {
   await caretAfter(area, '<!-- theme: ember -->');
   await expect(demo).toBeVisible();
 });
+
+test('the preview card reacts to the knobs on the line, not just the look', async ({ page }) => {
+  await page.goto('/');
+  const area = page.locator('#markdown');
+  await expect(area).toBeVisible();
+
+  const demo = page.locator('#look-demo');
+  const knob = () =>
+    demo.evaluate((el) => ({
+      heading: getComputedStyle(el).getPropertyValue('--knob-heading').trim(),
+      accent: getComputedStyle(el).getPropertyValue('--knob-accent').trim(),
+    }));
+
+  // Neon as it ships.
+  await area.fill('<!-- theme: neon -->\n\n# One');
+  await caretAfter(area, '<!-- theme: neon -->');
+  await expect(demo).toBeVisible();
+  expect(await knob()).toEqual({ heading: '#3ef0ff', accent: '#ff3ea5' });
+
+  // Both knobs turned on the line the cursor is on.
+  await area.fill('<!-- theme: neon accent=#ffb020 heading=#ff8800 -->\n\n# One');
+  await caretAfter(area, 'heading=#ff8800 -->');
+  expect(await knob()).toEqual({ heading: '#ff8800', accent: '#ffb020' });
+
+  // Taking one away puts the look's own value back, because the knob is
+  // removed from the element and the stylesheet's own declaration shows again.
+  await area.fill('<!-- theme: neon accent=#ffb020 -->\n\n# One');
+  await caretAfter(area, 'accent=#ffb020 -->');
+  expect(await knob()).toEqual({ heading: '#3ef0ff', accent: '#ffb020' });
+});
+
+test('a directive the server would refuse paints nothing', async ({ page }) => {
+  await page.goto('/');
+  const area = page.locator('#markdown');
+  await expect(area).toBeVisible();
+
+  // A stray word refuses the whole directive on the server, so the preview
+  // must not show the half it understood.
+  await area.fill('<!-- theme: neon rubbish -->\n\n# One');
+  await caretAfter(area, 'rubbish -->');
+  await expect(page.locator('#theme-pick')).toHaveValue('');
+});

@@ -168,7 +168,14 @@ test('an unknown name is nobody\'s edit', () => {
   assert.equal(editFor('nonsense', doc('|')), null);
 });
 
-import { directiveLineAt, looksAt, setTheme, setTransition, themeIn } from './editing.js';
+import {
+  directiveLineAt,
+  looksAt,
+  readLook,
+  setTheme,
+  setTransition,
+  themeIn,
+} from './editing.js';
 
 const at = (text, cursor) => ({ text, start: cursor, end: cursor });
 
@@ -370,4 +377,47 @@ test('a directive inside a fence is code, not a directive', () => {
 test('directiveLineAt says whether the caret is standing on one', () => {
   assert.equal(directiveLineAt(DECK, 4).name, 'theme');
   assert.equal(directiveLineAt(DECK, DECK.indexOf('# One') + 2), null);
+});
+
+test('the knobs on the line come back with the look in force', () => {
+  const deck = '<!-- theme: neon accent=#ffb020 heading=#ff8800 -->\n\n# One';
+  const here = looksAt(deck, deck.length);
+  assert.equal(here.theme.name, 'neon');
+  assert.deepEqual(here.theme.knobs, { accent: '#ffb020', heading: '#ff8800' });
+});
+
+test('a transition keeps its duration positional and its knobs after', () => {
+  const deck = '<!-- transition: cover 1s distance=40% -->\n\n# One';
+  const here = looksAt(deck, deck.length);
+  assert.equal(here.transition.name, 'cover');
+  assert.deepEqual(here.transition.knobs, { distance: '40%' });
+});
+
+test('a directive the server would refuse is in force of nothing here either', () => {
+  // A stray word refuses the whole directive, so the preview must not paint
+  // half of it.
+  assert.equal(looksAt('<!-- theme: neon rubbish -->\n# One', 40).theme, null);
+  assert.equal(looksAt('<!-- theme: neon x=url(evil) -->\n# One', 40).theme, null);
+});
+
+test('readLook mirrors the value grammar the server reads', () => {
+  assert.deepEqual(readLook('neon'), { name: 'neon', knobs: {} });
+  assert.deepEqual(readLook('neon heading=#ff8800'), {
+    name: 'neon',
+    knobs: { heading: '#ff8800' },
+  });
+  // Presets are words, and so are values a stylesheet reads rather than paints.
+  assert.deepEqual(readLook('neon style=space-station'), {
+    name: 'neon',
+    knobs: { style: 'space-station' },
+  });
+
+  // A duration only where one is allowed, and only before the knobs.
+  assert.deepEqual(readLook('cover 1s', true), { name: 'cover', knobs: {} });
+  assert.equal(readLook('neon 1s'), null, 'a theme took a duration');
+  assert.equal(readLook('cover 90s', true), null, 'a minute and a half was allowed');
+
+  for (const bad of ['neon x=url(x)', 'neon x=var(--a)', 'neon x=', 'neon =v', 'neon x=#ff']) {
+    assert.equal(readLook(bad), null, `${bad} was read`);
+  }
 });

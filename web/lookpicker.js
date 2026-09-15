@@ -5,7 +5,15 @@
 // the operator dropped in a directory turns up in the picker without a rebuild.
 
 import { directiveLineAt, looksAt, setTheme, setTransition } from '/editing.js';
-import { applyTheme, demoFaces, ensure, installedLooks, optionsFor, swap } from '/looks.js';
+import {
+  applyKnobs,
+  applyTheme,
+  demoFaces,
+  ensure,
+  installedLooks,
+  optionsFor,
+  swap,
+} from '/looks.js';
 
 /// Two slides for the demo to move between. Short enough to read at a glance
 /// while something is animating them.
@@ -50,6 +58,9 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
     els.demo.hidden = false;
   };
 
+  /// Whatever the transition in force was asked to change, for the next run.
+  let turned = null;
+
   /// Runs a transition on the demo, forwards, alternating which slide arrives.
   const play = async (name) => {
     if (!name) return;
@@ -57,7 +68,7 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
     await ensure(name);
     const step = demoFaces(face);
     face = step.to;
-    swap(() => paint(step.to), { name, back: step.back });
+    swap(() => paint(step.to), { name, back: step.back, knobs: turned ?? undefined });
   };
 
   // The caret is where the transition lands, and a select takes focus when it
@@ -134,8 +145,14 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
       els.theme.value = theme;
       applyTheme(theme);
     }
+    // The knobs as well as the name, or the preview shows a look the deck is
+    // not asking for. Set on the demo itself, which is the `.viewer` the theme
+    // paints, so they land where the stylesheet reads them.
+    applyKnobs(theme ? here.theme?.knobs : null, els.demo);
+
     const moved = held(here.transition?.name, looks.transitions);
     if (els.transition.value !== moved) els.transition.value = moved;
+    turned = moved ? (here.transition?.knobs ?? null) : null;
 
     // The box says what the line the caret is on actually does, so ticking it
     // and unticking it are both readable rather than a mode to remember.
