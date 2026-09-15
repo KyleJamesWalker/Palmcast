@@ -278,11 +278,8 @@ pub enum ClientMsg {
     },
 }
 
-/// One broadcast, serialized once for each audience it can reach.
-///
-/// Every socket used to clone the message, redact its own copy and serialize
-/// it, so one deck edit in a full room did that work once per viewer. The deck
-/// is the largest message and the room is the moment it is sent.
+/// One broadcast, serialized once per audience so a full room does not pay per
+/// socket.
 #[derive(Debug)]
 pub struct Frame {
     pub owner: String,

@@ -29,12 +29,9 @@ export function rememberToken(id, token) {
 
 /// Anonymous and per browser. It keeps one person from filling the tally and is
 /// not an identity.
-/// Held for the life of the page as well as in storage.
 ///
-/// Storage can be unavailable, and without this the fallback minted a fresh id
-/// on every call. The socket and an http request from the same phone then
-/// disagreed about who was asking, which is how a submitted talk lost the name
-/// of whoever put it up.
+/// Held for the life of the page as well as in storage, so that a browser with
+/// storage unavailable still gives the socket and an http request the same id.
 let who = null;
 
 export function viewerId() {
@@ -74,9 +71,8 @@ export function connect(id, token, handlers) {
 
   const open = () => {
     // Every handler below belongs to this socket, not to whichever socket is
-    // current when it fires. A late error on a replaced connection used to
-    // close the live one, which on a flaky network turned one drop into a
-    // reconnect loop.
+    // current when it fires: a late error on a replaced connection must not
+    // close the live one.
     const ws = new WebSocket(url());
     socket = ws;
     const live = () => socket === ws && !stopped;
