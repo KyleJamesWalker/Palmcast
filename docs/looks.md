@@ -16,6 +16,12 @@ only** writes `_transition` instead, for a slide that should differ from the
 ones after it. The same box applies to the theme picker, where it writes
 `_theme`.
 
+All three follow the cursor. Move it into a slide and the pickers, the box and
+the preview show what is in force *there*: the deck's own look, or the one that
+slide set for itself. A deck names a look once and then writes slides under it,
+so the cursor is almost never on the line that decided the look it is sitting
+in.
+
 Typing a directive by hand offers the same choices. Open a `<!--` in either
 editor and the editor lists what can go there: the four directive names, then
 the looks this instance actually serves, then the durations a transition

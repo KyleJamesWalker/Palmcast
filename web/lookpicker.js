@@ -4,7 +4,7 @@
 // The list comes from the server rather than from a list held here, so a theme
 // the operator dropped in a directory turns up in the picker without a rebuild.
 
-import { setTheme, setTransition, themeIn } from '/editing.js';
+import { directiveLineAt, looksAt, setTheme, setTransition } from '/editing.js';
 import { applyTheme, demoFaces, ensure, installedLooks, optionsFor, swap } from '/looks.js';
 
 /// Two slides for the demo to move between. Short enough to read at a glance
@@ -118,20 +118,54 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
     }
   });
 
-  /// Keeps the theme picker showing what the deck actually says, including
-  /// after an edit the author typed by hand.
-  const sync = () => {
-    // A slide scoped look is not the deck's, so reading the deck wide one here
-    // would snap the picker back the moment a scoped pick was made.
-    if (els.scope.checked) return;
-    const named = themeIn(area.value) ?? '';
-    if (els.theme.value !== named) {
-      els.theme.value = looks.themes.some((l) => l.name === named) ? named : '';
-      applyTheme(els.theme.value);
+  /// Keeps both pickers, the reach and the preview showing what is in force
+  /// where the caret is, rather than what the deck opens with.
+  ///
+  /// A deck sets a look once and then writes slides under it, so the caret is
+  /// almost never on the line that decided the look it is sitting in. Reading
+  /// the deck wide directive alone told an author about a slide they were not
+  /// looking at.
+  const follow = () => {
+    const here = looksAt(area.value, area.selectionStart);
+    const held = (name, list) => (list.some((l) => l.name === name) ? name : '');
+
+    const theme = held(here.theme?.name, looks.themes);
+    if (els.theme.value !== theme) {
+      els.theme.value = theme;
+      applyTheme(theme);
     }
+    const moved = held(here.transition?.name, looks.transitions);
+    if (els.transition.value !== moved) els.transition.value = moved;
+
+    // The box says what the line the caret is on actually does, so ticking it
+    // and unticking it are both readable rather than a mode to remember.
+    const named = here.theme ?? here.transition;
+    if (named) els.scope.checked = named.scoped;
+
+    // Shown when the caret is standing on a directive: that is the moment an
+    // author is asking what it looks like.
+    if (directiveLineAt(area.value, area.selectionStart)) show();
   };
-  area.addEventListener('input', sync);
-  sync();
+
+  area.addEventListener('input', follow);
+  area.addEventListener('click', follow);
+  area.addEventListener('keyup', (event) => {
+    if (MOVES.has(event.key)) follow();
+  });
+  follow();
 
   return looks;
 }
+
+/// Keys that move the caret without changing anything, which still change what
+/// the pickers should be showing.
+const MOVES = new Set([
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+]);

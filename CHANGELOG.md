@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged. A look can name the choices it expects in
   `--knob-<name>-options`, either as named colours or as bare presets it maps
   itself with `@container style()`.
+- Both deck editors follow the cursor: the theme and transition pickers, the
+ "This slide only" box and the preview all show what is in force where the
+ cursor is, rather than what the deck opens with.
 - Both deck editors suggest directives as you type one: the names, the looks the
   instance serves, and the durations a transition takes. Floats at the cursor on
   a laptop, docks under the editor on a phone.
