@@ -31,6 +31,9 @@ const MAX_PARTICIPANTS: usize = 500;
 /// Rooms one instance holds at once, unless `--max-sessions` says otherwise.
 /// Each holds a deck, its votes and any pictures, so the ceiling is memory.
 pub const DEFAULT_MAX_SESSIONS: usize = 500;
+/// How far a socket may fall behind before it is resynced instead. Each slot is
+/// an Arc<Frame>, so the room pays a pointer per slot and not a deck.
+const CHANNEL_DEPTH: usize = 256;
 /// A room bigger than this is not a bar, and every socket costs a broadcast
 /// receiver.
 const MAX_VIEWERS: usize = 400;
@@ -129,6 +132,9 @@ pub struct Session {
     /// no staged items has one step, zero, and never leaves it.
     pub step: usize,
     pub viewers: usize,
+    /// Set when the count moved, cleared when the room has been told. The
+    /// telling is on a timer, so a QR scan is one frame rather than hundreds.
+    pub viewers_dirty: bool,
     pub touched: Instant,
     pub tx: broadcast::Sender<Arc<Frame>>,
     /// slide index -> voter id -> the options they chose. One selection each,
@@ -529,26 +535,40 @@ impl Session {
 
     /// `None` when the room is full, which the caller turns into a closed
     /// socket rather than a silent viewer who sees nothing.
+    /// Counts a phone in. The room is not told here: a QR code going up puts
+    /// hundreds of phones through this in a few seconds, and one frame per
+    /// arrival to every socket is a burst nobody reads. `flush_viewers` sends
+    /// the total a moment later instead.
     pub fn join(&mut self) -> Option<ServerMsg> {
         if self.viewers >= MAX_VIEWERS {
             return None;
         }
         self.viewers += 1;
         self.touched = Instant::now();
-        let msg = ServerMsg::Viewers {
+        self.viewers_dirty = true;
+        Some(ServerMsg::Viewers {
             count: self.viewers,
-        };
-        self.emit(&msg);
-        Some(msg)
+        })
     }
 
     pub fn leave(&mut self) -> ServerMsg {
         self.viewers = self.viewers.saturating_sub(1);
-        let msg = ServerMsg::Viewers {
+        self.viewers_dirty = true;
+        ServerMsg::Viewers {
             count: self.viewers,
-        };
-        self.emit(&msg);
-        msg
+        }
+    }
+
+    /// Sends the count the room has reached, if it moved since the last one.
+    fn flush_viewers(&mut self) -> bool {
+        if !self.viewers_dirty {
+            return false;
+        }
+        self.viewers_dirty = false;
+        self.emit(&ServerMsg::Viewers {
+            count: self.viewers,
+        });
+        true
     }
 
     /// Records one vote and returns the tally. A voter who answers twice
@@ -1234,7 +1254,7 @@ impl Registry {
         };
         let token = random_string(TOKEN_LEN);
         let cohost = random_string(TOKEN_LEN);
-        let (tx, _) = broadcast::channel(64);
+        let (tx, _) = broadcast::channel(CHANNEL_DEPTH);
         map.insert(
             id.clone(),
             Session {
@@ -1246,6 +1266,7 @@ impl Registry {
                 current: 0,
                 step: 0,
                 viewers: 0,
+                viewers_dirty: false,
                 touched: Instant::now(),
                 tx,
                 votes: HashMap::new(),
@@ -1289,6 +1310,19 @@ impl Registry {
     /// A room nobody has is a room nobody drives, so an unknown id is a viewer.
     pub fn role(&self, id: &str, token: &str) -> Role {
         self.with(id, |s| s.role_of(token)).unwrap_or(Role::Viewer)
+    }
+
+    /// Tells every room whose count moved what it moved to. Called on a timer,
+    /// so a QR code going up costs one frame per room rather than one per phone
+    /// per socket. Returns how many rooms had something to say.
+    pub fn flush_viewers(&self) -> usize {
+        let mut told = 0;
+        for session in self.lock().values_mut() {
+            if session.flush_viewers() {
+                told += 1;
+            }
+        }
+        told
     }
 
     /// What a socket holding this token may see, under one lock.
@@ -1470,7 +1504,7 @@ impl Registry {
             votes.retain(|_, cast| !cast.is_empty());
             let mut revealed = item.revealed;
             revealed.retain(|slide| *slide < slides.len());
-            let (tx, _) = broadcast::channel(64);
+            let (tx, _) = broadcast::channel(CHANNEL_DEPTH);
             // Carrying the age forward means the next sweep drops whatever had
             // already run out, rather than the restart granting it a new life.
             let touched = now
@@ -1493,6 +1527,7 @@ impl Registry {
                     current,
                     step,
                     viewers: 0,
+                    viewers_dirty: false,
                     touched,
                     tx,
                     votes,
@@ -1899,6 +1934,41 @@ mod tests {
             1,
             "the parked point was lost across the restart"
         );
+    }
+
+    #[test]
+    fn viewer_changes_are_coalesced_into_one_frame() {
+        let reg = registry();
+        let (id, _mc) = reg.create("# Welcome").unwrap();
+        let mut console = reg.subscribe(&id).unwrap();
+
+        // A QR code going up. Nothing is sent per arrival.
+        for _ in 0..50 {
+            reg.with_mut(&id, Session::join).flatten().unwrap();
+        }
+        assert!(
+            console.try_recv().is_err(),
+            "a phone arriving told the whole room about it"
+        );
+
+        assert_eq!(reg.flush_viewers(), 1, "the room was never told at all");
+        let frame = console.try_recv().expect("no count after the flush");
+        assert!(
+            frame.owner.contains("\"count\":50"),
+            "the count did not catch up in one frame: {}",
+            frame.owner
+        );
+        assert!(
+            frame.audience.is_none(),
+            "the room was sent its own size after all"
+        );
+        assert!(
+            console.try_recv().is_err(),
+            "the flush sent more than one frame"
+        );
+
+        // Nothing moved, so there is nothing to say.
+        assert_eq!(reg.flush_viewers(), 0, "a quiet room was told again");
     }
 
     #[test]

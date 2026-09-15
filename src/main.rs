@@ -159,6 +159,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // The room's size is told on a timer rather than on every arrival, so a
+    // QR code going up is one frame and not one per phone.
+    let counter = registry.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            tick.tick().await;
+            counter.flush_viewers();
+        }
+    });
+
     let sweeper = registry.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(300));

@@ -83,6 +83,9 @@ pub enum ServerMsg {
         current: usize,
         step: usize,
     },
+    /// How many phones are in the room. Presenter only: it is drawn on the
+    /// console and nowhere else, and a room of four hundred does not need four
+    /// hundred copies of its own size.
     Viewers {
         count: usize,
     },
@@ -185,7 +188,7 @@ impl ServerMsg {
                 staged: *staged,
                 open: *open,
             }),
-            ServerMsg::Tally { .. } => None,
+            ServerMsg::Tally { .. } | ServerMsg::Viewers { .. } => None,
             other => Some(other.clone()),
         }
     }
@@ -387,6 +390,15 @@ mod tests {
         assert!(owner.contains("Needs a rewrite"));
         assert!(!audience.contains("Needs a rewrite"), "{audience}");
         assert!(audience.contains("Borrow checking"));
+    }
+
+    #[test]
+    fn the_room_is_not_told_how_many_are_watching() {
+        let msg = ServerMsg::Viewers { count: 400 };
+        assert!(
+            msg.redacted().is_none(),
+            "the room was sent its own size, once per phone that arrived"
+        );
     }
 
     #[test]
