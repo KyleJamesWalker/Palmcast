@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-use rand::Rng;
+use rand::RngExt;
 use subtle::ConstantTimeEq;
 use tokio::sync::broadcast;
 
