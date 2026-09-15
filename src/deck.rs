@@ -459,20 +459,68 @@ fn render(body: &str) -> String {
 
 /// Blocks `javascript:` and `data:` hrefs, which would otherwise run when a
 /// viewer taps a link in someone else's deck.
+/// Schemes a deck may send a phone to. An allowlist, because a blocklist only
+/// ever knows the schemes somebody thought of: `intent:` on Android and
+/// `ms-word:` on Windows both hand the tap to another application.
+const SAFE_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
+
 fn is_safe_url(url: &str) -> bool {
     let trimmed: String = url
         .chars()
         .filter(|c| !c.is_whitespace() && !c.is_control())
         .collect();
     let lowered = trimmed.to_ascii_lowercase();
-    !(lowered.starts_with("javascript:")
-        || lowered.starts_with("data:")
-        || lowered.starts_with("vbscript:"))
+
+    // A scheme is letters, digits, plus, dash and dot, up to the first colon.
+    // Anything without one is relative or a fragment, which goes nowhere this
+    // instance does not already serve.
+    let Some(colon) = lowered.find(':') else {
+        return true;
+    };
+    let scheme = &lowered[..colon];
+    if scheme.is_empty() || !scheme.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return true;
+    }
+    if !scheme
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+    {
+        return true;
+    }
+    SAFE_SCHEMES.contains(&scheme)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_web_schemes_survive_in_a_link() {
+        for blocked in [
+            "javascript:alert(1)",
+            "data:text/html,<script>",
+            "vbscript:msgbox",
+            "intent://x",
+            "ms-word:ofe|u|x",
+            "file:///etc/passwd",
+            "tel:+15551234",
+        ] {
+            assert!(!is_safe_url(blocked), "{blocked} was let through");
+        }
+
+        for allowed in [
+            "https://example.com/a",
+            "http://example.com",
+            "HTTPS://EXAMPLE.COM",
+            "mailto:someone@example.com",
+            "/relative",
+            "#anchor",
+            "page.html",
+            "?q=1",
+        ] {
+            assert!(is_safe_url(allowed), "{allowed} was stripped");
+        }
+    }
 
     #[test]
     fn a_star_list_comes_in_one_item_at_a_time() {
