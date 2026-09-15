@@ -514,6 +514,33 @@ by votes. The presenter marks a question answered, which sinks
 it rather than deleting it. Someone who joins late gets the questions already
 asked and the board as it stands.
 
+## Let somebody in late
+
+Somebody always walks in after the QR code has come down. Two ways back in,
+neither of which is the presenter reading a URL out.
+
+**Room** carries the code. Anyone already in can open the panel and hold their
+phone out to the person next to them, and nobody has to interrupt the talk.
+
+**Show QR** on the presenter console puts it on every screen in the room at
+once, the stage view included, which is the screen everyone is already facing.
+Press it again to take it down, or just carry on: moving the deck takes it down
+by itself, so a presenter who puts the code up and keeps talking never leaves
+the room reading a QR code instead of the slides.
+
+Whoever drives can do it, so a speaker holding the controls can share the room
+during their own talk without asking the host.
+
+The code is drawn by the server, not the page, because the address behind it is
+the one the server knows. Behind a proxy set `--public-url`: a QR code is the
+one thing a whole room scans without reading it, and a Host header is something
+a caller chooses.
+
+Whether the code is up is part of the room rather than of one screen, so a
+phone that joins while it is showing lands on it too, and one that slept
+through the flip catches up rather than sitting on a stale slide. It is not
+kept across a restart: a room coming back should come back on its slides.
+
 ## Configuration
 
 | Flag | Environment variable | Default | Purpose |
