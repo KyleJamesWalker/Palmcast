@@ -56,6 +56,16 @@ export const DECK_RULES = [
   '  tables all render. A table is read on a phone: three columns at most.',
   '- Raw HTML is shown as text rather than rendered, and a deck cannot carry',
   '  CSS. Layout is whatever Markdown gives you.',
+  '- `<!-- theme: paper -->` on a line of its own paints the deck. Every',
+  '  instance has `ember` (the dark default), `daylight`, `bold`, `paper` and',
+  '  `neon`; an instance may add more. The line is read wherever it appears and',
+  '  applies to the whole deck, and it is never drawn on a slide.',
+  '- `<!-- transition: fade -->` sets how the deck moves between slides, from',
+  '  that slide on. Add a time to change how long it takes, as in',
+  '  `<!-- transition: cover 1s -->`. `<!-- _transition: none -->` applies to',
+  '  its own slide only. The names are Marp\'s: fade, slide, cover, push, pull,',
+  '  reveal, zoom, flip, cube, iris-in, wipe, none and twenty more.',
+  '  A name the instance does not have is ignored rather than breaking.',
   'Neither `---` nor `???` applies inside a fenced code block.',
 ].join('\n');
 

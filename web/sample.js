@@ -5,7 +5,9 @@
 /// one is a deck that explains itself and presents. The fenced example in the
 /// syntax slide holds the characters that split a deck and the task items that
 /// make a question, so the sample is also the case that proves a fence works.
-export const SAMPLE = `## What is Palmcast?
+export const SAMPLE = `<!-- transition: cover -->
+
+## What is Palmcast?
 
 - **In every palm:** live slides on the audience's own phones
 - **Projector optional:** meetups, bars, breakout rooms, anywhere
@@ -35,8 +37,8 @@ already a question the room can tap.
 
 - \`---\` alone on a line starts a slide
 - \`???\` starts speaker notes only you see
-- A fenced block keeps both of those as text
-- Task lists inside a fence stay code, so this example is safe
+- \`<!-- theme: neon -->\` paints it, \`<!-- transition: cube -->\` moves it
+- A fenced block keeps all of those as text
 
 \`\`\`markdown
 ---
