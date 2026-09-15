@@ -269,7 +269,20 @@ export function themeIn(text) {
 /// Deck wide and last-wins on the server, so this rewrites the line the deck
 /// already has rather than adding a second one that silently beats it. A deck
 /// with none gets it at the very top, where someone reading the source finds it.
-export function setTheme(doc, name) {
+///
+/// `scoped` writes `_theme` on the cursor's own line instead, which paints that
+/// slide and no others.
+export function setTheme(doc, name, scoped = false) {
+  if (scoped) return setAtCursor(doc, 'theme', name, true);
+  const { text: source } = doc;
+  // Widening a slide's own look rewrites that line rather than leaving it
+  // behind to beat the deck wide one written above it. `theme` is deck wide
+  // wherever it sits, so the line it is already on is a fine place for it.
+  const [from, to] = lineBounds(source, doc.start);
+  const on = directiveOn(source.slice(from, to));
+  if (on && on.name === '_theme' && !inFence(source, from + 1)) {
+    return setAtCursor(doc, 'theme', name, false);
+  }
   const { text } = doc;
   const lines = directiveLines(text, 'theme');
 
@@ -299,15 +312,23 @@ export function setTheme(doc, name) {
 /// `scoped` writes `_transition`, which covers the slide it sits on and no
 /// others. Plain `transition` keeps applying until another one replaces it.
 export function setTransition(doc, name, scoped = false) {
+  return setAtCursor(doc, 'transition', name, scoped);
+}
+
+/// Writes a directive on the cursor's own line, replacing one already there.
+///
+/// Shared by the transition picker and by a theme scoped to one slide: both
+/// govern the slide they sit on, so both belong at the cursor rather than at
+/// the top of the deck.
+function setAtCursor(doc, base, name, scoped) {
   const { text } = doc;
   const [lineStart, lineEnd] = lineBounds(text, doc.start);
   const here = directiveOn(text.slice(lineStart, lineEnd));
-  // `_transition` and `transition` are the same directive with a different
-  // reach, so picking one over the other rewrites the line rather than leaving
-  // both on it arguing.
+  // `_x` and `x` are the same directive with a different reach, so picking one
+  // over the other rewrites the line rather than leaving both on it arguing.
   const standing =
-    here && here.name.replace(/^_/, '') === 'transition' && !inFence(text, lineStart + 1);
-  const mark = scoped ? '_transition' : 'transition';
+    here && here.name.replace(/^_/, '') === base && !inFence(text, lineStart + 1);
+  const mark = scoped ? `_${base}` : base;
 
   if (standing) {
     if (!name) {

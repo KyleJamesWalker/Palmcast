@@ -276,3 +276,25 @@ test('clearing from the line the picker wrote takes that line out', () => {
   doc = apply(doc, setTransition(doc, ''));
   assert.doesNotMatch(doc.text, /transition/);
 });
+
+test('a theme scoped to one slide is written where the cursor is', () => {
+  const doc = { text: '# One\n\n---\n\n# Two', start: 10, end: 10 };
+  const edit = setTheme(doc, 'neon', true);
+  const out = doc.text.slice(0, edit.from) + edit.insert + doc.text.slice(edit.to);
+  assert.match(out, /<!-- _theme: neon -->/);
+  assert.ok(!out.startsWith('<!-- _theme'), 'a scoped look was written deck wide');
+});
+
+test('an unscoped theme still goes deck wide at the top', () => {
+  const doc = { text: '# One', start: 3, end: 3 };
+  const edit = setTheme(doc, 'neon');
+  const out = doc.text.slice(0, edit.from) + edit.insert + doc.text.slice(edit.to);
+  assert.ok(out.startsWith('<!-- theme: neon -->'), out);
+});
+
+test('switching the reach rewrites the directive rather than adding a second', () => {
+  const text = '<!-- _theme: neon -->\n\n# Two';
+  const edit = setTheme({ text, start: 2, end: 2 }, 'ember', false);
+  const out = text.slice(0, edit.from) + edit.insert + text.slice(edit.to);
+  assert.equal((out.match(/theme:/g) || []).length, 1, out);
+});
