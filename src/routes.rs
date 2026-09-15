@@ -33,6 +33,28 @@ const CSP: &str = "default-src 'self'; img-src 'self' data: https: http:; \
 style-src 'self'; script-src 'self'; connect-src 'self' ws: wss:; \
 frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
 
+/// The caller's token: the Authorization header first, the query string second.
+///
+/// A reverse proxy logs the full request line, so a token in the query lands in
+/// access logs. The query form is kept for one release so tabs opened before
+/// the change keep working, and says so in the log when it is used.
+fn token_from(headers: &HeaderMap, params: &HashMap<String, String>) -> String {
+    if let Some(bearer) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+    {
+        return bearer.trim().to_string();
+    }
+    match params.get("token") {
+        Some(token) => {
+            tracing::warn!("token read from a query string; move it to the Authorization header");
+            token.clone()
+        }
+        None => String::new(),
+    }
+}
+
 async fn security_headers(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
@@ -192,8 +214,9 @@ async fn export_evening(
     State(registry): State<Registry>,
     Path(id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
 ) -> Response {
-    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    let token = &token_from(&headers, &params);
     let built = registry.with(&id, |s| {
         s.role_of(token).hosts().then(|| crate::export::bundle(s))
     });
@@ -272,8 +295,9 @@ async fn read_talk(
     State(registry): State<Registry>,
     Path((id, talk)): Path<(String, u64)>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
 ) -> Response {
-    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    let token = &token_from(&headers, &params);
     let found = registry.with(&id, |s| match s.talk_detail(talk) {
         None => Err(StatusCode::NOT_FOUND),
         Some(_) if !allowed(s, talk, token) => Err(StatusCode::FORBIDDEN),
@@ -308,9 +332,10 @@ async fn update_talk(
     State(registry): State<Registry>,
     Path((id, talk)): Path<(String, u64)>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
     axum::Json(body): axum::Json<TalkEdit>,
 ) -> Response {
-    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    let token = &token_from(&headers, &params);
     let outcome = registry.with_mut(&id, |s| {
         // A talk that is gone is gone for everyone, so say so rather than
         // refusing the speaker who wrote it.
@@ -442,7 +467,7 @@ async fn upload_image(
         return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "that is not an image").into_response();
     }
 
-    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    let token = &token_from(&headers, &params);
     let who = params.get("who").map(String::as_str).unwrap_or_default();
     let talk = params.get("talk").and_then(|t| t.parse::<u64>().ok());
 
@@ -572,12 +597,13 @@ async fn update_session(
     State(registry): State<Registry>,
     Path(id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
     axum::Json(body): axum::Json<DeckBody>,
 ) -> Response {
     if body.markdown.len() > MAX_DECK_BYTES {
         return (StatusCode::PAYLOAD_TOO_LARGE, "deck too large").into_response();
     }
-    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    let token = &token_from(&headers, &params);
     let base_rev = params.get("rev").and_then(|r| r.parse::<u64>().ok());
 
     let role = registry.role(&id, token);
@@ -606,8 +632,9 @@ async fn whoami(
     State(registry): State<Registry>,
     Path(id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
 ) -> Response {
-    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    let token = &token_from(&headers, &params);
     // A driver drives without editing, so it cannot fold into either of the
     // other two: the console has to hide the lineup from a speaker.
     let name = match registry.role(&id, token) {
@@ -624,8 +651,9 @@ async fn cohost_link(
     State(registry): State<Registry>,
     Path(id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
 ) -> Response {
-    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    let token = &token_from(&headers, &params);
     match registry.cohost_token(&id, token) {
         Some(cohost) => cohost.into_response(),
         None => StatusCode::FORBIDDEN.into_response(),
@@ -644,8 +672,9 @@ async fn get_markdown(
     State(registry): State<Registry>,
     Path(id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
 ) -> Response {
-    let token = params.get("token").map(String::as_str).unwrap_or_default();
+    let token = &token_from(&headers, &params);
     if !registry.role(&id, token).edits() {
         return StatusCode::FORBIDDEN.into_response();
     }

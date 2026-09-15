@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::broadcast::error::RecvError;
@@ -14,16 +16,45 @@ pub struct Join {
     pub who: String,
 }
 
+/// How long a socket that offered no token in its URL is given to send one.
+/// Only a client that never sends the frame waits this out; every page sends it
+/// the moment the socket opens.
+const AUTH_WAIT: Duration = Duration::from_secs(5);
+
 pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
     let Join { id, token, who } = join;
-    // Notes, tallies and the deck source follow the ability to edit or drive,
-    // so a co-host sees what they need to write the next question and a speaker
-    // handed the controls sees their own notes.
-    let mut is_staff = staff_now(&registry, &id, token.as_deref());
     let Some(mut rx) = registry.subscribe(&id) else {
         return;
     };
     let (mut sink, mut stream) = socket.split();
+
+    // Browsers cannot set a header on a WebSocket, so a presenter's token
+    // arrives as the first frame. Waiting for it means a presenter socket is
+    // never hydrated as a viewer and corrected a moment later.
+    let mut early = None;
+    let token = match token {
+        Some(token) => Some(token),
+        None => match tokio::time::timeout(AUTH_WAIT, stream.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => {
+                match serde_json::from_str::<ClientMsg>(&text) {
+                    Ok(ClientMsg::Auth { token }) => Some(token).filter(|t| !t.is_empty()),
+                    // Not the auth frame, so this socket is an audience one.
+                    // Hold what it sent rather than dropping it on the floor.
+                    Ok(other) => {
+                        early = Some(other);
+                        None
+                    }
+                    Err(_) => None,
+                }
+            }
+            _ => None,
+        },
+    };
+
+    // Notes, tallies and the deck source follow the ability to edit or drive,
+    // so a co-host sees what they need to write the next question and a speaker
+    // handed the controls sees their own notes.
+    let mut is_staff = staff_now(&registry, &id, token.as_deref());
 
     // One lock for the whole opening state, so a socket is never hydrated from
     // a snapshot of one moment and a leaderboard of another.
@@ -39,6 +70,9 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join) {
     // look like a broken app rather than a full one.
     if registry.with_mut(&id, Session::join).flatten().is_none() {
         return;
+    }
+    if let Some(msg) = early.take() {
+        handle(&registry, &id, token.as_deref(), &who, msg);
     }
 
     loop {
@@ -101,6 +135,9 @@ fn staff_now(registry: &Registry, id: &str, token: Option<&str>) -> bool {
 fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: ClientMsg) {
     let token = token.unwrap_or("");
     match msg {
+        // Read once when the socket opened. A later one changes nothing, so a
+        // viewer cannot talk its way into a presenter's socket.
+        ClientMsg::Auth { .. } => {}
         ClientMsg::Goto { index, step } => {
             registry.with_mut(id, |s| s.goto(token, index, step));
         }

@@ -647,8 +647,18 @@ that address. The policy allows it, because that is what an image in a deck is,
 and whoever serves the picture sees the room. Run `--uploads` for a room that
 should tell an outsider nothing.
 
-The presenter token travels in the URL fragment, which browsers never send to the
-server. Copy the presenter link to move control to another device.
+The presenter token travels in the URL fragment, which browsers never send to
+the server. Copy the presenter link to move control to another device.
+
+Past the page load, the token never appears in a URL either. Authenticated HTTP
+calls send it as `Authorization: Bearer <token>`, and the socket sends it in an
+`auth` frame the moment it opens, because a browser cannot set a header on a
+WebSocket. A reverse proxy logs the request line, so a token in a query string
+lands in an access log; a header and a socket frame do not.
+
+For one release the server still accepts `?token=` on the HTTP endpoints and the
+socket URL, so tabs opened before the change keep working. It logs a warning
+when it reads one. That fallback goes in the release after.
 
 ## Develop
 

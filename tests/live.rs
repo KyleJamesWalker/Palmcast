@@ -68,12 +68,27 @@ async fn open(host: &str, id: &str, token: Option<&str>) -> Socket {
     open_as(host, id, token, "anon").await
 }
 
+/// Opens a socket the way a page does: no token in the url, and the auth frame
+/// first. Every socket sends it, an audience one with an empty token, because
+/// the server holds the opening state until it arrives.
 async fn open_as(host: &str, id: &str, token: Option<&str>, who: &str) -> Socket {
-    let query = match token {
-        Some(t) => format!("?who={who}&token={t}"),
-        None => format!("?who={who}"),
-    };
-    let (socket, _) = connect_async(format!("ws://{host}/s/{id}/ws{query}"))
+    let (mut socket, _) = connect_async(format!("ws://{host}/s/{id}/ws?who={who}"))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(
+            serde_json::json!({ "type": "auth", "token": token.unwrap_or("") })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    socket
+}
+
+/// The url form the server still accepts for one release.
+async fn open_with_token_in_the_url(host: &str, id: &str, token: &str) -> Socket {
+    let (socket, _) = connect_async(format!("ws://{host}/s/{id}/ws?who=anon&token={token}"))
         .await
         .unwrap();
     socket
@@ -123,6 +138,82 @@ async fn the_presenter_does_receive_speaker_notes() {
 
     assert_eq!(opening["type"], "deck");
     assert_eq!(opening["slides"][0]["notes"], "the secret note");
+}
+
+/// The token used to ride the query string, where a reverse proxy writes it
+/// into an access log. Both forms work for one release so open tabs survive.
+#[tokio::test]
+async fn a_deprecated_token_in_the_url_still_opens_a_presenter_socket() {
+    let host = spawn().await;
+    let (id, token) = create(&host, DECK).await;
+
+    let mut presenter = open_with_token_in_the_url(&host, &id, &token).await;
+    let opening = next_json(&mut presenter).await;
+    assert_eq!(opening["type"], "deck");
+    assert_eq!(opening["slides"][0]["notes"], "the secret note");
+}
+
+#[tokio::test]
+async fn a_deprecated_token_in_the_url_still_reads_the_deck_source() {
+    let host = spawn().await;
+    let (id, token) = create(&host, DECK).await;
+
+    let res = reqwest::get(format!(
+        "http://{host}/api/sessions/{id}/markdown?token={token}"
+    ))
+    .await
+    .unwrap();
+    assert_eq!(res.status(), 200);
+}
+
+/// The header is what the pages send now, and it is what a token in the url
+/// falls back to. A request carrying both takes the header.
+#[tokio::test]
+async fn the_header_wins_over_a_token_left_in_the_url() {
+    let host = spawn().await;
+    let (id, token) = create(&host, DECK).await;
+
+    let res = reqwest::Client::new()
+        .get(format!(
+            "http://{host}/api/sessions/{id}/markdown?token=guessed"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200, "the stale query token beat the header");
+
+    let res = reqwest::Client::new()
+        .get(format!(
+            "http://{host}/api/sessions/{id}/markdown?token={token}"
+        ))
+        .bearer_auth("guessed")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 403, "a bad header fell back to a good query");
+}
+
+/// A socket that never says who it is gets the audience view rather than
+/// hanging on the handshake.
+#[tokio::test]
+async fn a_socket_that_sends_no_auth_frame_is_audience() {
+    let host = spawn().await;
+    let (id, _token) = create(&host, DECK).await;
+
+    let (mut socket, _) = connect_async(format!("ws://{host}/s/{id}/ws?who=anon"))
+        .await
+        .unwrap();
+    // Any frame ends the wait. A vote is what an audience page sends first.
+    socket
+        .send(Message::Text(
+            r#"{"type":"answer","slide":0,"options":[0]}"#.into(),
+        ))
+        .await
+        .unwrap();
+    let opening = next_json(&mut socket).await;
+    assert_eq!(opening["type"], "deck");
+    assert_eq!(opening["slides"][0]["notes"], "");
 }
 
 #[tokio::test]
@@ -952,7 +1043,8 @@ async fn an_over_long_name_is_refused() {
 
 async fn put_deck(host: &str, id: &str, token: &str, markdown: &str) -> reqwest::StatusCode {
     reqwest::Client::new()
-        .put(format!("http://{host}/api/sessions/{id}?token={token}"))
+        .put(format!("http://{host}/api/sessions/{id}"))
+        .bearer_auth(token)
         .json(&serde_json::json!({ "markdown": markdown }))
         .send()
         .await
@@ -1342,7 +1434,10 @@ async fn an_unrevealed_question_is_still_withheld_from_an_arriving_viewer() {
 }
 
 async fn cohost_token(host: &str, id: &str, mc: &str) -> String {
-    let res = reqwest::get(format!("http://{host}/api/sessions/{id}/cohost?token={mc}"))
+    let res = reqwest::Client::new()
+        .get(format!("http://{host}/api/sessions/{id}/cohost"))
+        .bearer_auth(mc)
+        .send()
         .await
         .unwrap();
     assert_eq!(res.status(), 200);
@@ -1359,11 +1454,12 @@ async fn only_the_mc_can_mint_a_cohost_link() {
     assert_ne!(cohost, token, "the cohost link is just the mc token again");
 
     for wrong in ["", "not-a-token", cohost.as_str()] {
-        let res = reqwest::get(format!(
-            "http://{host}/api/sessions/{id}/cohost?token={wrong}"
-        ))
-        .await
-        .unwrap();
+        let res = reqwest::Client::new()
+            .get(format!("http://{host}/api/sessions/{id}/cohost"))
+            .bearer_auth(wrong)
+            .send()
+            .await
+            .unwrap();
         assert_eq!(res.status(), 403, "a cohost link was handed to {wrong:?}");
     }
 }
@@ -1422,11 +1518,12 @@ async fn a_viewer_still_cannot_edit_or_read_the_source() {
     let (id, _token) = create(&host, EDIT_DECK).await;
 
     assert_eq!(put_deck(&host, &id, "guessed", "# Hijacked").await, 403);
-    let res = reqwest::get(format!(
-        "http://{host}/api/sessions/{id}/markdown?token=guessed"
-    ))
-    .await
-    .unwrap();
+    let res = reqwest::Client::new()
+        .get(format!("http://{host}/api/sessions/{id}/markdown"))
+        .bearer_auth("guessed")
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status(), 403);
 }
 
@@ -1439,9 +1536,8 @@ async fn the_second_editor_to_save_is_told_rather_than_overwriting() {
 
     // Both opened the deck at revision 1.
     let first = client
-        .put(format!(
-            "http://{host}/api/sessions/{id}?token={token}&rev=1"
-        ))
+        .put(format!("http://{host}/api/sessions/{id}?rev=1"))
+        .bearer_auth(&token)
         .json(&serde_json::json!({ "markdown": "# The mc got there first" }))
         .send()
         .await
@@ -1449,23 +1545,23 @@ async fn the_second_editor_to_save_is_told_rather_than_overwriting() {
     assert_eq!(first.status(), 204);
 
     let second = client
-        .put(format!(
-            "http://{host}/api/sessions/{id}?token={cohost}&rev=1"
-        ))
+        .put(format!("http://{host}/api/sessions/{id}?rev=1"))
+        .bearer_auth(&cohost)
         .json(&serde_json::json!({ "markdown": "# The cohost would have clobbered it" }))
         .send()
         .await
         .unwrap();
     assert_eq!(second.status(), 409, "the second save overwrote the first");
 
-    let kept = reqwest::get(format!(
-        "http://{host}/api/sessions/{id}/markdown?token={token}"
-    ))
-    .await
-    .unwrap()
-    .text()
-    .await
-    .unwrap();
+    let kept = reqwest::Client::new()
+        .get(format!("http://{host}/api/sessions/{id}/markdown"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
     assert!(kept.contains("mc got there first"), "kept: {kept}");
 }
 
@@ -1485,11 +1581,12 @@ async fn a_cohost_cannot_hand_out_further_cohost_links() {
     let (id, token) = create(&host, EDIT_DECK).await;
     let cohost = cohost_token(&host, &id, &token).await;
 
-    let res = reqwest::get(format!(
-        "http://{host}/api/sessions/{id}/cohost?token={cohost}"
-    ))
-    .await
-    .unwrap();
+    let res = reqwest::Client::new()
+        .get(format!("http://{host}/api/sessions/{id}/cohost"))
+        .bearer_auth(&cohost)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status(), 403, "a cohost minted another cohost");
 }
 
@@ -1620,14 +1717,15 @@ async fn a_deck_link_carries_the_slides_and_nothing_the_room_added() {
         .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let markdown = reqwest::get(format!(
-        "http://{host}/api/sessions/{id}/markdown?token={presenter}"
-    ))
-    .await
-    .unwrap()
-    .text()
-    .await
-    .unwrap();
+    let markdown = reqwest::Client::new()
+        .get(format!("http://{host}/api/sessions/{id}/markdown"))
+        .bearer_auth(&presenter)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
 
     let (_, body) = post_json(
         &host,
@@ -1805,7 +1903,10 @@ async fn the_export_holds_the_evening() {
     .await;
     tokio::time::sleep(Duration::from_millis(60)).await;
 
-    let bytes = reqwest::get(format!("http://{host}/api/sessions/{id}/export?token={mc}"))
+    let bytes = reqwest::Client::new()
+        .get(format!("http://{host}/api/sessions/{id}/export"))
+        .bearer_auth(&mc)
+        .send()
         .await
         .unwrap()
         .bytes()
@@ -1907,11 +2008,12 @@ async fn put_up(host: &str, id: &str, who: &str, markdown: &str) -> (u64, String
 }
 
 async fn read_talk(host: &str, id: &str, talk: u64, token: &str) -> (u16, Value) {
-    let res = reqwest::get(format!(
-        "http://{host}/api/sessions/{id}/talks/{talk}?token={token}"
-    ))
-    .await
-    .unwrap();
+    let res = reqwest::Client::new()
+        .get(format!("http://{host}/api/sessions/{id}/talks/{talk}"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
     let status = res.status().as_u16();
     let body = res.text().await.unwrap();
     (status, serde_json::from_str(&body).unwrap_or(Value::Null))
@@ -1932,9 +2034,8 @@ async fn a_speaker_reads_and_rewrites_their_own_talk_while_they_wait() {
     assert_eq!(detail["dropped"], false);
 
     let res = reqwest::Client::new()
-        .put(format!(
-            "http://{host}/api/sessions/{id}/talks/{talk}?token={token}"
-        ))
+        .put(format!("http://{host}/api/sessions/{id}/talks/{talk}"))
+        .bearer_auth(&token)
         .json(&serde_json::json!({
             "title": "Borrow checking, shorter",
             "markdown": "# Borrow checking\n\n---\n\n# One rule",
@@ -1966,9 +2067,8 @@ async fn a_phone_cannot_open_a_talk_it_did_not_write() {
     );
 
     let res = reqwest::Client::new()
-        .put(format!(
-            "http://{host}/api/sessions/{id}/talks/{talk}?token={stranger}"
-        ))
+        .put(format!("http://{host}/api/sessions/{id}/talks/{talk}"))
+        .bearer_auth(&stranger)
         .json(&serde_json::json!({ "title": "", "markdown": "# Not yours" }))
         .send()
         .await
@@ -2137,9 +2237,8 @@ async fn a_deleted_talk_reads_as_gone_to_the_phone_that_wrote_it() {
 
     assert_eq!(read_talk(&host, &id, talk, &token).await.0, 404);
     let res = reqwest::Client::new()
-        .put(format!(
-            "http://{host}/api/sessions/{id}/talks/{talk}?token={token}"
-        ))
+        .put(format!("http://{host}/api/sessions/{id}/talks/{talk}"))
+        .bearer_auth(&token)
         .json(&serde_json::json!({ "title": "", "markdown": "# Back" }))
         .send()
         .await
@@ -2251,13 +2350,25 @@ fn picture(width: u32, height: u32) -> Vec<u8> {
 }
 
 async fn put_image(host: &str, id: &str, query: &str, kind: &str, bytes: Vec<u8>) -> (u16, String) {
-    let res = reqwest::Client::new()
+    put_image_as(host, id, query, "", kind, bytes).await
+}
+
+async fn put_image_as(
+    host: &str,
+    id: &str,
+    query: &str,
+    token: &str,
+    kind: &str,
+    bytes: Vec<u8>,
+) -> (u16, String) {
+    let mut request = reqwest::Client::new()
         .post(format!("http://{host}/api/sessions/{id}/images?{query}"))
         .header("content-type", kind)
-        .body(bytes)
-        .send()
-        .await
-        .unwrap();
+        .body(bytes);
+    if !token.is_empty() {
+        request = request.bearer_auth(token);
+    }
+    let res = request.send().await.unwrap();
     let status = res.status().as_u16();
     (status, res.text().await.unwrap())
 }
@@ -2268,14 +2379,8 @@ async fn an_instance_without_uploads_takes_none() {
     let host = spawn().await;
     let (id, token) = create(&host, "# Deck").await;
 
-    let (status, _) = put_image(
-        &host,
-        &id,
-        &format!("token={token}&who=ada"),
-        "image/png",
-        picture(20, 20),
-    )
-    .await;
+    let (status, _) =
+        put_image_as(&host, &id, "who=ada", &token, "image/png", picture(20, 20)).await;
     assert_eq!(status, 404, "an instance with uploads off took one");
 
     let config: Value = reqwest::get(format!("http://{host}/api/config"))
@@ -2295,14 +2400,8 @@ async fn an_uploaded_picture_is_shrunk_before_the_room_can_ask_for_it() {
     let (id, token) = create(&host, "# Deck").await;
 
     let raw = picture(4000, 3000);
-    let (status, body) = put_image(
-        &host,
-        &id,
-        &format!("token={token}&who=ada"),
-        "image/png",
-        raw.clone(),
-    )
-    .await;
+    let (status, body) =
+        put_image_as(&host, &id, "who=ada", &token, "image/png", raw.clone()).await;
     assert_eq!(status, 201, "the upload was refused: {body}");
     let url = serde_json::from_str::<Value>(&body).unwrap()["url"]
         .as_str()
@@ -2338,20 +2437,22 @@ async fn something_that_is_not_a_picture_is_refused() {
     let host = spawn_with_uploads().await;
     let (id, token) = create(&host, "# Deck").await;
 
-    let (status, _) = put_image(
+    let (status, _) = put_image_as(
         &host,
         &id,
-        &format!("token={token}&who=ada"),
+        "who=ada",
+        &token,
         "text/markdown",
         b"# not a picture".to_vec(),
     )
     .await;
     assert_eq!(status, 415, "a markdown file was taken as an image");
 
-    let (status, _) = put_image(
+    let (status, _) = put_image_as(
         &host,
         &id,
-        &format!("token={token}&who=ada"),
+        "who=ada",
+        &token,
         "image/png",
         b"not a png at all".to_vec(),
     )
@@ -2386,11 +2487,11 @@ async fn a_stranger_uploads_only_while_the_room_is_taking_talks() {
 async fn a_phone_cannot_fill_a_room_with_pictures() {
     let host = spawn_with_uploads().await;
     let (id, token) = create(&host, "# Deck").await;
-    let query = format!("token={token}&who=ada");
-
-    let (first, _) = put_image(&host, &id, &query, "image/png", picture(10, 10)).await;
+    let (first, _) =
+        put_image_as(&host, &id, "who=ada", &token, "image/png", picture(10, 10)).await;
     assert_eq!(first, 201);
-    let (again, _) = put_image(&host, &id, &query, "image/png", picture(10, 10)).await;
+    let (again, _) =
+        put_image_as(&host, &id, "who=ada", &token, "image/png", picture(10, 10)).await;
     assert_eq!(again, 429, "a second picture landed with no wait");
 }
 

@@ -191,6 +191,13 @@ impl ServerMsg {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
+    /// The first frame a presenter sends. Browsers cannot set a header on a
+    /// WebSocket, so the token travels here rather than in the URL, where a
+    /// proxy would log it. An audience socket sends it empty.
+    Auth {
+        #[serde(default)]
+        token: String,
+    },
     Goto {
         index: usize,
         /// How much of that slide to show. Absent means the whole of it, which

@@ -57,10 +57,11 @@ export function connect(id, token, handlers) {
   let stopped = false;
   let backoff = 500;
 
+  // No token here: a proxy logs the request line, and the socket URL is part
+  // of it. The token goes in the first frame instead.
   const url = () => {
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
     const query = new URLSearchParams({ who: viewerId() });
-    if (token) query.set('token', token);
     return `${scheme}://${location.host}/s/${id}/ws?${query}`;
   };
 
@@ -76,6 +77,10 @@ export function connect(id, token, handlers) {
     ws.onopen = () => {
       if (!live()) return;
       backoff = 500;
+      // Always first, and always sent: the server holds the opening state
+      // until it arrives, so an audience socket says it has no token rather
+      // than leaving the server to wait out the timeout.
+      ws.send(JSON.stringify({ type: 'auth', token: token ?? '' }));
       handlers.status?.('live');
     };
 
@@ -136,6 +141,14 @@ export function connect(id, token, handlers) {
       socket?.close();
     },
   };
+}
+
+/// Every authenticated call goes through here. The token rides a header rather
+/// than the query string, which a reverse proxy writes into its access log.
+export function authFetch(url, token, options = {}) {
+  const headers = new Headers(options.headers ?? {});
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  return fetch(url, { ...options, headers });
 }
 
 /// True only on a definite answer that the room is not there. An unreachable

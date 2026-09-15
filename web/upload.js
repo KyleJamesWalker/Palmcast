@@ -13,11 +13,22 @@ export async function uploadsOn(fetcher = globalThis.fetch) {
 }
 
 /// Puts a picture in the room and hands back the markdown that shows it.
-export async function uploadImage(session, file, query = {}, fetcher = globalThis.fetch) {
+///
+/// The token is a header, not a query parameter: an upload is a request line a
+/// proxy logs like any other.
+export async function uploadImage(
+  session,
+  file,
+  query = {},
+  token = '',
+  fetcher = globalThis.fetch,
+) {
   const params = new URLSearchParams({ who: viewerId(), ...query });
+  const headers = { 'content-type': file.type };
+  if (token) headers.authorization = `Bearer ${token}`;
   const res = await fetcher(`/api/sessions/${session}/images?${params}`, {
     method: 'POST',
-    headers: { 'content-type': file.type },
+    headers,
     body: file,
   });
   if (!res.ok) throw new Error((await res.text()) || `server said ${res.status}`);
@@ -30,7 +41,15 @@ export async function uploadImage(session, file, query = {}, fetcher = globalThi
 /// A phone picks a photograph in one tap and then takes a moment over it: the
 /// bytes go up, the server shrinks them, and only then is there a url to write.
 /// The button says so rather than looking broken.
-export function attachUpload({ button, input, textarea, session, query = () => ({}), onError }) {
+export function attachUpload({
+  button,
+  input,
+  textarea,
+  session,
+  query = () => ({}),
+  token = () => '',
+  onError,
+}) {
   button.addEventListener('click', () => input.click());
 
   input.addEventListener('change', async () => {
@@ -43,7 +62,7 @@ export function attachUpload({ button, input, textarea, session, query = () => (
     button.disabled = true;
     button.textContent = 'Adding…';
     try {
-      insert(textarea, `![](${await uploadImage(session, file, query())})`);
+      insert(textarea, `![](${await uploadImage(session, file, query(), token())})`);
     } catch (error) {
       onError?.(`Could not add that picture: ${error.message}`);
     } finally {
