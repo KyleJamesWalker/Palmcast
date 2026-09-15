@@ -3,6 +3,7 @@ import { renderOptions } from '/quiz.js';
 import { pruneBySlide, survivingSlides } from '/deckstate.js';
 import { burst } from '/reactions.js';
 import { renderScores } from '/scores.js';
+import { applyTheme, crossing, preload, swap } from '/looks.js';
 import { applySteps } from '/steps.js';
 
 const id = sessionId();
@@ -45,12 +46,17 @@ connect(id, null, {
     slides = msg.slides;
     current = msg.current;
     step = msg.step;
+    applyTheme(msg.theme);
+    // Every transition the deck can reach for, fetched now rather than at the
+    // press that needs it. A talk going on stage is the moment there is time.
+    preload(slides);
     paint();
   },
   move(msg) {
+    const plan = crossing(slides, current, msg.current);
     current = msg.current;
     step = msg.step;
-    paint();
+    swap(paint, plan);
   },
   reveal(msg) {
     revealed.set(msg.slide, msg);
