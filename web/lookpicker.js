@@ -146,8 +146,8 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
   /// almost never on the line that decided the look it is sitting in. Reading
   /// the deck wide directive alone told an author about a slide they were not
   /// looking at.
-  const follow = () => {
-    const here = looksAt(area.value, area.selectionStart);
+  const follow = (text = area.value, caret = area.selectionStart) => {
+    const here = looksAt(text, caret);
     const held = (name, list) => (list.some((l) => l.name === name) ? name : '');
 
     const theme = held(here.theme?.name, looks.themes);
@@ -172,15 +172,29 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
 
     // Shown when the caret is standing on a directive: that is the moment an
     // author is asking what it looks like.
-    if (directiveLineAt(area.value, area.selectionStart)) show();
+    if (directiveLineAt(text, caret)) show();
   };
 
-  area.addEventListener('input', follow);
-  area.addEventListener('click', follow);
+  // While a suggestion is being looked at, the card is showing text that is
+  // not in the editor yet. An arrow key moves the list rather than the caret,
+  // so re-reading the editor on its keyup would undo the look just shown.
+  let peeking = false;
+
+  area.addEventListener('input', () => follow());
+  area.addEventListener('click', () => follow());
   area.addEventListener('keyup', (event) => {
-    if (MOVES.has(event.key)) follow();
+    if (!peeking && MOVES.has(event.key)) follow();
   });
   follow();
+
+  /// Shows what the deck would look like if some text were in it, so moving
+  /// through a list of colours repaints the card on the way past rather than
+  /// only once something has been chosen. Null goes back to what is really
+  /// there.
+  looks.preview = (text, caret) => {
+    peeking = text !== null;
+    return peeking ? follow(text, caret) : follow();
+  };
 
   return looks;
 }

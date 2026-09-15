@@ -97,9 +97,14 @@ A knob can name the values it expects, in a second property beside it:
 --knob-heading-options: cyan #3ef0ff, orange #ff8800, rose #ff3ea5;
 ```
 
-The editor offers those by name and writes the value. The list is a suggestion
-and not a rule: any value the grammar allows still works, so a deck can ask for
-a colour the look never thought of.
+The editor offers those **by name** and writes the value: you pick `cyan`, the
+deck gets `#3ef0ff`. The hex sits beside the name on a laptop and is left out
+altogether on a phone, where the name is the whole point. Moving through the
+list repaints the preview card on the way past, so the colours are compared by
+looking rather than by reading.
+
+The list is a suggestion and not a rule: any value the grammar allows still
+works, so a deck can ask for a colour the look never thought of.
 
 CSS has no way of its own to declare a list of options. `@property` can
 enumerate keywords in its `syntax` descriptor, but only to validate them, and it

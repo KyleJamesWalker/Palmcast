@@ -57,7 +57,7 @@ function floats() {
 ///
 /// `editor` is the smartEditor, whose `run` is what applies the insert, so an
 /// accepted suggestion joins the same undo stack as everything typed by hand.
-export function attachCompleter(area, editor, looks) {
+export function attachCompleter(area, editor, looks, opts = {}) {
   const box = document.createElement('div');
   box.className = 'complete';
   box.hidden = true;
@@ -71,10 +71,13 @@ export function attachCompleter(area, editor, looks) {
   let dismissedAt = -1;
 
   const close = () => {
+    const was = found;
     found = null;
     box.hidden = true;
     box.textContent = '';
     area.removeAttribute('aria-activedescendant');
+    // Back to what the deck actually says, since nothing was taken.
+    if (was) opts.onPeek?.(null, 0);
   };
 
   const draw = () => {
@@ -91,8 +94,9 @@ export function attachCompleter(area, editor, looks) {
 
       const value = document.createElement('span');
       value.className = 'complete-value';
-      // Whatever the operator named their file, as text and never as markup.
-      value.textContent = item.value;
+      // What a look called it where it named one, and otherwise the value
+      // itself. Text and never markup, whatever the operator wrote.
+      value.textContent = item.label ?? item.value;
       row.append(value);
 
       if (item.about) {
@@ -118,6 +122,18 @@ export function attachCompleter(area, editor, looks) {
     box.hidden = false;
     area.setAttribute('aria-activedescendant', `complete-${picked}`);
     place();
+    peek();
+  };
+
+  /// Shows the highlighted row as though it had been taken, without taking it.
+  /// The whole text rather than the one value, so whatever is looking at it
+  /// answers the same question it always does.
+  const peek = () => {
+    const item = found?.items[picked];
+    if (!item) return;
+    const { from, to } = found;
+    const would = area.value.slice(0, from) + item.value + area.value.slice(to);
+    opts.onPeek?.(would, from + item.value.length);
   };
 
   const place = () => {
@@ -142,7 +158,10 @@ export function attachCompleter(area, editor, looks) {
     const item = found?.items[index];
     if (!item) return;
     const { from, to } = found;
-    close();
+    found = null;
+    box.hidden = true;
+    box.textContent = '';
+    area.removeAttribute('aria-activedescendant');
     editor.run({ from, to, insert: item.value, select: [from + item.value.length, from + item.value.length] });
   };
 

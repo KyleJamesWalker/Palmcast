@@ -44,16 +44,19 @@ export function directiveAt(text, caret) {
   return { open, inner: text.slice(open + 4, caret), after: text.slice(caret, stop) };
 }
 
+/// What a row is matched and read by: its label where it has one, because that
+/// is the word somebody is typing. A named colour is chosen by typing `cy`, not
+/// by typing the hex behind it.
+const shown = (item) => (item.label ?? item.value).toLowerCase();
+
 /// Prefix matches first, then anything else holding the query. Forty
 /// transitions is too many to read, and the one being typed should be at the
 /// top rather than wherever the alphabet put it.
 export function rank(items, query) {
   const want = query.trim().toLowerCase();
   if (!want) return items;
-  const starts = items.filter((i) => i.value.toLowerCase().startsWith(want));
-  const holds = items.filter(
-    (i) => !i.value.toLowerCase().startsWith(want) && i.value.toLowerCase().includes(want),
-  );
+  const starts = items.filter((i) => shown(i).startsWith(want));
+  const holds = items.filter((i) => !shown(i).startsWith(want) && shown(i).includes(want));
   return [...starts, ...holds];
 }
 
@@ -107,8 +110,11 @@ export function completionsAt(doc, looks = { themes: [], transitions: [] }) {
     const offers = Array.isArray(knob.options) ? knob.options : [];
     const items = offers.length
       ? offers.map((choice) => ({
+          // The name is what a look called it and what somebody picks by. The
+          // value is what goes in the deck, and is not worth reading on a phone.
           value: choice.value,
-          about: choice.name === choice.value ? '' : choice.name,
+          label: choice.name,
+          about: choice.name === choice.value ? '' : choice.value,
         }))
       : [{ value: knob.value, about: 'what this look uses' }];
     return slot('knobvalue', start, typed, ahead, rank(items, typed));

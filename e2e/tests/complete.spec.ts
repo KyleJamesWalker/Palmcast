@@ -74,10 +74,11 @@ test('a look that declares knobs offers them, with what it currently uses', asyn
   await page.keyboard.press('Enter');
   await expect(area).toHaveValue('<!-- theme: neon heading=');
 
-  // And then the colours neon names, by name, writing the value.
+  // And then the colours neon names. The list reads by name, because that is
+  // what somebody is choosing; the hex is what goes in the deck.
   await expect(page.locator('.complete-hint')).toHaveText('Its own value, to start from');
-  await expect(rows(page)).toHaveText(['#3ef0ff', '#ff8800', '#ff3ea5', '#6dff5c']);
-  await expect(page.locator('.complete-row').first()).toContainText('cyan');
+  await expect(rows(page)).toHaveText(['cyan', 'orange', 'rose', 'lime']);
+  await expect(page.locator('.complete-row').first()).toContainText('#3ef0ff');
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await expect(area).toHaveValue('<!-- theme: neon heading=#ff8800');

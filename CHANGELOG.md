@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declares `heading` and `accent`; every other built-in declares none and is
   unchanged. A look can name the choices it expects in
   `--knob-<name>-options`, either as named colours or as bare presets it maps
-  itself with `@container style()`.
+  itself with `@container style()`. The editor lists those by name rather than
+ by value, and repaints the preview card as you move through them.
 - Both deck editors follow the cursor: the theme and transition pickers, the
  "This slide only" box and the preview all show what is in force where the
  cursor is, rather than what the deck opens with.

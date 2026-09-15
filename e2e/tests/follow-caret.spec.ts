@@ -132,3 +132,41 @@ test('a directive the server would refuse paints nothing', async ({ page }) => {
   await caretAfter(area, 'rubbish -->');
   await expect(page.locator('#theme-pick')).toHaveValue('');
 });
+
+test('moving through a list of looks repaints the card on the way past', async ({ page }) => {
+  await page.goto('/');
+  const area = page.locator('#markdown');
+  await expect(area).toBeVisible();
+  await area.fill('<!-- theme: neon accent=#ff3ea5 -->\n\n# One');
+
+  // Caret just after the `=`, so the whole list is offered.
+  await area.evaluate((el: HTMLTextAreaElement) => {
+    el.focus();
+    const at = el.value.indexOf('accent=') + 'accent='.length;
+    el.setSelectionRange(at, at);
+    el.dispatchEvent(new Event('click', { bubbles: true }));
+  });
+
+  const edge = () =>
+    page.evaluate(
+      () => getComputedStyle(document.querySelector('#look-demo blockquote')).borderLeftColor,
+    );
+  const rows = page.locator('.complete-row');
+  await expect(rows.first()).toBeVisible();
+
+  // The list reads by name; the card follows the value behind it.
+  await expect(rows.nth(0)).toContainText('magenta');
+  await expect(rows.nth(1)).toContainText('cyan');
+  expect(await edge()).toBe('rgb(255, 62, 165)');
+
+  // An arrow moves the list, not the caret, so the card must not be re-read
+  // from the editor on the way past.
+  await page.keyboard.press('ArrowDown');
+  expect(await edge()).toBe('rgb(62, 240, 255)');
+  await page.keyboard.press('ArrowDown');
+  expect(await edge()).toBe('rgb(255, 176, 32)');
+
+  // Nothing was taken, so what the deck actually says comes back.
+  await page.keyboard.press('Escape');
+  expect(await edge()).toBe('rgb(255, 62, 165)');
+});

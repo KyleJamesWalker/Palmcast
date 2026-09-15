@@ -90,7 +90,10 @@ lookPickers(editing, els.deckText, {
   scopeField: document.getElementById('deck-scope-field'),
   demo: document.getElementById('deck-look-demo'),
 }).then((looks) => {
-  completer = attachCompleter(els.deckText, editing, looks);
+  completer = attachCompleter(els.deckText, editing, looks, {
+    // Moving through a list of looks repaints the preview on the way past.
+    onPeek: looks.preview,
+  });
 });
 
 attachUpload({
