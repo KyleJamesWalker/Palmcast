@@ -54,6 +54,7 @@ function paint() {
   renderOptions(options, now?.question, {
     interactive: true,
     locked: Boolean(answer),
+    sent: sent.has(current),
     chosen: chosen.get(current),
     correct: answer?.correct,
     counts: answer?.counts,
@@ -66,6 +67,8 @@ function paint() {
           ? picked.filter((i) => i !== index)
           : [...picked, index].sort((a, b) => a - b);
         chosen.set(current, next);
+        // A changed selection is not the one that was sent.
+        sent.delete(current);
         paint();
         return;
       }

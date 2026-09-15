@@ -365,6 +365,14 @@ a { color: var(--accent); }
 
 .option-hint { margin: 4px 0 0; font-size: 13px; }
 .option-send { width: 100%; margin-top: 4px; }
+/* Sent is a confirmation, so it keeps its weight rather than dimming like a
+   control that stopped working. */
+.option-send.sent[disabled] {
+  opacity: 1;
+  background: transparent;
+  color: var(--accent);
+  border-color: var(--accent);
+}
 
 /* A link too long to read, offered for selection when there is no clipboard. */
 input.url {
