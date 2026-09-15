@@ -86,39 +86,37 @@ test('the preview card reacts to the knobs on the line, not just the look', asyn
   await expect(area).toBeVisible();
 
   const demo = page.locator('#look-demo');
-  const knob = () =>
+  const painted = () =>
     demo.evaluate((el) => ({
-      heading: getComputedStyle(el).getPropertyValue('--knob-heading').trim(),
-      accent: getComputedStyle(el).getPropertyValue('--knob-accent').trim(),
+      knob: getComputedStyle(el).getPropertyValue('--knob-style').trim(),
+      title: getComputedStyle(el.querySelector('h2')).color,
+      edge: getComputedStyle(el.querySelector('blockquote')).borderLeftColor,
+      fits: el.scrollHeight <= el.clientHeight,
     }));
 
   // Neon as it ships.
   await area.fill('<!-- theme: neon -->\n\n# One');
   await caretAfter(area, '<!-- theme: neon -->');
   await expect(demo).toBeVisible();
-  expect(await knob()).toEqual({ heading: '#3ef0ff', accent: '#ff3ea5' });
+  const shipped = await painted();
+  expect(shipped.knob).toBe('midnight');
+  expect(shipped.edge).toBe('rgb(255, 62, 165)');
 
-  // Both knobs turned on the line the cursor is on.
-  await area.fill('<!-- theme: neon accent=#ffb020 heading=#ff8800 -->\n\n# One');
-  await caretAfter(area, 'heading=#ff8800 -->');
-  expect(await knob()).toEqual({ heading: '#ff8800', accent: '#ffb020' });
+  // A mood turned on the line the cursor is on. One word moves both, which is
+  // the point of a preset, and the card has to show both to prove it.
+  await area.fill('<!-- theme: neon style=vegas -->\n\n# One');
+  await caretAfter(area, 'style=vegas -->');
+  const turned = await painted();
+  expect(turned.knob).toBe('vegas');
+  expect(turned.edge).toBe('rgb(255, 209, 102)');
+  expect(turned.title).not.toBe(shipped.title);
+  expect(turned.fits).toBe(true);
 
-  // And the card actually shows both: the heading paints the title, the accent
-  // the edge of the quote. A card showing only a title could show neither.
-  const shown = await demo.evaluate((el) => ({
-    title: getComputedStyle(el.querySelector('h2')).color,
-    edge: getComputedStyle(el.querySelector('blockquote')).borderLeftColor,
-    fits: el.scrollHeight <= el.clientHeight,
-  }));
-  expect(shown.edge).toBe('rgb(255, 176, 32)');
-  expect(shown.title).not.toBe('rgb(255, 176, 32)');
-  expect(shown.fits).toBe(true);
-
-  // Taking one away puts the look's own value back, because the knob is
-  // removed from the element and the stylesheet's own declaration shows again.
-  await area.fill('<!-- theme: neon accent=#ffb020 -->\n\n# One');
-  await caretAfter(area, 'accent=#ffb020 -->');
-  expect(await knob()).toEqual({ heading: '#3ef0ff', accent: '#ffb020' });
+  // Taking it away puts the look's own mood back, because the knob is removed
+  // from the element and the stylesheet's own declaration shows again.
+  await area.fill('<!-- theme: neon -->\n\n# One');
+  await caretAfter(area, '<!-- theme: neon -->');
+  expect((await painted()).edge).toBe('rgb(255, 62, 165)');
 });
 
 test('a directive the server would refuse paints nothing', async ({ page }) => {
@@ -137,12 +135,12 @@ test('moving through a list of looks repaints the card on the way past', async (
   await page.goto('/');
   const area = page.locator('#markdown');
   await expect(area).toBeVisible();
-  await area.fill('<!-- theme: neon accent=#ff3ea5 -->\n\n# One');
+  await area.fill('<!-- theme: neon style=midnight -->\n\n# One');
 
   // Caret just after the `=`, so the whole list is offered.
   await area.evaluate((el: HTMLTextAreaElement) => {
     el.focus();
-    const at = el.value.indexOf('accent=') + 'accent='.length;
+    const at = el.value.indexOf('style=') + 'style='.length;
     el.setSelectionRange(at, at);
     el.dispatchEvent(new Event('click', { bubbles: true }));
   });
@@ -154,17 +152,17 @@ test('moving through a list of looks repaints the card on the way past', async (
   const rows = page.locator('.complete-row');
   await expect(rows.first()).toBeVisible();
 
-  // The list reads by name; the card follows the value behind it.
-  await expect(rows.nth(0)).toContainText('magenta');
-  await expect(rows.nth(1)).toContainText('cyan');
+  // The list reads by name; the card follows what each mood paints.
+  await expect(rows.nth(0)).toContainText('midnight');
+  await expect(rows.nth(1)).toContainText('vegas');
   expect(await edge()).toBe('rgb(255, 62, 165)');
 
   // An arrow moves the list, not the caret, so the card must not be re-read
   // from the editor on the way past.
   await page.keyboard.press('ArrowDown');
-  expect(await edge()).toBe('rgb(62, 240, 255)');
+  expect(await edge()).toBe('rgb(255, 209, 102)');
   await page.keyboard.press('ArrowDown');
-  expect(await edge()).toBe('rgb(255, 176, 32)');
+  expect(await edge()).toBe('rgb(255, 112, 67)');
 
   // Nothing was taken, so what the deck actually says comes back.
   await page.keyboard.press('Escape');

@@ -67,25 +67,24 @@ test('a look that declares knobs offers them, with what it currently uses', asyn
   await area.type('<!-- theme: neon ');
 
   await expect(page.locator('.complete-hint')).toHaveText('What this look lets you change');
-  await expect(rows(page)).toHaveText(['accent=', 'heading=']);
+  await expect(rows(page)).toHaveText(['style=']);
 
-  await area.type('head');
-  await expect(rows(page)).toHaveText(['heading=']);
+  await area.type('st');
+  await expect(rows(page)).toHaveText(['style=']);
   await page.keyboard.press('Enter');
-  await expect(area).toHaveValue('<!-- theme: neon heading=');
+  await expect(area).toHaveValue('<!-- theme: neon style=');
 
-  // And then the colours neon names. The list reads by name, because that is
-  // what somebody is choosing; the hex is what goes in the deck.
+  // And then the moods it offers. A preset is its own value, so the name is
+  // all there is to read.
   await expect(page.locator('.complete-hint')).toHaveText('Its own value, to start from');
-  await expect(rows(page)).toHaveText(['cyan', 'orange', 'rose', 'lime']);
-  await expect(page.locator('.complete-row').first()).toContainText('#3ef0ff');
+  await expect(rows(page)).toHaveText(['midnight', 'vegas', 'tampa', 'sunset', 'deep-space']);
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
-  await expect(area).toHaveValue('<!-- theme: neon heading=#ff8800');
+  await expect(area).toHaveValue('<!-- theme: neon style=vegas');
 
-  // The one already turned is not offered twice.
+  // The only knob it has is now turned, so there is nothing left to offer.
   await area.type(' ');
-  await expect(rows(page)).toHaveText(['accent=']);
+  await expect(page.locator('.complete')).toBeHidden();
 });
 
 test('arrow keys move the choice and Escape puts the list away', async ({ page }) => {

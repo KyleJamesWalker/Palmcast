@@ -127,6 +127,18 @@ export function themeFor(slide, deckTheme) {
 /// the values reached here through the server's own grammar, so this puts a
 /// colour or a length on an element and can never put CSS there. Written with
 /// setProperty rather than into a style attribute for the same reason.
+/// Puts a look's knobs where both kinds of look can read them.
+///
+/// On the reading surface, because a look declares its knobs there and an
+/// inline value has to beat that declaration. On the root as well, because a
+/// look that maps a preset reads it back with `@container style()`, and a
+/// container never matches its own query: the surface has to be inside
+/// something holding the value, not be that thing.
+export function applyLookKnobs(knobs, surface, doc = document) {
+  applyKnobs(knobs, surface);
+  applyKnobs(knobs, doc.documentElement);
+}
+
 export function applyKnobs(knobs, el) {
   const style = el?.style;
   if (!style?.setProperty) return;

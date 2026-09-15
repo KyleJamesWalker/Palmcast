@@ -1,30 +1,44 @@
-/* A bar at midnight. Near black, cyan on the headings, magenta on the accent.
-   The glow is on the headings alone: body text under a text-shadow is harder
-   to read on a phone, not easier. */
+/* A bar at midnight. Near black, with one bright pair on the headings and the
+   accent. The glow is on the headings alone: body text under a text-shadow is
+   harder to read on a phone, not easier.
+
+   One knob, because picking a mood is a tap and picking two colours is not. */
 .viewer, .stage {
-  --knob-heading: #3ef0ff;
-  --knob-heading-options: cyan #3ef0ff, orange #ff8800, rose #ff3ea5, lime #6dff5c;
-  --knob-accent: #ff3ea5;
-  --knob-accent-options: magenta #ff3ea5, cyan #3ef0ff, amber #ffb020;
+  --knob-style: midnight;
+  --knob-style-options: midnight, vegas, tampa, sunset, deep-space;
 
   --ground: #06060c;
   --raised: #12122a;
   --edge: #2c2c5e;
   --ink: #d9f6ff;
   --ink-dim: #7c8eb2;
-  --accent: var(--knob-accent);
+  --accent: var(--lit-accent, #ff3ea5);
   --accent-ink: #0a0010;
   color-scheme: dark;
   background: var(--ground);
   color: var(--ink);
 }
 
+/* Each mood is a heading and an accent that belong together. The fallbacks are
+   midnight, so a browser without style queries shows the look this ships as. */
+@container style(--knob-style: vegas) {
+  .viewer, .stage { --lit-heading: #ff2d95; --lit-accent: #ffd166; }
+}
+@container style(--knob-style: tampa) {
+  .viewer, .stage { --lit-heading: #00e5c0; --lit-accent: #ff7043; }
+}
+@container style(--knob-style: sunset) {
+  .viewer, .stage { --lit-heading: #ffb37a; --lit-accent: #c792ea; }
+}
+@container style(--knob-style: deep-space) {
+  .viewer, .stage { --lit-heading: #8ab4ff; --lit-accent: #b388ff; }
+}
+
 .viewer .slide h1, .stage .slide h1 {
-  color: var(--knob-heading);
-  /* Mixed rather than written out, so the glow follows the heading wherever
-     the knob puts it. */
-  text-shadow: 0 0 18px color-mix(in srgb, var(--knob-heading) 45%, transparent);
+  color: var(--lit-heading, #3ef0ff);
+  /* Mixed rather than written out, so the glow follows the mood. */
+  text-shadow: 0 0 18px color-mix(in srgb, var(--lit-heading, #3ef0ff) 45%, transparent);
 }
 .viewer .slide h2, .stage .slide h2 {
-  color: color-mix(in srgb, var(--knob-heading) 72%, #ffffff);
+  color: color-mix(in srgb, var(--lit-heading, #3ef0ff) 72%, #ffffff);
 }

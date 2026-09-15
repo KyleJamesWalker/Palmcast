@@ -3,7 +3,7 @@ import { renderOptions } from '/quiz.js';
 import { pruneBySlide, survivingSlides } from '/deckstate.js';
 import { burst } from '/reactions.js';
 import { renderScores } from '/scores.js';
-import { applyKnobs, applyTheme, crossing, preload, swap, themeFor } from '/looks.js';
+import { applyLookKnobs, applyTheme, crossing, preload, swap, themeFor } from '/looks.js';
 import { joinUrl, showJoin } from '/qr.js';
 import { applySteps } from '/steps.js';
 
@@ -27,7 +27,7 @@ function paint() {
   const now = slides[current];
   const look = themeFor(now, deckTheme);
   applyTheme(look?.name ?? null);
-  applyKnobs(look?.knobs, surface);
+  applyLookKnobs(look?.knobs, surface);
   slide.innerHTML = now ? now.html : '<p class="waiting">Waiting for the presenter\u2026</p>';
   applySteps(slide, step);
   position.textContent = slides.length ? `${current + 1} / ${slides.length}` : '';

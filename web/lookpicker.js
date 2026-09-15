@@ -6,7 +6,7 @@
 
 import { directiveLineAt, looksAt, setTheme, setTransition } from '/editing.js';
 import {
-  applyKnobs,
+  applyLookKnobs,
   applyTheme,
   demoFaces,
   ensure,
@@ -158,7 +158,7 @@ export async function lookPickers(editor, area, els, fetcher = globalThis.fetch)
     // The knobs as well as the name, or the preview shows a look the deck is
     // not asking for. Set on the demo itself, which is the `.viewer` the theme
     // paints, so they land where the stylesheet reads them.
-    applyKnobs(theme ? here.theme?.knobs : null, els.demo);
+    applyLookKnobs(theme ? here.theme?.knobs : null, els.demo);
 
     const moved = held(here.transition?.name, looks.transitions);
     if (els.transition.value !== moved) els.transition.value = moved;

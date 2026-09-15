@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { startRoom, joinAudience } from './helpers';
 
-/// What the audience's reading surface actually resolves the heading to.
+/// What the audience's reading surface is actually painted in.
 const heading = (page) =>
   page.evaluate(() => {
     const el = document.querySelector('.viewer, .stage');
     return {
-      knob: getComputedStyle(el).getPropertyValue('--knob-heading').trim(),
+      knob: getComputedStyle(el).getPropertyValue('--knob-style').trim(),
       painted: getComputedStyle(document.querySelector('#slide h1')).color,
     };
   });
@@ -24,7 +24,7 @@ test('a knob a deck turns repaints the slide, and only while it is turned', asyn
       '',
       '---',
       '',
-      '<!-- _theme: neon heading=#ff8800 -->',
+      '<!-- _theme: neon style=vegas -->',
       '',
       '# Neon with the heading turned',
       '',
@@ -36,19 +36,19 @@ test('a knob a deck turns repaints the slide, and only while it is turned', asyn
   const audience = await joinAudience(context, id);
 
   const shipped = await heading(audience);
-  expect(shipped.knob).toBe('#3ef0ff');
+  expect(shipped.knob).toBe('midnight');
 
   await page.locator('#next-btn').click();
   await expect(audience.locator('#slide')).toContainText('heading turned');
   const turned = await heading(audience);
-  expect(turned.knob).toBe('#ff8800');
+  expect(turned.knob).toBe('vegas');
   expect(turned.painted).not.toBe(shipped.painted);
 
   // The slide after turns nothing, so the look goes back to its own value.
   await page.locator('#next-btn').click();
   await expect(audience.locator('#slide')).toContainText('Back to neon');
   const back = await heading(audience);
-  expect(back.knob).toBe('#3ef0ff');
+  expect(back.knob).toBe('midnight');
   expect(back.painted).toBe(shipped.painted);
 });
 

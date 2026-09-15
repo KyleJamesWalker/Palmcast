@@ -313,29 +313,32 @@ mod tests {
             .into_iter()
             .find(|l| l.name == "neon")
             .expect("no neon");
+        // One knob, and it is a mood rather than a colour: picking a pair that
+        // belongs together is a tap, and picking two colours is not.
         assert_eq!(
             neon.knobs
                 .iter()
                 .map(|k| k.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["accent", "heading"],
-            "neon did not surface the knobs its stylesheet declares"
+            vec!["style"],
+            "neon did not surface the knob its stylesheet declares"
         );
-        let heading = neon.knobs.iter().find(|k| k.name == "heading").unwrap();
-        assert_eq!(heading.value, "#3ef0ff");
+        let style = &neon.knobs[0];
+        assert_eq!(style.value, "midnight");
         assert_eq!(
-            heading
+            style
                 .options
                 .iter()
                 .map(|c| (c.name.as_str(), c.value.as_str()))
                 .collect::<Vec<_>>(),
             vec![
-                ("cyan", "#3ef0ff"),
-                ("orange", "#ff8800"),
-                ("rose", "#ff3ea5"),
-                ("lime", "#6dff5c"),
+                ("midnight", "midnight"),
+                ("vegas", "vegas"),
+                ("tampa", "tampa"),
+                ("sunset", "sunset"),
+                ("deep-space", "deep-space"),
             ],
-            "the named colours neon offers did not come through"
+            "a preset's name is its own value, and that did not come through"
         );
 
         // Every other built-in declares none, and is what it always was.
@@ -538,7 +541,9 @@ mod tests {
             "{}",
             neon.about
         );
-        assert!(neon.about.contains("cyan"), "{}", neon.about);
+        // The second sentence as well as the first, which is the point: one
+        // sentence rarely says what a look is.
+        assert!(neon.about.contains("accent"), "{}", neon.about);
     }
 
     #[test]

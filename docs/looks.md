@@ -97,6 +97,9 @@ A knob can name the values it expects, in a second property beside it:
 --knob-heading-options: cyan #3ef0ff, orange #ff8800, rose #ff3ea5;
 ```
 
+`neon` takes the other road: its only knob is a mood, because picking a pair
+that belongs together is one tap and picking two colours is two.
+
 The editor offers those **by name** and writes the value: you pick `cyan`, the
 deck gets `#3ef0ff`. The hex sits beside the name on a laptop and is left out
 altogether on a phone, where the name is the whole point. Moving through the
@@ -118,27 +121,36 @@ can decide what it means:
 
 ```css
 .viewer, .stage {
-  --knob-style: vegas;
-  --knob-style-options: vegas, tampa, italy, la, space-station;
+  --knob-style: midnight;
+  --knob-style-options: midnight, vegas, tampa;
+
+  --accent: var(--lit-accent, #ff3ea5);
 }
 
 @container style(--knob-style: vegas) {
-  .slide h1 { color: #ff2d95; }
-  .slide { --accent: #ffd166; }
+  .viewer, .stage { --lit-heading: #ff2d95; --lit-accent: #ffd166; }
 }
 
-@container style(--knob-style: tampa) {
-  .slide h1 { color: #00c2a8; }
-  .slide { --accent: #ff7043; }
-}
+.viewer .slide h1, .stage .slide h1 { color: var(--lit-heading, #3ef0ff); }
 ```
+
+That is `neon`, shortened. The fallbacks are the look's own colours, so the
+default mood needs no block of its own and a browser without style queries shows
+what the look ships as.
+
+The knob is set on the reading surface **and** on the root, because a container
+never matches its own query: the surface has to sit inside something holding the
+value rather than be that thing. That is why the query above can name
+`.viewer` itself.
 
 A name on its own in the options list is its own value, so `vegas` offers
 `vegas`. `@container style()` is how a stylesheet reads a custom property back
 and changes rules on it, which is what turns one word into a whole heading and
-accent combination. It applies to descendants of the element holding the
-property, so the headings inside the reading surface are reachable and the
-surface itself is not.
+accent combination.
+
+Offer one or the other for the same colour, not both. A look exposing `style`
+*and* `heading` will find the preset wins, because the query writes closer to
+the slide than the knob does.
 
 Style queries need a recent browser. One without them ignores the blocks and
 shows the look's own defaults, which is the same thing a deck naming no knob
