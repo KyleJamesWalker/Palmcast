@@ -607,7 +607,9 @@ impl Session {
         if text.is_empty() || text.chars().count() > MAX_QUESTION_CHARS {
             return None;
         }
-        if self.questions.len() >= MAX_QUESTIONS {
+        // Only what is still open counts against the cap, so a long evening of
+        // questions asked and answered does not close the floor.
+        if self.questions.iter().filter(|q| !q.answered).count() >= MAX_QUESTIONS {
             return None;
         }
         let now = Instant::now();
@@ -625,6 +627,13 @@ impl Session {
         self.next_question_id += 1;
         // The asker's own vote, so a question starts at one rather than zero.
         let voters = HashSet::from([who.to_string()]);
+        // The list itself stays bounded, so an evening cannot grow it without
+        // limit. The oldest answered question is the one nobody is waiting on.
+        while self.questions.len() >= MAX_QUESTIONS
+            && let Some(oldest) = self.questions.iter().position(|q| q.answered)
+        {
+            self.questions.remove(oldest);
+        }
         self.questions.push(StoredQuestion {
             id: question_id,
             text: text.to_string(),
@@ -1882,6 +1891,56 @@ mod tests {
             1,
             "the parked point was lost across the restart"
         );
+    }
+
+    #[test]
+    fn answered_questions_make_room_for_new_ones() {
+        let reg = registry();
+        let (id, _mc) = reg.create("# Welcome").unwrap();
+
+        // A distinct asker each time, because one asker is rate limited.
+        for i in 0..MAX_QUESTIONS {
+            assert!(
+                reg.with_mut(&id, |s| s.ask(&format!("asker-{i}"), "why"))
+                    .flatten()
+                    .is_some(),
+                "the floor closed at question {i}"
+            );
+        }
+        assert!(
+            reg.with_mut(&id, |s| s.ask("one-more", "why"))
+                .flatten()
+                .is_none(),
+            "the cap did not hold"
+        );
+
+        // The host deals with one, which frees a place for the next.
+        let first = reg
+            .with(&id, |s| s.questions.first().map(|q| q.id))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.mark_answered(Role::Mc, first))
+            .flatten()
+            .unwrap();
+        assert!(
+            reg.with_mut(&id, |s| s.ask("one-more", "why"))
+                .flatten()
+                .is_some(),
+            "an answered question still held a place on the floor"
+        );
+
+        // And the list stays bounded: the answered one made way rather than
+        // the list growing past the cap.
+        let (total, open) = reg
+            .with(&id, |s| {
+                (
+                    s.questions.len(),
+                    s.questions.iter().filter(|q| !q.answered).count(),
+                )
+            })
+            .unwrap();
+        assert_eq!(total, MAX_QUESTIONS, "the question list grew past its cap");
+        assert_eq!(open, MAX_QUESTIONS, "the answered question was not reused");
     }
 
     #[test]
