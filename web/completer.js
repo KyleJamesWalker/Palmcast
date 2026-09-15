@@ -205,5 +205,7 @@ export function attachCompleter(area, editor, looks) {
 const LABELS = {
   name: 'Directive',
   value: 'Look',
-  param: 'How long it takes',
+  param: 'How long it takes, or a knob',
+  knob: 'What this look lets you change',
+  knobvalue: 'Its own value, to start from',
 };

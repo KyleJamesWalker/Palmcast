@@ -16,7 +16,9 @@ export function crossing(slides, from, to) {
   if (from === to) return null;
   const named = slides[Math.min(from, to)]?.transition;
   if (!named || named.name === 'none') return null;
-  return { name: named.name, duration: named.duration, back: to < from };
+  const plan = { name: named.name, duration: named.duration, back: to < from };
+  if (named.knobs) plan.knobs = named.knobs;
+  return plan;
 }
 
 /// Every transition the deck can reach for, each once.
@@ -52,6 +54,7 @@ export function swap(paint, plan, doc = document) {
   } else {
     root.style.removeProperty('--transition-duration');
   }
+  applyKnobs(plan.knobs, root);
 
   const clear = () => {
     delete root.dataset.transition;
@@ -112,10 +115,40 @@ export async function installedLooks(fetcher = globalThis.fetch) {
 /// talk that follows one in another theme has to be able to put the page back,
 /// and dropping the href is what "no theme" means.
 /// The look a slide should be painted in: its own `_theme` when it named one,
-/// and the deck's otherwise.
+/// and the deck's otherwise. A look is a name and whatever knobs were turned
+/// on it, so the two travel together rather than being applied from two places.
 export function themeFor(slide, deckTheme) {
   return slide?.theme ?? deckTheme ?? null;
 }
+
+/// Sets the knobs a deck turned, and clears any it stopped turning.
+///
+/// The names are `--knob-<name>` custom properties the stylesheet declared, and
+/// the values reached here through the server's own grammar, so this puts a
+/// colour or a length on an element and can never put CSS there. Written with
+/// setProperty rather than into a style attribute for the same reason.
+export function applyKnobs(knobs, el) {
+  const style = el?.style;
+  if (!style?.setProperty) return;
+  const want = knobs && typeof knobs === 'object' ? knobs : {};
+
+  // Whatever the slide before turned and this one does not, read through the
+  // indexed form so a stylesheet nobody wrote is never guessed at.
+  const held = [];
+  for (let i = 0; i < (style.length ?? 0); i += 1) {
+    const name = style.item?.(i);
+    if (typeof name === 'string' && name.startsWith(KNOB)) held.push(name);
+  }
+  for (const name of held) {
+    if (!(name.slice(KNOB.length) in want)) style.removeProperty(name);
+  }
+
+  for (const [name, value] of Object.entries(want)) {
+    style.setProperty(`${KNOB}${name}`, value);
+  }
+}
+
+const KNOB = '--knob-';
 
 export function applyTheme(name, doc = document) {
   let link = doc.getElementById('deck-theme');

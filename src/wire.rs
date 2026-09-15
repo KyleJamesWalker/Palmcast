@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::deck::{Question, Slide};
+use crate::deck::{Look, Question, Slide};
 
 /// A closed set, so nothing a viewer types ever reaches another viewer's
 /// markup. The view picks the glyph from the variant.
@@ -74,9 +74,10 @@ pub enum ServerMsg {
         /// How much of the current slide has come in. Zero is the slide as it
         /// first lands, before any of its staged items.
         step: usize,
-        /// The theme the deck asked for. `None` leaves the view on its own
-        /// default, which is what a deck that named nothing wants.
-        theme: Option<String>,
+        /// The theme the deck asked for, with any knobs it turned. `None`
+        /// leaves the view on its own default, which is what a deck that named
+        /// nothing wants.
+        theme: Option<Look>,
         slides: Vec<Slide>,
     },
     Move {
@@ -323,6 +324,8 @@ impl Frame {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::deck::Slide;
 
@@ -337,7 +340,10 @@ mod tests {
                 notes: "the secret note".into(),
                 steps: 0,
                 transition: None,
-                theme: Some("neon".into()),
+                theme: Some(Look {
+                    name: "neon".into(),
+                    knobs: BTreeMap::from([("heading".into(), "#ff8800".into())]),
+                }),
                 question: Some(Question {
                     options: vec!["a".into(), "b".into()],
                     multi: false,
@@ -398,10 +404,15 @@ mod tests {
         let Some(ServerMsg::Deck { slides, .. }) = deck_msg().redacted() else {
             panic!("the deck was withheld from the room");
         };
+        let look = slides[0].theme.as_ref().expect("the look was withheld");
         assert_eq!(
-            slides[0].theme.as_deref(),
-            Some("neon"),
+            look.name, "neon",
             "the audience was not told which look to paint the slide in"
+        );
+        assert_eq!(
+            look.knobs.get("heading").map(String::as_str),
+            Some("#ff8800"),
+            "the knob the deck turned did not reach the screen it paints"
         );
         // It names a stylesheet the instance already serves to anyone, so there
         // is nothing in it to withhold. The notes beside it still go.

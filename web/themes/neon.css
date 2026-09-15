@@ -2,12 +2,15 @@
    The glow is on the headings alone: body text under a text-shadow is harder
    to read on a phone, not easier. */
 .viewer, .stage {
+  --knob-heading: #3ef0ff;
+  --knob-accent: #ff3ea5;
+
   --ground: #06060c;
   --raised: #12122a;
   --edge: #2c2c5e;
   --ink: #d9f6ff;
   --ink-dim: #7c8eb2;
-  --accent: #ff3ea5;
+  --accent: var(--knob-accent);
   --accent-ink: #0a0010;
   color-scheme: dark;
   background: var(--ground);
@@ -15,7 +18,11 @@
 }
 
 .viewer .slide h1, .stage .slide h1 {
-  color: #3ef0ff;
-  text-shadow: 0 0 18px rgb(62 240 255 / .45);
+  color: var(--knob-heading);
+  /* Mixed rather than written out, so the glow follows the heading wherever
+     the knob puts it. */
+  text-shadow: 0 0 18px color-mix(in srgb, var(--knob-heading) 45%, transparent);
 }
-.viewer .slide h2, .stage .slide h2 { color: #8affe4; }
+.viewer .slide h2, .stage .slide h2 {
+  color: color-mix(in srgb, var(--knob-heading) 72%, #ffffff);
+}

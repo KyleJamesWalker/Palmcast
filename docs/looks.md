@@ -34,7 +34,65 @@ That is the whole grammar, and there is no more of it to learn:
 ```
 
 A `<time>` is `500ms` or `1.5s`, up to sixty seconds, and only a transition
-takes one. Both pickers are on the start page and in the
+takes one.
+
+## Change one thing about a look
+
+A look can offer knobs, and a deck can turn them:
+
+```markdown
+<!-- theme: neon heading=#ff8800 -->
+```
+
+`neon` ships with a cyan heading and a magenta accent. That line keeps neon and
+paints the headings orange instead. It works on `_theme` too, so one slide can
+differ, and on `transition` and `_transition` after the duration:
+
+```markdown
+<!-- _transition: cover 1s distance=40% -->
+```
+
+The editor lists what each look offers and what it currently uses, so there is
+nothing to look up: type a space after the name and the knobs appear.
+
+### Declaring one, as an operator
+
+A look declares a knob by defining a custom property named `--knob-<name>` in
+its own stylesheet, and using it in its own rules. The value in the file is the
+default, so the names and the defaults cannot drift apart from what uses them:
+
+```css
+.viewer, .stage {
+  --knob-heading: #3ef0ff;
+  --knob-accent: #ff3ea5;
+  --accent: var(--knob-accent);
+}
+
+.viewer .slide h1, .stage .slide h1 {
+  color: var(--knob-heading);
+  /* Mixed rather than written out, so the glow follows the knob. */
+  text-shadow: 0 0 18px color-mix(in srgb, var(--knob-heading) 45%, transparent);
+}
+```
+
+There is no manifest to keep in step. The server reads the declarations out of
+the file, the same way it reads the description out of the opening comment, and
+serves them on `/api/config` for the pickers to offer.
+
+A look that declares none behaves exactly as it always did, and so does a deck
+that turns none.
+
+### What a knob may hold
+
+A colour (`#f80`, `#ff8800`, `#ff8800cc`), a time (`400ms`, `1.5s`), a number,
+or a share (`40%`). Nothing else.
+
+That list is short on purpose. A knob becomes a custom property in the room's
+stylesheet, and one holding `url(...)` would make every phone in the room fetch
+an address the deck chose. A deck still cannot carry CSS of its own; it can only
+hand a look a value of a shape the server already understands. Anything outside
+the list is refused, and a word that is not a `name=value` pair refuses the whole
+directive rather than applying half of it. Both pickers are on the start page and in the
 presenter console, and the directives below are what they write, so a deck
 written by hand and a deck written with them are the same deck.
 

@@ -21,10 +21,25 @@ pub struct Look {
     /// The file's own opening comment, to a sentence or two. Empty when the
     /// file has none, because an operator is not obliged to explain theirs.
     pub about: String,
+    /// What a deck may change about it, with the value the file itself uses as
+    /// the default. Empty for a look that declares none, which is every look
+    /// written before there were any.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub knobs: Vec<Knob>,
+}
+
+/// One custom property a look put its name to.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Knob {
+    pub name: String,
+    /// The value the stylesheet falls back to, which is what a picker should
+    /// open on.
+    pub value: String,
 }
 
 pub struct Sheet {
     pub css: String,
+    pub knobs: Vec<Knob>,
     /// Quoted, ready for the header. Over the bytes themselves, so an operator
     /// who edits a file and restarts gets it past every cache.
     pub etag: String,
@@ -73,6 +88,7 @@ fn looks(from: &BTreeMap<String, Sheet>) -> Vec<Look> {
         .map(|(name, sheet)| Look {
             name: name.clone(),
             about: sheet.about.clone(),
+            knobs: sheet.knobs.clone(),
         })
         .collect()
 }
@@ -155,8 +171,41 @@ fn sheet(css: String) -> Sheet {
     Sheet {
         etag: format!("\"{acc:016x}\""),
         about: about(&css),
+        knobs: knobs(&css),
         css,
     }
+}
+
+/// The knobs a look put its name to, as `--knob-<name>: <value>;`.
+///
+/// Read out of the stylesheet rather than a manifest beside it, the same way
+/// `about` is, so the names and their defaults cannot drift apart from the
+/// rules that use them. A file declaring none is a file nothing changes about.
+fn knobs(css: &str) -> Vec<Knob> {
+    let mut found: Vec<Knob> = Vec::new();
+    for (at, _) in css.match_indices("--knob-") {
+        let rest = &css[at + "--knob-".len()..];
+        let Some((name, rest)) = rest.split_once(':') else {
+            continue;
+        };
+        // A declaration, not a `var(--knob-x)` reading one back.
+        let Some(name) = style_name(name) else {
+            continue;
+        };
+        let value = rest.split([';', '}']).next().unwrap_or_default().trim();
+        if value.is_empty() || value.len() > 64 || value.contains("var(") {
+            continue;
+        }
+        if found.iter().any(|knob| knob.name == name) {
+            continue;
+        }
+        found.push(Knob {
+            name,
+            value: value.to_string(),
+        });
+    }
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    found
 }
 
 /// What a file says about itself, for a picker to put next to the name.
@@ -199,6 +248,54 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn a_look_declares_its_own_knobs_and_most_declare_none() {
+        let looks = load(None, None).unwrap();
+
+        let neon = looks
+            .themes()
+            .into_iter()
+            .find(|l| l.name == "neon")
+            .expect("no neon");
+        assert_eq!(
+            neon.knobs,
+            vec![
+                Knob {
+                    name: "accent".into(),
+                    value: "#ff3ea5".into()
+                },
+                Knob {
+                    name: "heading".into(),
+                    value: "#3ef0ff".into()
+                },
+            ],
+            "neon did not surface the knobs its stylesheet declares"
+        );
+
+        // Every other built-in declares none, and is what it always was.
+        for look in looks.themes().into_iter().filter(|l| l.name != "neon") {
+            assert!(
+                look.knobs.is_empty(),
+                "{} surfaced knobs it does not declare",
+                look.name
+            );
+        }
+    }
+
+    #[test]
+    fn reading_a_knob_back_is_not_declaring_one() {
+        // `var(--knob-x)` is a use, and a use is not a declaration.
+        let found = knobs(".a { color: var(--knob-heading); --knob-real: #fff; }");
+        assert_eq!(
+            found,
+            vec![Knob {
+                name: "real".into(),
+                value: "#fff".into()
+            }],
+            "a var() reading a knob was taken for a declaration"
+        );
     }
 
     #[test]

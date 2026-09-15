@@ -3,7 +3,7 @@ import { renderOptions } from '/quiz.js';
 import { pruneBySlide, survivingSlides } from '/deckstate.js';
 import { burst } from '/reactions.js';
 import { renderScores } from '/scores.js';
-import { applyTheme, crossing, preload, swap, themeFor } from '/looks.js';
+import { applyKnobs, applyTheme, crossing, preload, swap, themeFor } from '/looks.js';
 import { joinUrl, showJoin } from '/qr.js';
 import { applySteps } from '/steps.js';
 
@@ -20,9 +20,14 @@ let rev = 0;
 let deckTheme = null;
 const revealed = new Map();
 
+/// The element the themes paint, and so the one the knobs belong on.
+const surface = document.querySelector('.stage');
+
 function paint() {
   const now = slides[current];
-  applyTheme(themeFor(now, deckTheme));
+  const look = themeFor(now, deckTheme);
+  applyTheme(look?.name ?? null);
+  applyKnobs(look?.knobs, surface);
   slide.innerHTML = now ? now.html : '<p class="waiting">Waiting for the presenter\u2026</p>';
   applySteps(slide, step);
   position.textContent = slides.length ? `${current + 1} / ${slides.length}` : '';

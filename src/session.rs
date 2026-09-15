@@ -3226,7 +3226,7 @@ mod tests {
         let ServerMsg::Deck { theme, .. } = reg.with(&id, Session::snapshot).unwrap() else {
             panic!("not a deck");
         };
-        assert_eq!(theme.as_deref(), Some("paper"));
+        assert_eq!(theme.map(|look| look.name).as_deref(), Some("paper"));
     }
 
     #[test]
@@ -3250,7 +3250,7 @@ mod tests {
             panic!("not a deck");
         };
         assert_eq!(
-            theme.as_deref(),
+            theme.map(|look| look.name).as_deref(),
             Some("neon"),
             "the talk's theme did not reach the room"
         );
