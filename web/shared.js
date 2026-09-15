@@ -260,6 +260,14 @@ export function deckTokenIn(hash) {
   return token && /^[A-Za-z0-9_-]+$/.test(token) ? token : null;
 }
 
+/// The create key an operator handed out, read the same way as `#d=`. A
+/// fragment never reaches the server, so the key stays out of its logs.
+export function createKeyIn(hash) {
+  const raw = String(hash ?? '').replace(/^#/, '');
+  if (!raw) return '';
+  return new URLSearchParams(raw).get('k') ?? '';
+}
+
 export function deckLinkFor(token, origin = globalThis.location?.origin ?? '') {
   return `${origin}/#d=${token}`;
 }

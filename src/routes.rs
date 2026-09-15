@@ -1,8 +1,10 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::Router;
-use axum::extract::{DefaultBodyLimit, Path, Query, Request, State, WebSocketUpgrade};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Query, Request, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -10,6 +12,7 @@ use axum::routing::{get, post};
 use qrcode::QrCode;
 use qrcode::render::svg;
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 
 use crate::assets::{self, Web};
 use crate::deck;
@@ -32,6 +35,92 @@ const MAX_WS_MESSAGE: usize = 16 * 1024;
 const CSP: &str = "default-src 'self'; img-src 'self' data: https: http:; \
 style-src 'self'; script-src 'self'; connect-src 'self' ws: wss:; \
 frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
+
+/// What a single address may do, and how often.
+///
+/// Creating a room costs the instance a slot out of its session cap for the
+/// whole TTL, so it is the expensive one. Packing and previewing cost a parse
+/// and a compress, so they are metered per minute instead.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Limit {
+    Create,
+    Pack,
+}
+
+impl Limit {
+    /// How many, and over what window.
+    fn allowance(self) -> (f64, f64) {
+        match self {
+            Limit::Create => (10.0, 3600.0),
+            Limit::Pack => (60.0, 60.0),
+        }
+    }
+
+    fn refused(self) -> &'static str {
+        match self {
+            Limit::Create => "too many rooms from this address, try again later",
+            Limit::Pack => "too many decks from this address, slow down",
+        }
+    }
+}
+
+struct Bucket {
+    tokens: f64,
+    seen: Instant,
+}
+
+/// A token bucket per address and limit. Hand rolled rather than a dependency,
+/// because it is thirty lines and the lockfile is checked with `--locked`.
+#[derive(Default)]
+pub struct Limiter {
+    buckets: Mutex<HashMap<(IpAddr, Limit), Bucket>>,
+}
+
+/// Anything untouched for longer than the widest window is indistinguishable
+/// from a full bucket, so it is dropped rather than remembered.
+const BUCKET_TTL: Duration = Duration::from_secs(3600);
+
+impl Limiter {
+    /// True when the call may go ahead, taking one token if so.
+    pub fn take(&self, who: IpAddr, limit: Limit) -> bool {
+        let (capacity, window) = limit.allowance();
+        let now = Instant::now();
+        let mut buckets = self
+            .buckets
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        buckets.retain(|_, bucket| now.duration_since(bucket.seen) < BUCKET_TTL);
+
+        let bucket = buckets.entry((who, limit)).or_insert(Bucket {
+            tokens: capacity,
+            seen: now,
+        });
+        let refill = now.duration_since(bucket.seen).as_secs_f64() * (capacity / window);
+        bucket.tokens = (bucket.tokens + refill).min(capacity);
+        bucket.seen = now;
+        if bucket.tokens < 1.0 {
+            return false;
+        }
+        bucket.tokens -= 1.0;
+        true
+    }
+}
+
+/// Who to meter. Behind a proxy the peer address is the proxy, so the forwarded
+/// header is read instead — but only when `--public-url` says a proxy is there.
+/// Trusting it otherwise would let anyone pick their own bucket.
+fn client_ip(app: &App, headers: &HeaderMap, peer: SocketAddr) -> IpAddr {
+    if app.public_url.is_some()
+        && let Some(forwarded) = headers
+            .get("x-forwarded-for")
+            .and_then(|value| value.to_str().ok())
+        && let Some(first) = forwarded.split(',').next()
+        && let Ok(ip) = first.trim().parse::<IpAddr>()
+    {
+        return ip;
+    }
+    peer.ip()
+}
 
 /// The caller's token: the Authorization header first, the query string second.
 ///
@@ -89,6 +178,25 @@ pub struct App {
     /// The themes and transitions a deck here may name. Read once at startup
     /// and shared, because every room in the room reads the same ones.
     pub styles: Arc<Styles>,
+    /// Set to gate room creation on a key the operator hands out. Unset leaves
+    /// the instance open to anyone who can reach it.
+    pub create_key: Option<String>,
+    /// Per address, so one visitor cannot take the whole session cap.
+    pub limiter: Arc<Limiter>,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            registry: Registry::new(Duration::from_secs(6 * 3600)),
+            public_url: None,
+            starter: None,
+            uploads: false,
+            styles: Arc::default(),
+            create_key: None,
+            limiter: Arc::default(),
+        }
+    }
 }
 
 impl axum::extract::FromRef<App> for Registry {
@@ -100,10 +208,8 @@ impl axum::extract::FromRef<App> for Registry {
 pub fn router(registry: Registry) -> Router {
     router_with(App {
         registry,
-        public_url: None,
-        starter: None,
-        uploads: false,
         styles: Arc::new(styles::load(None, None).unwrap_or_default()),
+        ..App::default()
     })
 }
 
@@ -192,13 +298,36 @@ struct Created {
 }
 
 async fn create_session(
-    State(registry): State<Registry>,
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     axum::Json(body): axum::Json<DeckBody>,
 ) -> Response {
+    if let Some(key) = &app.create_key {
+        let offered = headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .unwrap_or("");
+        let matches: bool = key.as_bytes().ct_eq(offered.trim().as_bytes()).into();
+        if !matches {
+            return (
+                StatusCode::FORBIDDEN,
+                "this instance needs a key to start a room",
+            )
+                .into_response();
+        }
+    }
     if body.markdown.len() > MAX_DECK_BYTES {
         return (StatusCode::PAYLOAD_TOO_LARGE, "deck too large").into_response();
     }
-    let Some((id, token)) = registry.create(&body.markdown) else {
+    if !app
+        .limiter
+        .take(client_ip(&app, &headers, peer), Limit::Create)
+    {
+        return (StatusCode::TOO_MANY_REQUESTS, Limit::Create.refused()).into_response();
+    }
+    let Some((id, token)) = app.registry.create(&body.markdown) else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "this instance is holding as many sessions as it can",
@@ -552,9 +681,20 @@ struct Preview {
 /// The same parser the room runs, so what the author reads here is what the
 /// audience gets. A preview that rendered Markdown separately would be a second
 /// place for the sanitizer to be wrong.
-async fn preview_deck(axum::Json(body): axum::Json<DeckBody>) -> Response {
+async fn preview_deck(
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    axum::Json(body): axum::Json<DeckBody>,
+) -> Response {
     if body.markdown.len() > MAX_DECK_BYTES {
         return (StatusCode::PAYLOAD_TOO_LARGE, "deck too large").into_response();
+    }
+    if !app
+        .limiter
+        .take(client_ip(&app, &headers, peer), Limit::Pack)
+    {
+        return (StatusCode::TOO_MANY_REQUESTS, Limit::Pack.refused()).into_response();
     }
     axum::Json(Preview {
         slides: deck::parse(&body.markdown),
@@ -577,7 +717,18 @@ struct TokenBody {
 /// The deck arrives in a body rather than a query string so it stays out of
 /// access logs, and no session has to exist: a deck is shareable before it is
 /// ever presented.
-async fn pack_deck(axum::Json(body): axum::Json<DeckBody>) -> Response {
+async fn pack_deck(
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    axum::Json(body): axum::Json<DeckBody>,
+) -> Response {
+    if !app
+        .limiter
+        .take(client_ip(&app, &headers, peer), Limit::Pack)
+    {
+        return (StatusCode::TOO_MANY_REQUESTS, Limit::Pack.refused()).into_response();
+    }
     match share::pack(&body.markdown) {
         Ok(token) => axum::Json(Packed { token }).into_response(),
         Err(error) => (StatusCode::PAYLOAD_TOO_LARGE, error.to_string()).into_response(),

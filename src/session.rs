@@ -28,7 +28,9 @@ const MAX_QUESTIONS: usize = 200;
 /// far one client can inflate a tally.
 const MAX_PARTICIPANTS: usize = 500;
 /// Bounds what one public instance can be made to hold.
-const MAX_SESSIONS: usize = 2000;
+/// Rooms one instance holds at once, unless `--max-sessions` says otherwise.
+/// Each holds a deck, its votes and any pictures, so the ceiling is memory.
+pub const DEFAULT_MAX_SESSIONS: usize = 500;
 /// A room bigger than this is not a bar, and every socket costs a broadcast
 /// receiver.
 const MAX_VIEWERS: usize = 400;
@@ -1184,13 +1186,19 @@ pub enum EditError {
 pub struct Registry {
     inner: Arc<Mutex<HashMap<String, Session>>>,
     ttl: Duration,
+    max_sessions: usize,
 }
 
 impl Registry {
     pub fn new(ttl: Duration) -> Self {
+        Self::with_limit(ttl, DEFAULT_MAX_SESSIONS)
+    }
+
+    pub fn with_limit(ttl: Duration, max_sessions: usize) -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
             ttl,
+            max_sessions,
         }
     }
 
@@ -1207,14 +1215,14 @@ impl Registry {
         self.lock().get_mut(id).map(act)
     }
 
-    /// `None` when the instance is already holding MAX_SESSIONS.
+    /// `None` when the instance is already holding all the rooms it will.
     pub fn create(&self, markdown: &str) -> Option<(String, String)> {
         let mut map = self.lock();
-        if map.len() >= MAX_SESSIONS {
+        if map.len() >= self.max_sessions {
             // Drop anything idle before turning a real room away.
             let ttl = self.ttl;
             map.retain(|_, s| s.viewers > 0 || s.touched.elapsed() < ttl);
-            if map.len() >= MAX_SESSIONS {
+            if map.len() >= self.max_sessions {
                 return None;
             }
         }
@@ -1421,7 +1429,7 @@ impl Registry {
         let mut map = self.lock();
         let mut restored = 0;
         let now = Instant::now();
-        for item in saved.into_iter().take(MAX_SESSIONS) {
+        for item in saved.into_iter().take(self.max_sessions) {
             // Reparsed here, not restored, so a change to the parser can give
             // the same markdown a different shape. Anything held against a slide
             // position has to be checked against the deck that actually came
@@ -2550,12 +2558,15 @@ mod tests {
     fn an_instance_stops_creating_sessions_at_the_cap() {
         let reg = registry();
         let mut made = 0;
-        for _ in 0..(MAX_SESSIONS + 10) {
+        for _ in 0..(DEFAULT_MAX_SESSIONS + 10) {
             if reg.create("# hi").is_some() {
                 made += 1;
             }
         }
-        assert_eq!(made, MAX_SESSIONS, "the instance created {made} sessions");
+        assert_eq!(
+            made, DEFAULT_MAX_SESSIONS,
+            "the instance created {made} sessions"
+        );
         assert!(reg.create("# hi").is_none());
     }
 

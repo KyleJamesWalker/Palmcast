@@ -562,6 +562,8 @@ kept across a restart: a room coming back should come back on its slides.
 | `--uploads` | `PALMCAST_UPLOADS` | off | Keep pictures people upload, for the life of the room. |
 | `--theme-dir` | `PALMCAST_THEME_DIR` | none | A directory of CSS themes to serve on top of the built-in five. |
 | `--transition-dir` | `PALMCAST_TRANSITION_DIR` | none | A directory of CSS transitions to serve on top of the built-in 33. |
+| `--create-key` | `PALMCAST_CREATE_KEY` | none | Require this key to start a room. |
+| `--max-sessions` | `PALMCAST_MAX_SESSIONS` | `500` | Rooms to hold at once. |
 
 A link that outlives its room says so. Every view asks the server whether the
 session is still there, once on load and again whenever the socket drops. A view
@@ -659,6 +661,33 @@ lands in an access log; a header and a socket frame do not.
 For one release the server still accepts `?token=` on the HTTP endpoints and the
 socket URL, so tabs opened before the change keep working. It logs a warning
 when it reads one. That fallback goes in the release after.
+
+### Running an instance other people can reach
+
+Starting a room, previewing a deck and packing one into a link are the three
+things anyone can ask for without a token, so they are metered per address: ten
+rooms an hour, and sixty previews or packs a minute. Over that the server
+answers 429 and says so.
+
+Behind a proxy the peer address is the proxy, so `X-Forwarded-For` is read
+instead — but only when `--public-url` is set, because that flag is what says a
+proxy is really there. Without it the header is ignored, so nobody can pick
+their own bucket by claiming an address.
+
+`--create-key` closes the instance to everyone else. With it set, starting a
+room needs `Authorization: Bearer <key>`, and the start page reads the key from
+a `#k=` fragment, so an operator hands out one link:
+
+```
+https://palmcast.example/#k=the-key-you-chose
+```
+
+A fragment never reaches the server, so the key stays out of its access logs the
+same way a presenter token does. Without the key the server answers 403 and
+`this instance needs a key to start a room`.
+
+`--max-sessions` caps how many rooms exist at once, 500 by default. Each holds a
+deck, its votes and any pictures, so the ceiling is memory.
 
 ## Develop
 

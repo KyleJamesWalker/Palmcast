@@ -17,10 +17,8 @@ async fn spawn() -> String {
 async fn spawn_with_deck(markdown: &str) -> String {
     serve(routes::router_with(routes::App {
         registry: Registry::new(Duration::from_secs(3600)),
-        public_url: None,
         starter: Some(markdown.to_string()),
-        uploads: false,
-        styles: Default::default(),
+        ..Default::default()
     }))
     .await
 }
@@ -29,10 +27,18 @@ async fn spawn_with_deck(markdown: &str) -> String {
 async fn spawn_with_uploads() -> String {
     serve(routes::router_with(routes::App {
         registry: Registry::new(Duration::from_secs(3600)),
-        public_url: None,
-        starter: None,
         uploads: true,
-        styles: Default::default(),
+        ..Default::default()
+    }))
+    .await
+}
+
+/// An instance that will not start a room without the operator's key.
+async fn spawn_with_create_key(key: &str) -> String {
+    serve(routes::router_with(routes::App {
+        registry: Registry::new(Duration::from_secs(3600)),
+        create_key: Some(key.to_string()),
+        ..Default::default()
     }))
     .await
 }
@@ -41,7 +47,13 @@ async fn serve(router: axum::Router) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+        // Same shape as main: the rate limiter meters on the peer address.
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     format!("127.0.0.1:{}", addr.port())
 }
@@ -138,6 +150,123 @@ async fn the_presenter_does_receive_speaker_notes() {
 
     assert_eq!(opening["type"], "deck");
     assert_eq!(opening["slides"][0]["notes"], "the secret note");
+}
+
+/// One address cannot take the whole session cap and leave the instance with
+/// nothing to hand the next person for the length of a TTL.
+#[tokio::test]
+async fn an_ip_that_creates_too_many_rooms_is_told_to_wait() {
+    let host = spawn().await;
+    let client = reqwest::Client::new();
+
+    let mut made = 0;
+    let mut refused = None;
+    for _ in 0..12 {
+        let res = client
+            .post(format!("http://{host}/api/sessions"))
+            .json(&serde_json::json!({ "markdown": "# Room" }))
+            .send()
+            .await
+            .unwrap();
+        match res.status().as_u16() {
+            201 => made += 1,
+            429 => {
+                refused = Some(res.text().await.unwrap());
+                break;
+            }
+            other => panic!("unexpected status {other}"),
+        }
+    }
+    assert_eq!(made, 10, "the hourly allowance was not ten rooms");
+    let told = refused.expect("the eleventh room was created anyway");
+    assert!(
+        told.contains("try again later"),
+        "unhelpful refusal: {told}"
+    );
+}
+
+/// Packing is metered too, so a deck compressor cannot be used as one.
+#[tokio::test]
+async fn an_ip_that_packs_too_many_decks_is_slowed_down() {
+    let host = spawn().await;
+    let client = reqwest::Client::new();
+
+    let mut packed = 0;
+    for _ in 0..70 {
+        let res = client
+            .post(format!("http://{host}/api/pack"))
+            .json(&serde_json::json!({ "markdown": "# Deck" }))
+            .send()
+            .await
+            .unwrap();
+        if res.status() == 429 {
+            break;
+        }
+        packed += 1;
+    }
+    assert_eq!(packed, 60, "the per minute allowance was not sixty decks");
+}
+
+/// An instance can be closed to everyone but whoever holds the operator's key.
+#[tokio::test]
+async fn a_create_key_gates_new_rooms() {
+    let host = spawn_with_create_key("the-operators-key").await;
+    let client = reqwest::Client::new();
+
+    let without = client
+        .post(format!("http://{host}/api/sessions"))
+        .json(&serde_json::json!({ "markdown": "# Room" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(without.status(), 403);
+    let said = without.text().await.unwrap();
+    assert!(said.contains("needs a key"), "unhelpful refusal: {said}");
+
+    let wrong = client
+        .post(format!("http://{host}/api/sessions"))
+        .bearer_auth("not-the-key")
+        .json(&serde_json::json!({ "markdown": "# Room" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), 403, "a guess started a room");
+
+    let with = client
+        .post(format!("http://{host}/api/sessions"))
+        .bearer_auth("the-operators-key")
+        .json(&serde_json::json!({ "markdown": "# Room" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(with.status(), 201, "the key did not open the instance");
+}
+
+/// A forwarded header is only worth reading when a proxy is actually in front,
+/// which is what --public-url says. Otherwise anyone picks their own bucket.
+#[tokio::test]
+async fn a_forwarded_address_is_ignored_without_a_public_url() {
+    let host = spawn().await;
+    let client = reqwest::Client::new();
+
+    let mut made = 0;
+    for i in 0..12 {
+        let res = client
+            .post(format!("http://{host}/api/sessions"))
+            .header("x-forwarded-for", format!("10.0.0.{i}"))
+            .json(&serde_json::json!({ "markdown": "# Room" }))
+            .send()
+            .await
+            .unwrap();
+        if res.status() == 429 {
+            break;
+        }
+        made += 1;
+    }
+    assert_eq!(
+        made, 10,
+        "a made up forwarded address bought a fresh allowance"
+    );
 }
 
 /// The token used to ride the query string, where a reverse proxy writes it
@@ -2596,10 +2725,8 @@ async fn a_look_the_operator_added_at_startup_reaches_the_room() {
     let styles = std::sync::Arc::new(palmcast::styles::load(Some(&dir), None).unwrap());
     let host = serve(routes::router_with(routes::App {
         registry: Registry::new(Duration::from_secs(3600)),
-        public_url: None,
-        starter: None,
-        uploads: false,
         styles,
+        ..Default::default()
     }))
     .await;
 

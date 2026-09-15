@@ -1,5 +1,7 @@
 import {
+  authFetch,
   copyText,
+  createKeyIn,
   deckLinkFor,
   deckTokenIn,
   packDeck,
@@ -203,12 +205,13 @@ start.addEventListener('click', async () => {
   start.disabled = true;
   error.hidden = true;
   try {
-    const res = await fetch('/api/sessions', {
+    const res = await authFetch('/api/sessions', createKeyIn(location.hash), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ markdown: editor.value }),
     });
-    if (!res.ok) throw new Error(`server said ${res.status}`);
+    // The instance says what is wrong in words worth showing.
+    if (!res.ok) throw new Error((await res.text()) || `server said ${res.status}`);
     const { id, token } = await res.json();
     rememberToken(id, token);
     location.href = `/s/${id}/present#t=${encodeURIComponent(token)}`;
