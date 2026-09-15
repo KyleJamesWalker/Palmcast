@@ -17,7 +17,12 @@
   </div>
 </main>
 <section id="qa" class="qa" hidden>
-  <h2 class="label">Leaderboard</h2>
+  <h2 class="label">Join this room</h2>
+  <div class="qr-join">
+    <img id="qr-join-img" alt="QR code linking to this room" width="132" height="132">
+    <p id="qr-join-url" class="dim url"></p>
+  </div>
+  <h2 class="label label-spaced">Leaderboard</h2>
   <form id="name-form" class="name-form">
     <input id="name-text" type="text" maxlength="24" placeholder="Your name, to join the game"
       autocomplete="off" aria-label="Your name">
@@ -60,6 +65,11 @@
   <span id="position" class="dim">—</span>
   <button id="qa-toggle" class="ghost-small">Room</button>
 </footer>
+<div id="qr-overlay" class="qr-overlay" hidden role="dialog" aria-label="Join this room">
+  <h2>Join this room</h2>
+  <img alt="QR code linking to this room" width="420" height="420">
+  <p id="qr-overlay-url" class="qr-url"></p>
+</div>
 <div id="ended" class="ended" role="status" hidden>
   <h2>This session has ended</h2>
   <p>Ask the presenter for a new link.</p>

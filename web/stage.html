@@ -19,6 +19,11 @@
 </main>
 <div id="position" class="corner dim"></div>
 <button id="fullscreen" class="fullscreen" aria-label="Full screen">⛶</button>
+<div id="qr-overlay" class="qr-overlay" hidden role="dialog" aria-label="Join this room">
+  <h2>Join this room</h2>
+  <img alt="QR code linking to this room" width="420" height="420">
+  <p id="qr-overlay-url" class="qr-url"></p>
+</div>
 <div id="ended" class="ended" role="status" hidden>
   <h2>This session has ended</h2>
   <p>Ask the presenter for a new link.</p>

@@ -4,6 +4,7 @@ import { pruneBySlide, survivingSlides } from '/deckstate.js';
 import { burst } from '/reactions.js';
 import { renderScores } from '/scores.js';
 import { applyTheme, crossing, preload, swap } from '/looks.js';
+import { joinUrl, showJoin } from '/qr.js';
 import { applySteps } from '/steps.js';
 
 const id = sessionId();
@@ -65,6 +66,9 @@ connect(id, null, {
   react(msg) {
     burst(msg.kind);
   },
+  qr(msg) {
+    showJoin(qrOverlay, id, msg.on);
+  },
   scores(msg) {
     const board = document.getElementById('scores');
     // The room only wants the board between questions, not over a slide it is
@@ -73,6 +77,11 @@ connect(id, null, {
     renderScores(board, msg.items.slice(0, 10));
   },
 });
+
+// The television is the screen the whole room is already facing, so the address
+// goes under the code in a size that reads from the back.
+const qrOverlay = document.getElementById('qr-overlay');
+document.getElementById('qr-overlay-url').textContent = joinUrl(id, location.origin);
 
 // The control hides itself again so the room is not looking at a button all
 // night.
