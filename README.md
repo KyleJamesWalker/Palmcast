@@ -221,230 +221,15 @@ pictures, so a room that comes back across a restart comes back without them.
 **Save the evening** puts them in the zip under `images/`, named by the id the
 deck's own link ends with.
 
-## Paint the deck
+## Looks
 
-The editor has a **Theme** and a **Transition** picker above it, listing what
-this instance actually serves with a line each on what they look like, so a
-theme the operator added shows up there without the page knowing about it.
-Picking one writes the directive into the deck and shows it on a small sample
-slide beside the picker; tapping that sample runs the transition again, which is
-the only way to compare two of them without picking each one twice. **This slide
-only** writes `_transition` instead, for a slide that should differ from the
-ones after it. Both pickers are on the start page and in the
-presenter console, and the directives below are what they write, so a deck
-written by hand and a deck written with them are the same deck.
+A deck names a theme and a transition, and an operator can add more of
+either. See [docs/looks.md](docs/looks.md).
 
-A deck picks its colours with one line:
+## Running a room
 
-```markdown
-<!-- theme: paper -->
-
-# Why Rust
-
-A three minute case, made at a bar
-```
-
-Five themes ship with the binary. `ember` is the dark default, meant for a phone
-in a dim room; `daylight` is for a room with the lights on; `bold` is pure
-contrast and heavier type for reading from the back; `paper` is warm stock and
-serif headings; `neon` is cyan and magenta on near black.
-
-The line is read wherever it sits and paints the whole deck, and it never
-appears on a slide. A name the instance does not have is ignored, so a deck
-written against someone else's instance still runs here.
-
-A theme covers the reading surface: the slide on a phone and the whole stage
-screen. The status pill, the footer, the Room panel and the presenter console
-keep their own look whatever the deck says, so the controls a presenter reaches
-for at half past ten do not move or change colour between talks.
-
-## Move between slides
-
-The same shape sets a transition:
-
-```markdown
-<!-- transition: cover -->
-
-# One
-
----
-
-# Two
-
----
-
-<!-- _transition: none -->
-
-# This one cuts in
-```
-
-All 33 of [Marp's transition
-names](https://github.com/marp-team/marp-cli/tree/main/src/engine/transition/keyframes)
-work, plus `none`: `clockwise`, `counterclockwise`, `cover`, `coverflow`,
-`cube`, `cylinder`, `diamond`, `drop`, `explode`, `fade`, `fade-out`, `fall`,
-`flip`, `glow`, `implode`, `in-out`, `iris-in`, `iris-out`, `melt`, `overlap`,
-`pivot`, `pull`, `push`, `reveal`, `rotate`, `slide`, `star`, `swap`, `swipe`,
-`swoosh`, `wipe`, `wiper` and `zoom`. They are written against the same names
-Marp uses rather than lifted from its stylesheets, so a deck moves across
-without an edit while the animations themselves are this project's own.
-
-The picker writes `theme` at the top of the deck, replacing the line already
-there rather than adding a second one, and writes `transition` at the slide the
-cursor is in, because that is the slide it governs. It leaves the cursor on the
-line it just wrote, so picking another transition changes that line rather than
-adding a second directive below it.
-
-`transition` applies from the slide it is written on until another one replaces
-it. `_transition` applies to its own slide and nothing else. Either takes a
-time, as in `<!-- transition: cover 1s -->` or `800ms`; without one a
-transition runs for half a second, or whatever its own stylesheet asked for.
-
-A boundary belongs to the slide above it, so stepping back over it runs the same
-animation in reverse rather than whatever the slide below named. A staged list
-arriving one item at a time is not a slide change and does not animate.
-
-Transitions use the browser's [View Transitions
-API](https://developer.mozilla.org/en-US/docs/Web/API/View_Transition_API).
-A browser without it swaps the slide the way this application always has, so a
-deck that names one still works everywhere; an older phone in the room simply
-sees a cut where the stage screen sees a wipe. A phone asking for less motion
-gets a cross fade instead, whatever the deck named.
-
-## Add your own themes and transitions
-
-An instance can serve more than the binary ships with. Point it at a directory
-of CSS files:
-
-```bash
-palmcast --theme-dir ./themes --transition-dir ./transitions
-```
-
-The file name is the name a deck asks for, so `themes/dusk.css` answers to
-`<!-- theme: dusk -->`. A file named after a built-in replaces it, which is how
-an instance changes what `ember` looks like rather than only adding a sixth
-theme. Names are lowercase letters, digits and dashes; anything else is skipped
-with a line in the log. A directory the server cannot read stops startup, on the
-same reasoning as a deck it cannot open.
-
-`web/themes` and `web/transitions` in this repository are the worked example:
-every built-in is an ordinary file in exactly the shape yours needs. A theme
-redefines the palette on the two reading surfaces:
-
-```css
-/* themes/dusk.css */
-.viewer, .stage {
-  --ground: #131a24;
-  --raised: #1d2733;
-  --edge: #33414f;
-  --ink: #e8eef5;
-  --ink-dim: #8b9bab;
-  --accent: #7ec8e3;
-  --accent-ink: #0b1119;
-  color-scheme: dark;
-  background: var(--ground);
-  color: var(--ink);
-}
-```
-
-Restate the whole palette rather than only the parts you are changing. A deck in
-your theme may follow one in another, and a theme has to be able to put the page
-back.
-
-A transition names two sets of keyframes, one for the slide leaving and one for
-the slide arriving:
-
-```css
-/* transitions/swoop.css */
-@keyframes palmcast-out-swoop { to { transform: translateY(-40%) scale(.8); opacity: 0; } }
-@keyframes palmcast-in-swoop { from { transform: translateY(40%) scale(.8); opacity: 0; } }
-
-html[data-transition="swoop"] {
-  --transition-out: palmcast-out-swoop;
-  --transition-in: palmcast-in-swoop;
-}
-```
-
-`palmcast-hold` is defined for you, for a transition where one side stays still
-while the other moves. Naming it is not the same as leaving a side unset: unset
-keeps the browser's own cross fade, and `palmcast-hold` keeps the slide exactly
-as it is. Add `--transition-ease` for a timing function and
-`--transition-duration` for a default the deck can still override. Anything that
-uncovers the next slide has to paint the outgoing one in front, which is
-`--transition-lift: 1; --transition-drop: 0;` — going backwards the pair swaps
-itself, so a transition never needs a second opinion about direction.
-
-Nothing here reads a stylesheet a deck carried. A deck names a look; the server
-holds it. That is what keeps a room where anyone may put a talk up from being a
-room where anyone may restyle it.
-
-## Run a quiz
-
-A slide holding two or more task list items becomes a question. `- [x]` marks a
-right answer, and a question may have more than one.
-
-```markdown
-# What year did Rust 1.0 ship?
-
-- [ ] 2012
-- [x] 2015
-- [ ] 2018
-```
-
-The room taps an option. The presenter watches the count fill, then presses
-**Reveal the answer**, which opens the answer and the split to everyone.
-
-<img src="docs/screenshots/phone-reveal.png" width="240" alt="A phone after the reveal: both right answers marked with their counts, the wrong one dim">
-
-Marking several answers makes it a pick-all question. The room selects every
-answer it wants and sends them together, and a point needs the whole set. The
-count still shows how many people answered, not how many boxes they ticked.
-
-Two things stay on the server until that moment. The right answer never reaches
-an audience socket, and neither does the running count. A room that watches the
-split form votes differently from a room that cannot see it.
-
-One vote per browser. A second tap replaces the first rather than adding one.
-
-## Run an open mic
-
-A room can take talks from the floor. **Lineup** in the presenter console opens
-submissions, and every phone grows a **Put a talk up** button. A title and a
-deck put a speaker in the running order, which is on every screen, so the room
-knows who is next.
-
-The host reads a talk before it goes up, puts it on stage, and hands its speaker
-the controls. Staging parks the host deck and brings it back when the talk comes
-down, with whatever the room had already voted on and been shown. The
-leaderboard runs the whole evening rather than resetting per talk.
-
-**Give controls** and staging are separate, so the host can hand the controls
-over before a talk goes up. Driving is not reading: a speaker sees speaker
-notes, correct answers and live tallies only for their own talk, and only while
-it is on stage. Hand them the controls over somebody else's deck and they can
-move it, reveal on it and put the QR up, but the notes and answers stay the
-host's. The console confirms before handing over in that case.
-
-Talks arrive in the order somebody typed fastest, which is nobody's idea of an
-evening. The arrows beside each row move a talk up or down, and every screen
-follows.
-
-A speaker keeps their own deck until the room sees it. Their phone shows **Your
-talk**: where it stands in the running order, **Edit**, and **Read it through**,
-which draws every slide with the parser the room runs. The talk on stage is the
-exception. That deck belongs to the room, and the console edits it.
-
-**Drop** takes a talk off the running order and asks for a line to go with it.
-The speaker reads that line on their own phone and the room never does. It
-travels to the one phone holding that talk's token, not over the socket that
-reaches everyone. Their button becomes **Fix it and put it back**, and saving
-returns the talk to the slot it had. **Delete** is the one that does not come
-back.
-
-A room takes 40 talks, and three from any one person.
-
-**Save the evening** hands the host a zip. It holds every deck as its speaker
-left it, what the room asked during each talk, the board, and a `slides.vtt`
-cue file timed against a recording. A dropped talk stays out of it.
+Quizzes, lightning talks, the floor, and letting somebody in late. See
+[docs/running-a-room.md](docs/running-a-room.md).
 
 ## Preview before the room sees it
 
@@ -509,47 +294,6 @@ being written in that browser, then this deck, then the sample. A host who
 writes their own deck keeps it, and a phone that has never been here gets
 yours.
 
-## Reactions and questions
-
-The audience gets five reactions in a bar under the slide. A tap floats the
-glyph up every screen in the room, the stage view included.
-
-**Room** holds the leaderboard and the floor. Someone joins the game by setting
-a name, and the server scores only the people who did. A right answer is worth one point, and
-it counts when the presenter reveals it rather than when the vote lands.
-
-Anyone asks a question, anyone upvotes. Anyone asks, anyone upvotes, and the list ranks
-by votes. The presenter marks a question answered, which sinks
-it rather than deleting it. Someone who joins late gets the questions already
-asked and the board as it stands.
-
-## Let somebody in late
-
-Somebody always walks in after the QR code has come down. Two ways back in,
-neither of which is the presenter reading a URL out.
-
-**Room** carries the code. Anyone already in can open the panel and hold their
-phone out to the person next to them, and nobody has to interrupt the talk.
-
-**Show QR** on the presenter console puts it on every screen in the room at
-once, the stage view included, which is the screen everyone is already facing.
-Press it again to take it down, or just carry on: moving the deck takes it down
-by itself, so a presenter who puts the code up and keeps talking never leaves
-the room reading a QR code instead of the slides.
-
-Whoever drives can do it, so a speaker holding the controls can share the room
-during their own talk without asking the host.
-
-The code is drawn by the server, not the page, because the address behind it is
-the one the server knows. Behind a proxy set `--public-url`: a QR code is the
-one thing a whole room scans without reading it, and a Host header is something
-a caller chooses.
-
-Whether the code is up is part of the room rather than of one screen, so a
-phone that joins while it is showing lands on it too, and one that slept
-through the flip catches up rather than sitting on a stale slide. It is not
-kept across a restart: a room coming back should come back on its slides.
-
 ## Configuration
 
 | Flag | Environment variable | Default | Purpose |
@@ -569,8 +313,8 @@ kept across a restart: a room coming back should come back on its slides.
 A link that outlives its room says so. Every view asks the server whether the
 session is still there, once on load and again whenever the socket drops. A view
 that learns the room is gone says "This session has ended" instead of
-reconnecting at a blank screen forever. An unreachable server is not a missing room, so a failed check keeps
-retrying.
+reconnecting at a blank screen forever. An unreachable server is not a missing
+room, so a failed check keeps retrying.
 
 The board shows the top 50. A player below that is told so rather than left
 wondering why their name is missing.
@@ -627,77 +371,8 @@ inflate a quiz tally.
 
 ## Security model
 
-Palmcast treats a deck as untrusted input. Anyone with a link can write one, and
-every phone in the room renders it. The server therefore:
-
-- Renders raw HTML as text instead of markup.
-- Strips `javascript:`, `data:` and `vbscript:` hrefs, including whitespace
-  obfuscated forms.
-- Compares the presenter token in constant time.
-- Checks the token on the server for every slide change, reveal, and question
-  close, so a forged frame from a viewer changes nothing.
-- Puts question text on screen as text, never as markup.
-- Limits a reaction to one per viewer every 400ms, and a question to one per
-  viewer every three seconds, 280 characters, and 200 per session.
-- Bounds a deck link in both directions. Packing refuses a deck over 64 KB
-  before it compresses anything. Unpacking stops reading at the 256 KB deck
-  limit, so a small token cannot ask for a large allocation.
-- Strips an image source the same way it strips a link, and draws an uploaded
-  picture only after decoding it. A header claiming more than 6,000 pixels an
-  edge is refused before anything is allocated for it, and a decode may not
-  allocate more than 128 MB whatever the header claims. A 48 megapixel phone
-  photograph still fits. Two pictures decode at once across the instance, and a
-  third is told the room is busy rather than queued behind them.
-- Takes a theme and a transition as a name and never as a stylesheet. A name is
-  lowercase letters, digits and dashes, at most 32 of them, which is checked
-  where the deck is parsed and again where the browser asks for the file. A deck
-  cannot reach a path, smuggle a quote into an attribute, or carry CSS of its
-  own. What the room loads is a file the operator put on the instance.
-
-A deck pointing at a picture somewhere else makes every phone in the room fetch
-that address. The policy allows it, because that is what an image in a deck is,
-and whoever serves the picture sees the room. Run `--uploads` for a room that
-should tell an outsider nothing.
-
-The presenter token travels in the URL fragment, which browsers never send to
-the server. Copy the presenter link to move control to another device.
-
-Past the page load, the token never appears in a URL either. Authenticated HTTP
-calls send it as `Authorization: Bearer <token>`, and the socket sends it in an
-`auth` frame the moment it opens, because a browser cannot set a header on a
-WebSocket. A reverse proxy logs the request line, so a token in a query string
-lands in an access log; a header and a socket frame do not.
-
-For one release the server still accepts `?token=` on the HTTP endpoints and the
-socket URL, so tabs opened before the change keep working. It logs a warning
-when it reads one. That fallback goes in the release after.
-
-### Running an instance other people can reach
-
-Starting a room, previewing a deck and packing one into a link are the three
-things anyone can ask for without a token, so they are metered per address: ten
-rooms an hour, and sixty previews or packs a minute. Over that the server
-answers 429 and says so.
-
-Behind a proxy the peer address is the proxy, so `X-Forwarded-For` is read
-instead — but only when `--public-url` is set, because that flag is what says a
-proxy is really there. Without it the header is ignored, so nobody can pick
-their own bucket by claiming an address.
-
-`--create-key` closes the instance to everyone else. With it set, starting a
-room needs `Authorization: Bearer <key>`, and the start page reads the key from
-a `#k=` fragment, so an operator hands out one link:
-
-```
-https://palmcast.example/#k=the-key-you-chose
-```
-
-A fragment never reaches the server, so the key stays out of its access logs the
-same way a presenter token does. Without the key the server answers 403 and
-`this instance needs a key to start a room`.
-
-`--max-sessions` caps how many rooms exist at once, 500 by default. Each holds a
-deck, its votes and any pictures, so the ceiling is memory.
+What the server trusts, what it refuses, and what an operator controls. See
+[docs/security.md](docs/security.md).
 
 ## Develop
 
