@@ -151,6 +151,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut tick = tokio::time::interval(Duration::from_secs(60));
             loop {
                 tick.tick().await;
+                // An instance nobody is using rewrote the same file every
+                // minute, cloning every room under the lock to do it.
+                if !saver.changed() {
+                    continue;
+                }
                 let saved = saver.export();
                 if let Err(error) = persist::save(&path, &saved) {
                     tracing::error!(%error, "periodic save failed");

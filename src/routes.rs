@@ -357,9 +357,18 @@ async fn export_evening(
     headers: HeaderMap,
 ) -> Response {
     let token = &token_from(&headers, &params);
-    let built = registry.with(&id, |s| {
-        s.role_of(token).hosts().then(|| crate::export::bundle(s))
-    });
+    // Only the copy happens under the lock. Zipping an evening walks every deck
+    // and every picture, and the whole instance shares that one lock.
+    let view = registry.with(&id, |s| s.role_of(token).hosts().then(|| s.export_view()));
+    let built = match view {
+        None => None,
+        Some(None) => Some(None),
+        Some(Some(view)) => Some(Some(
+            tokio::task::spawn_blocking(move || crate::export::bundle(&view))
+                .await
+                .unwrap_or_else(|_| Err(std::io::Error::other("the export panicked"))),
+        )),
+    };
     match built {
         Some(Some(Ok(bytes))) => (
             [

@@ -106,6 +106,9 @@ pub struct Talk {
     /// wanted the speaker to know. The talk is kept rather than deleted, so the
     /// speaker can fix what was wrong and put it back.
     pub dropped: Option<String>,
+    /// Counted when the markdown is set rather than on every lineup frame,
+    /// which reparsed every talk in the room to draw one number each.
+    pub slides: usize,
 }
 
 /// The host's own deck, parked while a talk is on stage.
@@ -136,6 +139,10 @@ pub struct Session {
     /// telling is on a timer, so a QR scan is one frame rather than hundreds.
     pub viewers_dirty: bool,
     pub touched: Instant,
+    /// Set by every change worth keeping, cleared when the state file has it.
+    /// A quiet instance then costs a flag read a minute rather than a clone of
+    /// every room it holds.
+    pub dirty: bool,
     pub tx: broadcast::Sender<Arc<Frame>>,
     /// slide index -> voter id -> the options they chose. One selection each,
     /// and a later one replaces it rather than adding to it.
@@ -179,6 +186,7 @@ pub struct Session {
 }
 
 /// One moment the room saw something new.
+#[derive(Clone)]
 pub struct Cue {
     pub at: SystemTime,
     pub talk: Option<u64>,
@@ -447,7 +455,7 @@ impl Session {
         }
         self.current = index;
         self.step = step.min(self.steps_at(index));
-        self.touched = Instant::now();
+        self.touch();
         // Moving the deck says the sharing is over. Without this a presenter
         // who flips the room to a QR and carries on talking leaves the room
         // reading a QR code instead of the slides.
@@ -471,7 +479,7 @@ impl Session {
             return None;
         }
         self.qr_open = on;
-        self.touched = Instant::now();
+        self.touch();
         let msg = ServerMsg::Qr { on };
         self.emit(&msg);
         Some(msg)
@@ -527,7 +535,7 @@ impl Session {
         self.rev += 1;
         self.current = self.current.min(self.slides.len() - 1);
         self.step = self.step.min(self.steps_at(self.current));
-        self.touched = Instant::now();
+        self.touch();
         let msg = self.snapshot();
         self.emit(&msg);
         Ok(msg)
@@ -544,7 +552,7 @@ impl Session {
             return None;
         }
         self.viewers += 1;
-        self.touched = Instant::now();
+        self.touch();
         self.viewers_dirty = true;
         Some(ServerMsg::Viewers {
             count: self.viewers,
@@ -596,7 +604,7 @@ impl Session {
             .entry(slide)
             .or_default()
             .insert(who.to_string(), chosen);
-        self.touched = Instant::now();
+        self.touch();
         let (counts, total) = self.counts(slide);
         let msg = ServerMsg::Tally {
             slide,
@@ -618,7 +626,7 @@ impl Session {
             return None;
         }
         self.last_reaction.insert(who.to_string(), now);
-        self.touched = now;
+        self.touch();
         let msg = ServerMsg::React { kind };
         self.emit(&msg);
         Some(msg)
@@ -662,7 +670,7 @@ impl Session {
             answered: false,
             voters,
         });
-        self.touched = now;
+        self.touch();
         let msg = self.question_list();
         self.emit(&msg);
         Some(msg)
@@ -677,7 +685,7 @@ impl Session {
         if !found.voters.insert(who.to_string()) {
             return None;
         }
-        self.touched = Instant::now();
+        self.touch();
         let msg = self.question_list();
         self.emit(&msg);
         Some(msg)
@@ -689,7 +697,7 @@ impl Session {
         }
         let found = self.questions.iter_mut().find(|q| q.id == question)?;
         found.answered = true;
-        self.touched = Instant::now();
+        self.touch();
         let msg = self.question_list();
         self.emit(&msg);
         Some(msg)
@@ -704,7 +712,7 @@ impl Session {
             return None;
         }
         self.names.insert(who.to_string(), name.to_string());
-        self.touched = Instant::now();
+        self.touch();
         let msg = self.score_table();
         self.emit(&msg);
         Some(msg)
@@ -720,7 +728,7 @@ impl Session {
             .and_then(|s| s.question.as_ref())
             .map(|q| q.correct.clone())?;
         self.revealed.insert(slide);
-        self.touched = Instant::now();
+        self.touch();
         let (counts, total) = self.counts(slide);
         let msg = ServerMsg::Reveal {
             slide,
@@ -735,6 +743,43 @@ impl Session {
         Some(msg)
     }
     /// The leaderboard as rows, for anything that is not a wire message.
+    /// Everything the export needs, copied out so the zip can run without the
+    /// registry lock. Cloning is memcpy; zipping walks every deck and picture.
+    pub fn export_view(&self) -> crate::export::ExportView {
+        crate::export::ExportView {
+            opened: self.opened,
+            host_markdown: match (&self.parked, self.staged) {
+                (Some(parked), Some(_)) => parked.markdown.clone(),
+                _ => self.markdown.clone(),
+            },
+            staged: self.staged,
+            live_markdown: self.markdown.clone(),
+            talks: self
+                .lineup
+                .iter()
+                .map(|talk| crate::export::TalkView {
+                    id: talk.id,
+                    title: talk.title.clone(),
+                    by: talk.by.clone(),
+                    markdown: talk.markdown.clone(),
+                    dropped: talk.dropped.is_some(),
+                })
+                .collect(),
+            questions: self
+                .questions
+                .iter()
+                .map(|q| crate::export::QuestionView {
+                    text: q.text.clone(),
+                    votes: q.voters.len(),
+                    answered: q.answered,
+                })
+                .collect(),
+            images: self.images.clone(),
+            board: self.board(),
+            timeline: self.timeline.clone(),
+        }
+    }
+
     pub fn board(&self) -> Vec<ScoreRow> {
         match self.score_table() {
             ServerMsg::Scores { items } => items,
@@ -751,7 +796,7 @@ impl Session {
                     id: talk.id,
                     title: talk.title.clone(),
                     by: talk.by.clone(),
-                    slides: deck::parse(&talk.markdown).len(),
+                    slides: talk.slides,
                 })
                 .collect()
         };
@@ -782,6 +827,13 @@ impl Session {
     /// Notes what the room is looking at, so a recording can be cut against it
     /// afterwards. Only a change is worth a cue: holding on a slide is one
     /// moment, however long it lasts.
+    /// Something changed. Keeps the idle clock and the save flag in step, so a
+    /// new mutating method cannot set one and forget the other.
+    fn touch(&mut self) {
+        self.touched = Instant::now();
+        self.dirty = true;
+    }
+
     fn mark(&mut self) {
         let title = self
             .staged
@@ -830,12 +882,13 @@ impl Session {
         self.lineup.push(Talk {
             id,
             title,
+            slides: deck::parse(markdown).len(),
             markdown: markdown.to_string(),
             token: token.clone(),
             by,
             dropped: None,
         });
-        self.touched = Instant::now();
+        self.touch();
         self.emit(&self.lineup_msg());
         Some((id, token))
     }
@@ -868,7 +921,7 @@ impl Session {
             kind,
             bytes,
         });
-        self.touched = Instant::now();
+        self.touch();
         Some(id)
     }
 
@@ -936,9 +989,10 @@ impl Session {
             "" => first_heading(markdown),
             given => given.chars().take(MAX_TITLE_CHARS).collect(),
         };
+        held.slides = deck::parse(markdown).len();
         held.markdown = markdown.to_string();
         held.dropped = None;
-        self.touched = Instant::now();
+        self.touch();
         self.emit(&self.lineup_msg());
         Ok(())
     }
@@ -948,7 +1002,7 @@ impl Session {
             return false;
         }
         self.submissions_open = open;
-        self.touched = Instant::now();
+        self.touch();
         self.emit(&self.lineup_msg());
         true
     }
@@ -969,7 +1023,7 @@ impl Session {
         if let Some(held) = self.lineup.iter_mut().find(|t| t.id == talk) {
             held.dropped = Some(note);
         }
-        self.touched = Instant::now();
+        self.touch();
         self.emit(&self.lineup_msg());
         true
     }
@@ -985,7 +1039,7 @@ impl Session {
         if held.dropped.take().is_none() {
             return false;
         }
-        self.touched = Instant::now();
+        self.touch();
         self.emit(&self.lineup_msg());
         true
     }
@@ -998,7 +1052,7 @@ impl Session {
         }
         self.clear_stage_of(role, talk);
         self.lineup.retain(|t| t.id != talk);
-        self.touched = Instant::now();
+        self.touch();
         self.emit(&self.lineup_msg());
         true
     }
@@ -1039,7 +1093,7 @@ impl Session {
         // Read again, because the removal shifted everything behind it.
         let landing = self.running().get(to).copied().unwrap_or(self.lineup.len());
         self.lineup.insert(landing, moved);
-        self.touched = Instant::now();
+        self.touch();
         self.emit(&self.lineup_msg());
         true
     }
@@ -1136,7 +1190,7 @@ impl Session {
         let (votes, revealed) = returning.unwrap_or_default();
         self.votes = votes;
         self.revealed = revealed;
-        self.touched = Instant::now();
+        self.touch();
         self.mark();
 
         self.emit(&self.snapshot());
@@ -1162,7 +1216,7 @@ impl Session {
             return false;
         }
         self.baton = talk;
-        self.touched = Instant::now();
+        self.touch();
         self.emit(&self.baton_msg());
         true
     }
@@ -1267,6 +1321,7 @@ impl Registry {
                 step: 0,
                 viewers: 0,
                 viewers_dirty: false,
+                dirty: true,
                 touched: Instant::now(),
                 tx,
                 votes: HashMap::new(),
@@ -1362,9 +1417,19 @@ impl Registry {
     }
 
     /// Everything worth carrying across a restart.
+    /// True when any room has changed since the last export. A quiet instance
+    /// costs a flag read a minute rather than a clone of everything it holds.
+    pub fn changed(&self) -> bool {
+        self.lock().values().any(|s| s.dirty)
+    }
+
+    /// Clears the change flags: whatever comes back is the state on record.
     pub fn export(&self) -> Vec<PersistedSession> {
-        self.lock()
-            .iter()
+        let mut map = self.lock();
+        for session in map.values_mut() {
+            session.dirty = false;
+        }
+        map.iter()
             .map(|(id, s)| PersistedSession {
                 id: id.clone(),
                 owner_token: s.owner_token.clone(),
@@ -1528,6 +1593,7 @@ impl Registry {
                     step,
                     viewers: 0,
                     viewers_dirty: false,
+                    dirty: true,
                     touched,
                     tx,
                     votes,
@@ -1558,6 +1624,9 @@ impl Registry {
                         .map(|talk| Talk {
                             id: talk.id,
                             title: talk.title,
+                            // Counted rather than persisted: it is derived from
+                            // the markdown that is already here.
+                            slides: deck::parse(&talk.markdown).len(),
                             markdown: talk.markdown,
                             token: talk.token,
                             by: talk.by,
@@ -1934,6 +2003,27 @@ mod tests {
             1,
             "the parked point was lost across the restart"
         );
+    }
+
+    #[test]
+    fn a_quiet_instance_does_not_rewrite_its_state_file() {
+        let reg = registry();
+        let (id, mc) = reg.create("# Welcome").unwrap();
+        assert!(reg.changed(), "a new room was not worth saving");
+
+        let first = reg.export();
+        assert_eq!(first.len(), 1);
+        assert!(
+            !reg.changed(),
+            "a room that was just saved still looks unsaved"
+        );
+
+        // A whole minute of nobody doing anything.
+        assert!(!reg.changed(), "an idle room asked to be written again");
+
+        // Anything the room would want back after a restart marks it again.
+        reg.with_mut(&id, |s| s.goto(&mc, 0, 0)).flatten().unwrap();
+        assert!(reg.changed(), "a change was not worth saving");
     }
 
     #[test]

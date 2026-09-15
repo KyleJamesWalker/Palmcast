@@ -37,6 +37,7 @@ impl ImageError {
 }
 
 /// One stored picture: what to serve it as, and the bytes to serve.
+#[derive(Clone)]
 pub struct Stored {
     pub id: String,
     pub kind: &'static str,
