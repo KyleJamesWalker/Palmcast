@@ -145,14 +145,11 @@ pub struct PersistedQuestion {
 ///
 /// The temporary name is unique per call, by counter rather than by clock. The
 /// periodic save and the save on shutdown can overlap, and any shared name lets
-/// one rename the other's file out from under it. A nanosecond timestamp was
-/// not enough: two saves in the same microsecond collided.
+/// one rename the other's file out from under it.
 pub fn save(path: &Path, sessions: &[PersistedSession]) -> io::Result<()> {
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;
     }
-    // A clock is not a source of uniqueness: two saves in the same microsecond
-    // picked the same name, and one renamed the other's file away.
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let ticket = NEXT.fetch_add(1, Ordering::Relaxed);
     let temporary = path.with_extension(format!("tmp{}-{ticket}", std::process::id()));

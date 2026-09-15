@@ -51,14 +51,6 @@ pub enum Limit {
 }
 
 impl Limit {
-    /// How many, and over what window.
-    fn allowance(self) -> (f64, f64) {
-        match self {
-            Limit::Create => (10.0, 3600.0),
-            Limit::Pack => (60.0, 60.0),
-        }
-    }
-
     fn refused(self) -> &'static str {
         match self {
             Limit::Create => "too many rooms from this address, try again later",
@@ -74,9 +66,18 @@ struct Bucket {
 
 /// A token bucket per address and limit. Hand rolled rather than a dependency,
 /// because it is thirty lines and the lockfile is checked with `--locked`.
-#[derive(Default)]
 pub struct Limiter {
     buckets: Mutex<HashMap<(IpAddr, Limit), Bucket>>,
+    /// Rooms one address may start in an hour.
+    create_per_hour: f64,
+    /// Decks one address may pack or preview in a minute.
+    pack_per_minute: f64,
+}
+
+impl Default for Limiter {
+    fn default() -> Self {
+        Self::new(10, 60)
+    }
 }
 
 /// Anything untouched for longer than the widest window is indistinguishable
@@ -84,9 +85,25 @@ pub struct Limiter {
 const BUCKET_TTL: Duration = Duration::from_secs(3600);
 
 impl Limiter {
+    pub fn new(create_per_hour: u32, pack_per_minute: u32) -> Self {
+        Self {
+            buckets: Mutex::default(),
+            create_per_hour: create_per_hour.into(),
+            pack_per_minute: pack_per_minute.into(),
+        }
+    }
+
+    /// How many, and over what window.
+    fn allowance(&self, limit: Limit) -> (f64, f64) {
+        match limit {
+            Limit::Create => (self.create_per_hour, 3600.0),
+            Limit::Pack => (self.pack_per_minute, 60.0),
+        }
+    }
+
     /// True when the call may go ahead, taking one token if so.
     pub fn take(&self, who: IpAddr, limit: Limit) -> bool {
-        let (capacity, window) = limit.allowance();
+        let (capacity, window) = self.allowance(limit);
         let now = Instant::now();
         let mut buckets = self
             .buckets
@@ -268,6 +285,7 @@ pub fn router_with(app: App) -> Router {
 #[derive(Serialize)]
 struct Health {
     status: &'static str,
+    version: &'static str,
     sessions: usize,
     viewers: usize,
 }
@@ -276,6 +294,7 @@ struct Health {
 async fn health(State(registry): State<Registry>) -> Response {
     axum::Json(Health {
         status: "ok",
+        version: env!("CARGO_PKG_VERSION"),
         sessions: registry.len(),
         viewers: registry.viewers(),
     })

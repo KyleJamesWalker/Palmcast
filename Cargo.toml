@@ -28,6 +28,11 @@ zip = { version = "8.6.0", default-features = false }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 
+[profile.release]
+strip = true
+lto = "fat"
+codegen-units = 1
+
 [dev-dependencies]
 futures-util = "0.3.34"
 http-body-util = "0.1.5"

@@ -11,7 +11,11 @@ use palmcast::styles;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "palmcast", about = "Live slides on every screen in the room")]
+#[command(
+    name = "palmcast",
+    version,
+    about = "Live slides on every screen in the room"
+)]
 struct Args {
     #[arg(long, env = "PALMCAST_PORT", default_value_t = 8080)]
     port: u16,
@@ -66,6 +70,14 @@ struct Args {
     /// Rooms to hold at once. Each holds a deck, its votes and any pictures.
     #[arg(long, env = "PALMCAST_MAX_SESSIONS", default_value_t = session::DEFAULT_MAX_SESSIONS)]
     max_sessions: usize,
+
+    /// Rooms one address may start in an hour.
+    #[arg(long, env = "PALMCAST_CREATE_PER_HOUR", default_value_t = 10)]
+    create_per_hour: u32,
+
+    /// Decks one address may pack or preview in a minute.
+    #[arg(long, env = "PALMCAST_PACK_PER_MINUTE", default_value_t = 60)]
+    pack_per_minute: u32,
 }
 
 /// Read once at startup, not per request: a deck the operator named and the
@@ -205,6 +217,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         uploads: args.uploads,
         styles,
         create_key: args.create_key.clone(),
+        limiter: Arc::new(routes::Limiter::new(
+            args.create_per_hour,
+            args.pack_per_minute,
+        )),
         ..App::default()
     };
     // The result is held rather than propagated, because a server that fell over

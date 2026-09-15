@@ -1,5 +1,5 @@
 # Pinned so a clippy pass locally means the same thing as a clippy pass in CI.
-# Both workflows pin the same version; matrix-sync does not check this one.
+# matrix-sync fails when either workflow pins a different one.
 [toolchain]
 channel = "1.94.0"
 components = ["clippy", "rustfmt"]
