@@ -167,3 +167,112 @@ test('shortcuts need a modifier and nothing else', () => {
 test('an unknown name is nobody\'s edit', () => {
   assert.equal(editFor('nonsense', doc('|')), null);
 });
+
+import { setTheme, setTransition, themeIn } from './editing.js';
+
+const at = (text, cursor) => ({ text, start: cursor, end: cursor });
+
+test('a theme goes to the top of a deck that has none', () => {
+  const doc = at('# One\n\nBody', 0);
+  assert.equal(apply(doc, setTheme(doc, 'paper')).text, '<!-- theme: paper -->\n\n# One\n\nBody');
+});
+
+test('a second theme replaces the first rather than stacking on it', () => {
+  const doc = at('<!-- theme: neon -->\n\n# One', 25);
+  assert.equal(apply(doc, setTheme(doc, 'paper')).text, '<!-- theme: paper -->\n\n# One');
+});
+
+test('a theme is replaced wherever the deck wrote it', () => {
+  const doc = at('# One\n\n---\n\n<!-- theme: neon -->\n\n# Two', 0);
+  assert.equal(
+    apply(doc, setTheme(doc, 'bold')).text,
+    '# One\n\n---\n\n<!-- theme: bold -->\n\n# Two',
+  );
+});
+
+test('clearing the theme takes the line out', () => {
+  const doc = at('<!-- theme: neon -->\n\n# One', 0);
+  assert.equal(apply(doc, setTheme(doc, '')).text, '# One');
+});
+
+test('clearing a theme that was never there changes nothing', () => {
+  const doc = at('# One', 0);
+  assert.equal(setTheme(doc, ''), null);
+});
+
+test('a theme line inside a fence is someone showing the syntax', () => {
+  const text = '# Docs\n\n```markdown\n<!-- theme: neon -->\n```';
+  const doc = at(text, 0);
+  assert.equal(apply(doc, setTheme(doc, 'paper')).text, `<!-- theme: paper -->\n\n${text}`);
+  assert.equal(themeIn(text), null);
+});
+
+test('the theme a deck already names is reported back', () => {
+  assert.equal(themeIn('<!-- theme: neon -->\n\n# One'), 'neon');
+  assert.equal(themeIn('# One'), null);
+  assert.equal(themeIn('- `<!-- theme: neon -->` paints it'), null);
+});
+
+test('a transition lands at the cursor, not at the top', () => {
+  const doc = at('# One\n\n---\n\n# Two', 12);
+  assert.equal(
+    apply(doc, setTransition(doc, 'cover')).text,
+    '# One\n\n---\n\n<!-- transition: cover -->\n\n# Two',
+  );
+});
+
+test('picking again on the same line replaces that transition', () => {
+  const text = '# One\n\n<!-- transition: cover -->\n\n# Two';
+  const doc = at(text, 10);
+  assert.equal(
+    apply(doc, setTransition(doc, 'melt')).text,
+    '# One\n\n<!-- transition: melt -->\n\n# Two',
+  );
+});
+
+test('clearing a transition on its own line takes the line out', () => {
+  const text = '# One\n\n<!-- transition: cover -->\n\n# Two';
+  const doc = at(text, 10);
+  assert.match(apply(doc, setTransition(doc, '')).text, /^# One\n+# Two$/);
+});
+
+test('picking a transition leaves the cursor on the line it wrote', () => {
+  const doc = at('# One\n\n---\n\n# Two', 12);
+  const after = apply(doc, setTransition(doc, 'cover'));
+  const line = after.text.slice(
+    after.text.lastIndexOf('\n', after.start - 1) + 1,
+    after.text.indexOf('\n', after.start),
+  );
+  assert.equal(line, '<!-- transition: cover -->');
+});
+
+test('picking a second transition replaces the first rather than stacking', () => {
+  let doc = at('# One\n\n---\n\n# Two', 12);
+  for (const name of ['cover', 'melt', 'zoom']) {
+    doc = apply(doc, setTransition(doc, name));
+  }
+  assert.equal(doc.text.match(/<!-- transition:/g).length, 1, doc.text);
+  assert.match(doc.text, /<!-- transition: zoom -->/);
+});
+
+test('one slide only writes the underscored form', () => {
+  const doc = at('# One', 0);
+  assert.match(apply(doc, setTransition(doc, 'melt', true)).text, /^<!-- _transition: melt -->/);
+});
+
+test('switching between the two forms replaces rather than adds', () => {
+  let doc = at('# One\n\n# Two', 7);
+  doc = apply(doc, setTransition(doc, 'melt', true));
+  assert.equal(doc.text.match(/transition:/g).length, 1);
+  doc = apply(doc, setTransition(doc, 'melt', false));
+  assert.equal(doc.text.match(/transition:/g).length, 1, doc.text);
+  assert.match(doc.text, /<!-- transition: melt -->/);
+  assert.doesNotMatch(doc.text, /_transition/);
+});
+
+test('clearing from the line the picker wrote takes that line out', () => {
+  let doc = at('# One\n\n---\n\n# Two', 12);
+  doc = apply(doc, setTransition(doc, 'cover'));
+  doc = apply(doc, setTransition(doc, ''));
+  assert.doesNotMatch(doc.text, /transition/);
+});

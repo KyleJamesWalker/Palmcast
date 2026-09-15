@@ -9,6 +9,7 @@ import {
   unpackDeck,
 } from '/shared.js';
 import { smartEditor } from '/editing.js';
+import { lookPickers } from '/lookpicker.js';
 import { previewDeck, renderPreview } from '/preview.js';
 import { starterPrompt } from '/deckstate.js';
 import { SAMPLE } from '/sample.js';
@@ -88,7 +89,20 @@ editor.addEventListener('input', () => {
 });
 refresh();
 
-smartEditor(editor, document.getElementById('toolbar'));
+const editing = smartEditor(editor, document.getElementById('toolbar'));
+
+// An instance that serves no looks, or cannot say, leaves both selects hidden.
+// That case is handled inside; anything else is a fault worth seeing in the
+// console rather than a picker that silently never appears.
+lookPickers(editing, editor, {
+  theme: document.getElementById('theme-pick'),
+  transition: document.getElementById('transition-pick'),
+  themeField: document.getElementById('theme-field'),
+  transitionField: document.getElementById('transition-field'),
+  scope: document.getElementById('transition-scope'),
+  scopeField: document.getElementById('scope-field'),
+  demo: document.getElementById('look-demo'),
+});
 
 // A shared link beats whatever draft is in this browser, and then becomes the
 // draft. Dropping the token from the address bar is what makes that stick: a

@@ -228,6 +228,120 @@ export function insertBlock(doc, kind) {
   return { from, to, insert, select: [at, at] };
 }
 
+
+/// A `<!-- name: value -->` line, mirroring what the server's parser reads.
+///
+/// The line has to be the whole line. A bullet quoting a directive is a deck
+/// showing the syntax off, which the sample deck does, and rewriting it would
+/// edit the documentation instead of the deck.
+const DIRECTIVE = /^[ \t]*<!--[ \t]*(_?[a-z]+)[ \t]*:([^>]*)-->[ \t]*$/;
+
+function directiveOn(line) {
+  const match = DIRECTIVE.exec(line);
+  return match ? { name: match[1], value: match[2].trim() } : null;
+}
+
+/// Every line of `text` that carries the named directive, outside fences.
+function directiveLines(text, name) {
+  const found = [];
+  let at = 0;
+  for (const line of text.split('\n')) {
+    const directive = directiveOn(line);
+    if (directive && directive.name === name && !inFence(text, at + 1)) {
+      found.push([at, at + line.length]);
+    }
+    at += line.length + 1;
+  }
+  return found;
+}
+
+/// The theme the deck already names, or null. The last one wins, as it does on
+/// the server, so that is the one a picker should be showing.
+export function themeIn(text) {
+  const lines = directiveLines(text, 'theme');
+  if (!lines.length) return null;
+  const [start, end] = lines[lines.length - 1];
+  return directiveOn(text.slice(start, end)).value || null;
+}
+
+/// Points the deck at a theme, or takes the line out when `name` is empty.
+///
+/// Deck wide and last-wins on the server, so this rewrites the line the deck
+/// already has rather than adding a second one that silently beats it. A deck
+/// with none gets it at the very top, where someone reading the source finds it.
+export function setTheme(doc, name) {
+  const { text } = doc;
+  const lines = directiveLines(text, 'theme');
+
+  if (lines.length) {
+    const [start, end] = lines[lines.length - 1];
+    if (!name) {
+      // Take the blank line that followed it too, or the deck grows a gap
+      // every time the theme is cleared.
+      const after = text.slice(end).match(/^\n+/);
+      const to = end + Math.min(after ? after[0].length : 0, 2);
+      return { from: start, to, insert: '', select: [start, start] };
+    }
+    const insert = `<!-- theme: ${name} -->`;
+    return { from: start, to: end, insert, select: [start + insert.length, start + insert.length] };
+  }
+
+  if (!name) return null;
+  const insert = `<!-- theme: ${name} -->${text.trim() ? '\n\n' : ''}`;
+  return { from: 0, to: 0, insert, select: [insert.length, insert.length] };
+}
+
+/// Puts a transition at the cursor, replacing one already on that line.
+///
+/// At the cursor rather than at the top, because a transition applies from the
+/// slide it is written on and moving it would change which slides it covers.
+///
+/// `scoped` writes `_transition`, which covers the slide it sits on and no
+/// others. Plain `transition` keeps applying until another one replaces it.
+export function setTransition(doc, name, scoped = false) {
+  const { text } = doc;
+  const [lineStart, lineEnd] = lineBounds(text, doc.start);
+  const here = directiveOn(text.slice(lineStart, lineEnd));
+  // `_transition` and `transition` are the same directive with a different
+  // reach, so picking one over the other rewrites the line rather than leaving
+  // both on it arguing.
+  const standing =
+    here && here.name.replace(/^_/, '') === 'transition' && !inFence(text, lineStart + 1);
+  const mark = scoped ? '_transition' : 'transition';
+
+  if (standing) {
+    if (!name) {
+      const after = text.slice(lineEnd).match(/^\n+/);
+      const to = lineEnd + Math.min(after ? after[0].length : 0, 2);
+      return { from: lineStart, to, insert: '', select: [lineStart, lineStart] };
+    }
+    const insert = `<!-- ${mark}: ${name} -->`;
+    const at = lineStart + insert.length;
+    return { from: lineStart, to: lineEnd, insert, select: [at, at] };
+  }
+
+  if (!name) return null;
+  // Above the cursor's line, not below it: the directive governs the slide it
+  // opens, and putting it after the line the author is looking at would leave
+  // that line on the old transition.
+  const head = text.slice(0, lineStart);
+  const want = head === '' ? 0 : 2;
+  const have = head.length - head.replace(/\n+$/, '').length;
+  const before = '\n'.repeat(Math.max(0, want - have));
+  const directive = `<!-- ${mark}: ${name} -->`;
+  // The cursor stays on the line just written, not past the blank line after
+  // it. Picking another transition is the common next thing an author does,
+  // and landing below it would write a second directive instead of changing
+  // this one.
+  const at = lineStart + before.length + directive.length;
+  return {
+    from: lineStart,
+    to: lineStart,
+    insert: `${before}${directive}\n\n`,
+    select: [at, at],
+  };
+}
+
 /// What a key press means in the editor, or null when it means nothing here.
 ///
 /// Meta or control, either one: the same page is driven from a Mac, a laptop at
@@ -259,6 +373,10 @@ export function editFor(name, doc) {
 }
 
 /// Wires a textarea to the rules above, and to a toolbar when the page has one.
+///
+/// Returns the two things a control outside the toolbar needs: reading the
+/// document and applying an edit to it, so a picker does not have to know about
+/// `execCommand` or about keeping the undo stack.
 ///
 /// Every edit goes through `execCommand`, deprecated and still the only way to
 /// change a textarea without emptying the browser's undo stack. Assigning to
@@ -303,14 +421,17 @@ export function smartEditor(area, toolbar) {
     if (name && run(editFor(name, read()))) event.preventDefault();
   });
 
-  if (!toolbar) return;
-  // The caret is the whole point of the button, and focus would take it. On a
-  // phone it would take the keyboard down with it.
-  toolbar.addEventListener('mousedown', (event) => {
-    if (event.target.closest('button')) event.preventDefault();
-  });
-  toolbar.addEventListener('click', (event) => {
-    const pressed = event.target.closest('button[data-edit]');
-    if (pressed) run(editFor(pressed.dataset.edit, read()));
-  });
+  if (toolbar) {
+    // The caret is the whole point of the button, and focus would take it. On a
+    // phone it would take the keyboard down with it.
+    toolbar.addEventListener('mousedown', (event) => {
+      if (event.target.closest('button')) event.preventDefault();
+    });
+    toolbar.addEventListener('click', (event) => {
+      const pressed = event.target.closest('button[data-edit]');
+      if (pressed) run(editFor(pressed.dataset.edit, read()));
+    });
+  }
+
+  return { read, run };
 }

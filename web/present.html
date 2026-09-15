@@ -54,6 +54,24 @@
       <button id="deck-image" type="button" aria-label="Add a picture"
         title="Add a picture" hidden>&#128247;</button>
     </div>
+    <div class="looks" role="group" aria-label="Look of the deck">
+      <label id="deck-theme-field" class="look-field" hidden>
+        <span class="look-label">Theme</span>
+        <select id="deck-theme-pick" class="pick"></select>
+      </label>
+      <label id="deck-transition-field" class="look-field" hidden>
+        <span class="look-label">Transition</span>
+        <select id="deck-transition-pick" class="pick"></select>
+      </label>
+      <label id="deck-scope-field" class="look-scope" hidden>
+        <input type="checkbox" id="deck-transition-scope">
+        <span>This slide only</span>
+      </label>
+    </div>
+    <div id="deck-look-demo" class="look-demo viewer" hidden
+      role="button" tabindex="0" aria-label="Play the transition again">
+      <div class="slide" aria-hidden="true"></div>
+    </div>
     <input id="deck-image-file" type="file" accept="image/*" hidden>
     <textarea id="deck-text" spellcheck="false"></textarea>
     <div class="editor-actions">

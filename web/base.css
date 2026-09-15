@@ -557,3 +557,53 @@ html[data-back]::view-transition-new(palmcast-surface) { z-index: var(--transiti
     animation-direction: normal;
   }
 }
+
+/* The two pickers above the deck editor, and the small surface that shows what
+   they do. The demo carries `viewer` because that is exactly what it is: the
+   same reading surface the room gets, at the size of a thumbnail, so a theme
+   paints it and a transition moves it without either knowing about it. */
+.looks { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.look-field { display: flex; align-items: center; gap: 6px; flex: 1 1 210px; min-width: 0; }
+.look-label { flex: 0 0 auto; font-size: 13px; color: var(--ink-dim); }
+.pick {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  padding: 0 10px;
+}
+.pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.look-demo {
+  height: 128px;
+  margin-bottom: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+.look-demo .slide { width: 100%; font-size: 17px; }
+.look-demo .slide h2 { font-size: 1.2em; margin: 0 0 .3em; }
+.look-demo .slide p { margin: 0; }
+.look-scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 44px;
+  font-size: 13px;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.look-scope input { width: 18px; height: 18px; accent-color: var(--accent); }
+
+/* Tapping it runs the transition again, which is the only way to compare two
+   of them without picking each one twice. */
+.look-demo { cursor: pointer; }

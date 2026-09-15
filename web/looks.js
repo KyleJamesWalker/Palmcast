@@ -127,3 +127,35 @@ export function applyTheme(name, doc = document) {
     link.removeAttribute('href');
   }
 }
+
+const PLACEHOLDER = {
+  theme: 'Theme: default',
+  transition: 'Transition: inherit',
+};
+
+/// One row per look, with the placeholder that means "no directive" first.
+///
+/// Cut to a width a phone's own picker can show. The name leads, because the
+/// name is the thing being written into the deck and the description is only
+/// there to say which name to write.
+export function optionsFor(looks, kind) {
+  const rows = [{ value: '', label: PLACEHOLDER[kind] }];
+  for (const look of looks) {
+    // A page and a server can be different versions of this application for as
+    // long as a tab stays open. A row it cannot read costs that row, not the
+    // picker.
+    if (typeof look?.name !== 'string' || !look.name) continue;
+    const about = String(look.about ?? '').trim();
+    const room = 72 - look.name.length;
+    const cut = about.length > room ? `${about.slice(0, Math.max(0, room - 1)).trimEnd()}…` : about;
+    rows.push({ value: look.name, label: cut ? `${look.name} — ${cut}` : look.name });
+  }
+  return rows;
+}
+
+/// Which way the demo swaps next. It alternates so that picking the same
+/// transition twice still shows it, and always goes forward: the demo is what
+/// the room sees pressing on, not what stepping back looks like.
+export function demoFaces(face) {
+  return { from: face, to: face === 0 ? 1 : 0, back: false };
+}
