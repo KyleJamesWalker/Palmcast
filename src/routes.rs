@@ -29,6 +29,9 @@ const MAX_BODY_BYTES: usize = MAX_DECK_BYTES + 4096;
 /// A socket frame only ever carries a short command, so the default megabytes
 /// are room a client does not need and an attacker would.
 const MAX_WS_MESSAGE: usize = 16 * 1024;
+/// Pictures decoded at once across the instance. Each holds its full bitmap
+/// while it is worked on, so this bounds the memory a burst of uploads costs.
+const MAX_CONCURRENT_DECODES: usize = 2;
 
 /// A deck is somebody else's Markdown rendered on everybody's phone, so the
 /// page is pinned to its own origin as well as escaped at the source.
@@ -186,6 +189,9 @@ pub struct App {
     /// How often a socket is pinged and how long it may say nothing. A test
     /// builds these short; nothing else has reason to change them.
     pub heartbeat: Heartbeat,
+    /// How many pictures may be decoded at once across the whole instance.
+    /// A decode holds the full bitmap, so this is the real memory ceiling.
+    pub decoding: Arc<tokio::sync::Semaphore>,
 }
 
 impl Default for App {
@@ -199,6 +205,7 @@ impl Default for App {
             create_key: None,
             limiter: Arc::default(),
             heartbeat: Heartbeat::default(),
+            decoding: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_DECODES)),
         }
     }
 }
@@ -614,6 +621,16 @@ async fn upload_image(
         Some(false) => return StatusCode::FORBIDDEN.into_response(),
         Some(true) => {}
     }
+
+    // Refused rather than queued: a phone waiting on a picture behind a queue
+    // of other people's pictures is a phone that looks broken.
+    let Ok(_decoding) = app.decoding.clone().try_acquire_owned() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the room is busy with another picture, try again",
+        )
+            .into_response();
+    };
 
     // Off the runtime's thread: decoding and resizing a photograph is work, and
     // every other room on this instance is waiting on the same executor.

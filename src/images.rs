@@ -14,8 +14,11 @@ pub const MAX_UPLOAD_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_EDGE: u32 = 1600;
 const JPEG_QUALITY: u8 = 80;
 /// Refuses a picture whose header claims more pixels than any deck needs,
-/// before anything allocates room for them.
-const MAX_PIXELS_PER_EDGE: u32 = 12_000;
+/// before anything allocates room for them. A 48 megapixel phone photograph
+/// still fits.
+const MAX_PIXELS_PER_EDGE: u32 = 6_000;
+/// A ceiling on what one decode may allocate, whatever a header claims.
+const MAX_DECODE_BYTES: u64 = 128 * 1024 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ImageError {
@@ -65,6 +68,7 @@ pub fn shrink(raw: &[u8]) -> Result<(Vec<u8>, &'static str), ImageError> {
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_PIXELS_PER_EDGE);
     limits.max_image_height = Some(MAX_PIXELS_PER_EDGE);
+    limits.max_alloc = Some(MAX_DECODE_BYTES);
     reader.limits(limits);
 
     let decoded = reader.decode().map_err(|_| ImageError::Unreadable)?;
@@ -148,6 +152,16 @@ mod tests {
     fn a_tall_picture_is_measured_on_its_long_edge_too() {
         let (bytes, _) = shrink(&png(1000, 4000, false)).unwrap();
         assert_eq!(dimensions(&bytes), (400, MAX_EDGE));
+    }
+
+    #[test]
+    fn a_picture_wider_than_the_new_cap_is_refused() {
+        // One pixel tall, so the test is cheap to build and the long edge is
+        // still what decides.
+        assert_eq!(shrink(&png(7_000, 1, false)), Err(ImageError::Unreadable));
+        assert_eq!(shrink(&png(1, 7_000, false)), Err(ImageError::Unreadable));
+        // A 48 megapixel phone photograph is still under it.
+        assert!(shrink(&png(5_000, 1, false)).is_ok());
     }
 
     #[test]

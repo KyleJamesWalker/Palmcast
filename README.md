@@ -636,8 +636,11 @@ every phone in the room renders it. The server therefore:
   before it compresses anything. Unpacking stops reading at the 256 KB deck
   limit, so a small token cannot ask for a large allocation.
 - Strips an image source the same way it strips a link, and draws an uploaded
-  picture only after decoding it. A header claiming more than 12,000 pixels an
-  edge is refused before anything is allocated for it.
+  picture only after decoding it. A header claiming more than 6,000 pixels an
+  edge is refused before anything is allocated for it, and a decode may not
+  allocate more than 128 MB whatever the header claims. A 48 megapixel phone
+  photograph still fits. Two pictures decode at once across the instance, and a
+  third is told the room is busy rather than queued behind them.
 - Takes a theme and a transition as a name and never as a stylesheet. A name is
   lowercase letters, digits and dashes, at most 32 of them, which is checked
   where the deck is parsed and again where the browser asks for the file. A deck

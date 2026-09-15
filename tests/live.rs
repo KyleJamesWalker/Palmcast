@@ -33,6 +33,20 @@ async fn spawn_with_uploads() -> String {
     .await
 }
 
+/// An instance that keeps pictures, with the decode slots handed back so a
+/// test can hold them and see what a busy instance does.
+async fn spawn_with_decode_slots(slots: usize) -> (String, std::sync::Arc<tokio::sync::Semaphore>) {
+    let decoding = std::sync::Arc::new(tokio::sync::Semaphore::new(slots));
+    let host = serve(routes::router_with(routes::App {
+        registry: Registry::new(Duration::from_secs(3600)),
+        uploads: true,
+        decoding: decoding.clone(),
+        ..Default::default()
+    }))
+    .await;
+    (host, decoding)
+}
+
 /// An instance whose sockets give up on a silent phone in well under a second.
 async fn spawn_with_short_heartbeat() -> String {
     serve(routes::router_with(routes::App {
@@ -163,6 +177,33 @@ async fn the_presenter_does_receive_speaker_notes() {
 
     assert_eq!(opening["type"], "deck");
     assert_eq!(opening["slides"][0]["notes"], "the secret note");
+}
+
+/// Decoding holds a whole bitmap, so a burst of uploads is the one thing here
+/// that can run an instance out of memory. It refuses rather than queueing: a
+/// phone waiting behind other people's pictures looks broken.
+#[tokio::test]
+async fn a_picture_arriving_while_the_decoders_are_full_is_turned_away() {
+    let (host, decoding) = spawn_with_decode_slots(1).await;
+    let (id, token) = create(&host, "# Deck").await;
+
+    // Held for the length of the test, which is what a decode in flight looks
+    // like to the next upload.
+    let busy = decoding.clone().try_acquire_owned().unwrap();
+
+    let (status, body) =
+        put_image_as(&host, &id, "who=ada", &token, "image/png", picture(10, 10)).await;
+    assert_eq!(status, 503, "a picture was decoded with no slot free");
+    assert!(
+        body.contains("busy with another picture"),
+        "unhelpful: {body}"
+    );
+
+    // With the slot back, the same upload lands.
+    drop(busy);
+    let (status, _) =
+        put_image_as(&host, &id, "who=bob", &token, "image/png", picture(10, 10)).await;
+    assert_eq!(status, 201, "the slot was not handed back");
 }
 
 /// A phone that drops off the network holds a half open connection until TCP
