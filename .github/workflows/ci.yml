@@ -100,7 +100,7 @@ jobs:
 
       - name: Upload the trace
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: e2e/playwright-report
@@ -182,7 +182,7 @@ jobs:
         run: cp "target/${{ matrix.target }}/release/palmcast${{ matrix.ext }}" "${{ matrix.asset }}${{ matrix.ext }}"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: ${{ matrix.asset }}${{ matrix.ext }}
