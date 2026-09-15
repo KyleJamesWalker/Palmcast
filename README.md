@@ -46,9 +46,10 @@ Or run the image, which carries the same binary:
 docker run -p 8080:8080 ghcr.io/kylejameswalker/palmcast:latest
 ```
 
-Add `-v palmcast:/data -e PALMCAST_STATE_FILE=/data/state.json` to keep rooms
-across a restart. `:edge` tracks main, and a pull request publishes `:pr-<n>`
-for as long as it is open.
+Add `-v palmcast:/data` to keep rooms across a restart: the image already
+points `PALMCAST_STATE_FILE` at `/data/state.json`, so the volume is the only
+thing missing. `:edge` tracks main, and a pull request publishes `:pr-<n>` for
+as long as it is open. The image carries a healthcheck against `/healthz`.
 
 To build instead, Rust 1.94 or later.
 
@@ -583,7 +584,7 @@ with viewers. This stops a public instance from collecting dead rooms.
 `GET /healthz` returns counts for a load balancer probe:
 
 ```json
-{"status": "ok", "sessions": 3, "viewers": 27}
+{"status": "ok", "version": "0.1.0", "sessions": 3, "viewers": 27}
 ```
 
 `GET /api/config` returns what this instance lets a deck ask for, which is how a

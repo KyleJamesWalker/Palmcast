@@ -285,6 +285,7 @@ pub fn router_with(app: App) -> Router {
 #[derive(Serialize)]
 struct Health {
     status: &'static str,
+    version: &'static str,
     sessions: usize,
     viewers: usize,
 }
@@ -293,6 +294,7 @@ struct Health {
 async fn health(State(registry): State<Registry>) -> Response {
     axum::Json(Health {
         status: "ok",
+        version: env!("CARGO_PKG_VERSION"),
         sessions: registry.len(),
         viewers: registry.viewers(),
     })

@@ -11,7 +11,11 @@ use palmcast::styles;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "palmcast", about = "Live slides on every screen in the room")]
+#[command(
+    name = "palmcast",
+    version,
+    about = "Live slides on every screen in the room"
+)]
 struct Args {
     #[arg(long, env = "PALMCAST_PORT", default_value_t = 8080)]
     port: u16,
