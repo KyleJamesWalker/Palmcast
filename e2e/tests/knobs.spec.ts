@@ -119,3 +119,48 @@ test("neon's moods are told apart by looking, not by reading the name", async ({
     }
   }
 });
+
+test('a transition and the theme each keep their own knobs through a move', async ({
+  page,
+  context,
+}) => {
+  const id = await startRoom(
+    page,
+    [
+      '<!-- theme: neon style=vegas -->',
+      '<!-- transition: cover 3s distance=50% -->',
+      '',
+      '# One',
+      '',
+      '---',
+      '',
+      '# Two',
+    ].join('\n'),
+  );
+  const audience = await joinAudience(context, id);
+
+  await page.locator('#next-btn').click();
+
+  // Read while it runs: the keyframes and the style query both read the root,
+  // and the two looks write it from different places.
+  const during = await audience
+    .waitForFunction(() => {
+      const root = document.documentElement;
+      if (root.dataset.transition !== 'cover') return null;
+      return {
+        distance: root.style.getPropertyValue('--knob-distance'),
+        style: root.style.getPropertyValue('--knob-style'),
+      };
+    })
+    .then((handle) => handle.jsonValue());
+
+  expect(during.distance).toBe('50%');
+  expect(during.style).toBe('vegas');
+
+  await expect(audience.locator('#slide')).toContainText('Two');
+  await audience.waitForFunction(() => !document.documentElement.dataset.transition);
+  const after = await audience.evaluate(() =>
+    document.documentElement.style.getPropertyValue('--knob-distance'),
+  );
+  expect(after, 'a transition left its knob on the root after it finished').toBe('');
+});

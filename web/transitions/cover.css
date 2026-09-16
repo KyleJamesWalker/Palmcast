@@ -1,9 +1,12 @@
 /* The next slide rises from the bottom over a slide that stays put. */
 @keyframes palmcast-in-cover {
-  from { transform: translateY(100%); }
+  from { transform: translateY(var(--knob-distance, 100%)); }
 }
 
 html[data-transition="cover"] {
+  --knob-distance: 100%;
+  --knob-distance-options: full 100%, half 50%, short 25%;
+
   --transition-out: palmcast-hold;
   --transition-in: palmcast-in-cover;
 }
