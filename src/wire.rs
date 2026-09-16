@@ -61,6 +61,10 @@ pub struct AudienceQuestion {
     pub text: String,
     pub votes: usize,
     pub answered: bool,
+    /// Waiting for the host in a moderated room. Staff only: the room never
+    /// sees a pending question at all.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub pending: bool,
 }
 
 /// One line of the leaderboard. `name` is whatever a viewer typed, so every
@@ -153,6 +157,10 @@ pub enum ServerMsg {
     Lock {
         on: bool,
     },
+    /// Whether a question waits for the host before the room sees it.
+    Moderation {
+        on: bool,
+    },
     /// One socket, told why it is being closed, and then closed. Never
     /// broadcast.
     Refused {
@@ -232,6 +240,9 @@ impl ServerMsg {
                 open: *open,
                 elapsed_ms: *elapsed_ms,
             }),
+            ServerMsg::Questions { items } => Some(ServerMsg::Questions {
+                items: items.iter().filter(|q| !q.pending).cloned().collect(),
+            }),
             ServerMsg::Scores { items } => Some(ServerMsg::Scores {
                 items: items
                     .iter()
@@ -307,6 +318,18 @@ pub enum ClientMsg {
     Lock {
         on: bool,
     },
+    /// The host asking to read questions before the room does, or not.
+    Moderate {
+        on: bool,
+    },
+    /// The host letting a pending question through to the room.
+    Approve {
+        question: u64,
+    },
+    /// The host throwing a pending question away.
+    Dismiss {
+        question: u64,
+    },
     /// The host removing somebody from the room for good.
     Kick {
         who: String,
@@ -361,7 +384,10 @@ impl Frame {
             Some(redacted)
                 if matches!(
                     msg,
-                    ServerMsg::Deck { .. } | ServerMsg::Lineup { .. } | ServerMsg::Scores { .. }
+                    ServerMsg::Deck { .. }
+                        | ServerMsg::Lineup { .. }
+                        | ServerMsg::Scores { .. }
+                        | ServerMsg::Questions { .. }
                 ) =>
             {
                 Some(serde_json::to_string(&redacted).unwrap_or_default())
@@ -523,6 +549,33 @@ mod tests {
         let frame = Frame::new(&ServerMsg::Removed { who: "x".into() });
         assert!(frame.rerole);
         assert_eq!(frame.for_socket(false), None);
+    }
+
+    #[test]
+    fn a_pending_question_never_reaches_the_room() {
+        let frame = Frame::new(&ServerMsg::Questions {
+            items: vec![
+                AudienceQuestion {
+                    id: 1,
+                    text: "shown".into(),
+                    votes: 1,
+                    answered: false,
+                    pending: false,
+                },
+                AudienceQuestion {
+                    id: 2,
+                    text: "held back".into(),
+                    votes: 1,
+                    answered: false,
+                    pending: true,
+                },
+            ],
+        });
+        let owner = frame.for_socket(true).unwrap();
+        let audience = frame.for_socket(false).unwrap();
+        assert!(owner.contains("held back"));
+        assert!(!audience.contains("held back"), "{audience}");
+        assert!(audience.contains("shown"));
     }
 
     #[test]

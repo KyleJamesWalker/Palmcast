@@ -113,6 +113,10 @@ const socket = connect(id, null, {
     countdown.set(msg);
     paint();
   },
+  moderation(msg) {
+    moderated = msg.on;
+    askText.placeholder = moderated ? 'Ask a question (the host reads it first)' : 'Ask a question';
+  },
   deck(msg) {
     if (msg.rev !== rev) {
       // Keep what the server kept, and drop what it dropped.
@@ -208,6 +212,7 @@ const askText = document.getElementById('ask-text');
 
 let questions = [];
 const voted = new Set();
+let moderated = false;
 
 function paintQuestions() {
   qaToggle.textContent = questions.length ? `Room \u00b7 ${questions.length}` : 'Room';
@@ -233,6 +238,12 @@ askForm.addEventListener('submit', (event) => {
   if (!text) return;
   socket.send({ type: 'ask', text });
   askText.value = '';
+  if (moderated) {
+    askText.placeholder = 'Sent to the host';
+    setTimeout(() => {
+      askText.placeholder = moderated ? 'Ask a question (the host reads it first)' : 'Ask a question';
+    }, 2500);
+  }
 });
 
 paintQuestions();

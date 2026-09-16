@@ -232,6 +232,15 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
         ClientMsg::Lock { on } => {
             registry.with_mut(id, |s| s.set_lock(s.role_of(token), on));
         }
+        ClientMsg::Moderate { on } => {
+            registry.with_mut(id, |s| s.set_moderation(s.role_of(token), on));
+        }
+        ClientMsg::Approve { question } => {
+            registry.with_mut(id, |s| s.approve(s.role_of(token), question));
+        }
+        ClientMsg::Dismiss { question } => {
+            registry.with_mut(id, |s| s.dismiss(s.role_of(token), question));
+        }
         ClientMsg::Kick { who: target } => {
             registry.with_mut(id, |s| s.kick(s.role_of(token), &target, who));
         }

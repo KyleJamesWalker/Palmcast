@@ -202,6 +202,8 @@ pub struct Session {
     pub seen: HashSet<String>,
     /// The decks each save replaced, newest first. Not persisted.
     pub history: VecDeque<Revision>,
+    /// Whether a question waits for the host before the room sees it.
+    pub moderated: bool,
 }
 
 /// One moment the room saw something new.
@@ -220,6 +222,8 @@ pub struct StoredQuestion {
     pub voters: HashSet<String>,
     /// The browser that asked, so removing somebody takes their questions too.
     pub by: String,
+    /// Waiting for the host. The room is not told it exists.
+    pub pending: bool,
 }
 
 /// The clock on one slide.
@@ -333,11 +337,14 @@ impl Session {
                 text: q.text.clone(),
                 votes: q.voters.len(),
                 answered: q.answered,
+                pending: q.pending,
             })
             .collect();
+        // Pending first, because those are the ones waiting on the host.
         items.sort_by(|a, b| {
-            a.answered
-                .cmp(&b.answered)
+            b.pending
+                .cmp(&a.pending)
+                .then(a.answered.cmp(&b.answered))
                 .then(b.votes.cmp(&a.votes))
                 .then(a.id.cmp(&b.id))
         });
@@ -485,6 +492,7 @@ impl Session {
             ServerMsg::Qr { on: self.qr_open },
             self.timer_msg(),
             ServerMsg::Lock { on: self.locked },
+            ServerMsg::Moderation { on: self.moderated },
         ];
         out.extend(self.reveals());
         if is_staff {
@@ -878,7 +886,57 @@ impl Session {
             answered: false,
             voters,
             by: who.to_string(),
+            pending: self.moderated,
         });
+        self.touch();
+        let msg = self.question_list();
+        self.emit(&msg);
+        Some(msg)
+    }
+
+    /// Turns review on or off. Turning it off lets everything waiting through.
+    pub fn set_moderation(&mut self, role: Role, on: bool) -> bool {
+        if !role.hosts() || self.moderated == on {
+            return false;
+        }
+        self.moderated = on;
+        if !on {
+            for question in self.questions.iter_mut() {
+                question.pending = false;
+            }
+        }
+        self.touch();
+        self.emit(&ServerMsg::Moderation { on });
+        self.emit(&self.question_list());
+        true
+    }
+
+    /// Lets a waiting question through to the room.
+    pub fn approve(&mut self, role: Role, question: u64) -> Option<ServerMsg> {
+        if !role.edits() {
+            return None;
+        }
+        let found = self.questions.iter_mut().find(|q| q.id == question)?;
+        if !found.pending {
+            return None;
+        }
+        found.pending = false;
+        self.touch();
+        let msg = self.question_list();
+        self.emit(&msg);
+        Some(msg)
+    }
+
+    /// Throws a waiting question away. The room never knew it was asked.
+    pub fn dismiss(&mut self, role: Role, question: u64) -> Option<ServerMsg> {
+        if !role.edits() {
+            return None;
+        }
+        let at = self
+            .questions
+            .iter()
+            .position(|q| q.id == question && q.pending)?;
+        self.questions.remove(at);
         self.touch();
         let msg = self.question_list();
         self.emit(&msg);
@@ -978,6 +1036,7 @@ impl Session {
             questions: self
                 .questions
                 .iter()
+                .filter(|q| !q.pending)
                 .map(|q| crate::export::QuestionView {
                     text: q.text.clone(),
                     votes: q.voters.len(),
@@ -1577,6 +1636,7 @@ impl Registry {
                 banned: HashSet::new(),
                 seen: HashSet::new(),
                 history: VecDeque::new(),
+                moderated: false,
             },
         );
         Some((id, token))
@@ -1696,6 +1756,7 @@ impl Registry {
                         answered: q.answered,
                         voters: q.voters.clone(),
                         by: q.by.clone(),
+                        pending: q.pending,
                     })
                     .collect(),
                 next_question_id: s.next_question_id,
@@ -1748,6 +1809,7 @@ impl Registry {
                 locked: s.locked,
                 banned: s.banned.clone(),
                 seen: s.seen.clone(),
+                moderated: s.moderated,
                 opened_ms: millis(s.opened),
                 timeline: s
                     .timeline
@@ -1849,6 +1911,7 @@ impl Registry {
                             answered: q.answered,
                             voters: q.voters,
                             by: q.by,
+                            pending: q.pending,
                         })
                         .collect(),
                     last_ask: HashMap::new(),
@@ -1925,6 +1988,7 @@ impl Registry {
                     banned: item.banned,
                     seen: item.seen,
                     history: VecDeque::new(),
+                    moderated: item.moderated,
                 },
             );
             restored += 1;
@@ -3775,6 +3839,106 @@ mod tests {
             })
             .unwrap();
         assert_eq!(Some(started), first_cue);
+    }
+
+    fn shown(reg: &Registry, id: &str, staff: bool) -> Vec<String> {
+        let list = reg.with(id, Session::question_list).unwrap();
+        let list = if staff {
+            list
+        } else {
+            list.redacted().unwrap()
+        };
+        let ServerMsg::Questions { items } = list else {
+            panic!("no questions");
+        };
+        items.into_iter().map(|q| q.text).collect()
+    }
+
+    #[test]
+    fn a_moderated_room_holds_a_question_back_until_the_host_lets_it_through() {
+        let reg = registry();
+        let (id, mc) = reg.create("# Welcome").unwrap();
+        assert!(
+            !reg.with_mut(&id, |s| s.set_moderation(Role::CoHost, true))
+                .unwrap()
+        );
+        assert!(
+            reg.with_mut(&id, |s| s.set_moderation(s.role_of(&mc), true))
+                .unwrap()
+        );
+
+        reg.with_mut(&id, |s| s.ask("sam", "why?"))
+            .flatten()
+            .unwrap();
+        assert_eq!(shown(&reg, &id, true), vec!["why?"]);
+        assert!(
+            shown(&reg, &id, false).is_empty(),
+            "the room saw a pending question"
+        );
+
+        assert!(
+            reg.with_mut(&id, |s| s.approve(Role::Viewer, 1))
+                .flatten()
+                .is_none()
+        );
+        reg.with_mut(&id, |s| s.approve(Role::CoHost, 1))
+            .flatten()
+            .unwrap();
+        assert_eq!(shown(&reg, &id, false), vec!["why?"]);
+        // Approving twice is nothing.
+        assert!(
+            reg.with_mut(&id, |s| s.approve(Role::Mc, 1))
+                .flatten()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_dismissed_question_is_gone_and_a_shown_one_cannot_be_dismissed() {
+        let reg = registry();
+        let (id, mc) = reg.create("# Welcome").unwrap();
+        reg.with_mut(&id, |s| s.ask("ann", "kept"))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.set_moderation(s.role_of(&mc), true));
+        reg.with_mut(&id, |s| s.ask("sam", "binned"))
+            .flatten()
+            .unwrap();
+
+        assert!(
+            reg.with_mut(&id, |s| s.dismiss(Role::Mc, 1))
+                .flatten()
+                .is_none()
+        );
+        reg.with_mut(&id, |s| s.dismiss(Role::Mc, 2))
+            .flatten()
+            .unwrap();
+        assert_eq!(shown(&reg, &id, true), vec!["kept"]);
+    }
+
+    #[test]
+    fn turning_review_off_lets_everything_waiting_through() {
+        let reg = registry();
+        let (id, mc) = reg.create("# Welcome").unwrap();
+        reg.with_mut(&id, |s| s.set_moderation(s.role_of(&mc), true));
+        reg.with_mut(&id, |s| s.ask("a", "one")).flatten().unwrap();
+        reg.with_mut(&id, |s| s.ask("b", "two")).flatten().unwrap();
+        assert!(shown(&reg, &id, false).is_empty());
+        reg.with_mut(&id, |s| s.set_moderation(s.role_of(&mc), false));
+        assert_eq!(shown(&reg, &id, false).len(), 2);
+    }
+
+    #[test]
+    fn a_pending_question_survives_a_restart_as_pending() {
+        let reg = registry();
+        let (id, mc) = reg.create("# Welcome").unwrap();
+        reg.with_mut(&id, |s| s.set_moderation(s.role_of(&mc), true));
+        reg.with_mut(&id, |s| s.ask("a", "held")).flatten().unwrap();
+        let back = registry();
+        back.import(reg.export());
+        assert!(back.with(&id, |s| s.moderated).unwrap());
+        assert!(shown(&back, &id, false).is_empty());
+        assert_eq!(shown(&back, &id, true), vec!["held"]);
     }
 
     fn qr_state(msgs: &[ServerMsg]) -> Option<bool> {

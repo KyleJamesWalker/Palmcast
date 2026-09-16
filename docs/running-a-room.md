@@ -111,6 +111,14 @@ Anyone asks, anyone upvotes, and the list ranks by votes. The presenter marks a
 question answered, which sinks it rather than deleting it. Someone who joins
 late gets the questions already asked and the board as it stands.
 
+### Read questions first
+
+**Review first** above the host's question list holds every new question back
+until the host has read it. A held question shows the host **Approve** and
+**Dismiss** and shows the room nothing, not even that it was asked. The asker's
+phone says the question went to the host. Turning review off lets everything
+waiting through at once. The setting survives a restart.
+
 ### Remove somebody
 
 Every name on the host's leaderboard has **Remove** beside it. Removing someone

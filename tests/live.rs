@@ -2866,10 +2866,10 @@ async fn a_look_the_operator_added_at_startup_reaches_the_room() {
     );
 }
 
-/// Reads past the opening state. The lock frame is the last thing every socket
-/// is sent on arrival, so anything after it is a broadcast.
+/// Reads past the opening state. The moderation frame is the last thing every
+/// socket is sent on arrival, so anything after it is a broadcast.
 async fn settle(socket: &mut Socket) {
-    next_of(socket, "lock").await;
+    next_of(socket, "moderation").await;
 }
 
 /// Reads frames until one of the named type arrives.
@@ -3028,4 +3028,47 @@ async fn earlier_saves_answer_to_an_editor_and_nobody_else() {
         .unwrap()
         .status();
     assert_eq!(denied, 403);
+}
+
+#[tokio::test]
+async fn a_moderated_question_reaches_the_host_and_then_the_room() {
+    let host = spawn().await;
+    let (id, mc) = create(&host, DECK).await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+    settle(&mut console).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "moderate", "on": true }),
+    )
+    .await;
+    assert_eq!(next_of(&mut console, "moderation").await["on"], true);
+    // Turning review on resends the list, empty so far.
+    let _ = next_of(&mut console, "questions").await;
+
+    let mut phone = open_as(&host, &id, None, "sam").await;
+    settle(&mut phone).await;
+    let mut other = open_as(&host, &id, None, "ann").await;
+    settle(&mut other).await;
+
+    ws_send(
+        &mut phone,
+        serde_json::json!({ "type": "ask", "text": "why?" }),
+    )
+    .await;
+    let held = next_of(&mut console, "questions").await;
+    assert_eq!(held["items"][0]["text"], "why?");
+    assert_eq!(held["items"][0]["pending"], true);
+
+    // The room is sent a list with nothing in it, not the question.
+    let room = next_of(&mut other, "questions").await;
+    assert!(room["items"].as_array().unwrap().is_empty(), "{room}");
+
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "approve", "question": 1 }),
+    )
+    .await;
+    let shown = next_of(&mut other, "questions").await;
+    assert_eq!(shown["items"][0]["text"], "why?");
+    assert!(shown["items"][0].get("pending").is_none(), "{shown}");
 }

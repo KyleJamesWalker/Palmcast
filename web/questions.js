@@ -23,6 +23,29 @@ export function renderQuestions(root, items, opts) {
     row.dataset.id = String(item.id);
     if (item.answered) row.classList.add('answered');
 
+    // A question waiting on the host has two buttons and no vote yet.
+    if (item.pending) {
+      row.classList.add('pending');
+      const text = document.createElement('span');
+      text.className = 'question-text';
+      text.textContent = item.text;
+      const approve = document.createElement('button');
+      approve.className = 'question-done primary';
+      approve.type = 'button';
+      approve.textContent = 'Approve';
+      approve.setAttribute('aria-label', `Approve: ${item.text}`);
+      approve.addEventListener('click', () => opts.onApprove?.(item.id));
+      const dismiss = document.createElement('button');
+      dismiss.className = 'question-done';
+      dismiss.type = 'button';
+      dismiss.textContent = 'Dismiss';
+      dismiss.setAttribute('aria-label', `Dismiss: ${item.text}`);
+      dismiss.addEventListener('click', () => opts.onDismiss?.(item.id));
+      row.append(text, approve, dismiss);
+      root.append(row);
+      continue;
+    }
+
     const vote = document.createElement('button');
     vote.className = 'question-vote';
     vote.type = 'button';
