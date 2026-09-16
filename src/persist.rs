@@ -87,6 +87,9 @@ pub struct PersistedSession {
     /// Whether questions wait for the host before the room sees them.
     #[serde(default)]
     pub moderated: bool,
+    /// Whether a talk waits for the host before it joins the running order.
+    #[serde(default)]
+    pub approval: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +117,8 @@ pub struct PersistedTalk {
     pub dropped: bool,
     #[serde(default)]
     pub note: String,
+    #[serde(default)]
+    pub pending: bool,
 }
 
 /// What one voter chose on one slide.

@@ -217,6 +217,12 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
         ClientMsg::Submissions { open } => {
             registry.with_mut(id, |s| s.set_submissions(s.role_of(token), open));
         }
+        ClientMsg::Approval { on } => {
+            registry.with_mut(id, |s| s.set_approval(s.role_of(token), on));
+        }
+        ClientMsg::Accept { talk } => {
+            registry.with_mut(id, |s| s.accept(s.role_of(token), talk));
+        }
         ClientMsg::Reorder { talk, index } => {
             registry.with_mut(id, |s| s.reorder(s.role_of(token), talk, index));
         }

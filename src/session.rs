@@ -115,6 +115,9 @@ pub struct Talk {
     /// Counted when the markdown is set rather than on every lineup frame,
     /// which reparsed every talk in the room to draw one number each.
     pub slides: usize,
+    /// Waiting for the host. Not in the running order and not on the room's
+    /// screens until accepted.
+    pub pending: bool,
 }
 
 /// The host's own deck, parked while a talk is on stage.
@@ -204,6 +207,8 @@ pub struct Session {
     pub history: VecDeque<Revision>,
     /// Whether a question waits for the host before the room sees it.
     pub moderated: bool,
+    /// Whether a talk waits for the host before it joins the running order.
+    pub approval: bool,
 }
 
 /// One moment the room saw something new.
@@ -1030,7 +1035,7 @@ impl Session {
                     title: talk.title.clone(),
                     by: talk.by.clone(),
                     markdown: talk.markdown.clone(),
-                    dropped: talk.dropped.is_some(),
+                    dropped: talk.dropped.is_some() || talk.pending,
                 })
                 .collect(),
             questions: self
@@ -1057,10 +1062,10 @@ impl Session {
     }
 
     fn lineup_msg(&self) -> ServerMsg {
-        let rows = |dropped: bool| -> Vec<LineupEntry> {
+        let rows = |keep: &dyn Fn(&Talk) -> bool| -> Vec<LineupEntry> {
             self.lineup
                 .iter()
-                .filter(|talk| talk.dropped.is_some() == dropped)
+                .filter(|talk| keep(talk))
                 .map(|talk| LineupEntry {
                     id: talk.id,
                     title: talk.title.clone(),
@@ -1070,10 +1075,12 @@ impl Session {
                 .collect()
         };
         ServerMsg::Lineup {
-            items: rows(false),
-            dropped: rows(true),
+            items: rows(&|t| t.dropped.is_none() && !t.pending),
+            dropped: rows(&|t| t.dropped.is_some()),
+            pending: rows(&|t| t.dropped.is_none() && t.pending),
             staged: self.staged,
             open: self.submissions_open,
+            approval: self.approval,
             elapsed_ms: SystemTime::now()
                 .duration_since(self.stage_started())
                 .map(|d| d.as_millis() as u64)
@@ -1100,9 +1107,48 @@ impl Session {
         self.lineup
             .iter()
             .enumerate()
-            .filter(|(_, talk)| talk.dropped.is_none())
+            .filter(|(_, talk)| talk.dropped.is_none() && !talk.pending)
             .map(|(index, _)| index)
             .collect()
+    }
+
+    /// Whether a talk may go on stage or take the controls: in the room, not
+    /// taken off, and past the host if the host is reading first.
+    fn ready(&self, id: u64) -> bool {
+        self.lineup
+            .iter()
+            .any(|t| t.id == id && t.dropped.is_none() && !t.pending)
+    }
+
+    /// Turns reading-first on or off. Turning it off lets every waiting talk
+    /// onto the running order.
+    pub fn set_approval(&mut self, role: Role, on: bool) -> bool {
+        if !role.hosts() || self.approval == on {
+            return false;
+        }
+        self.approval = on;
+        if !on {
+            for talk in self.lineup.iter_mut() {
+                talk.pending = false;
+            }
+        }
+        self.touch();
+        self.emit(&self.lineup_msg());
+        true
+    }
+
+    /// Lets a waiting talk onto the running order, at the end.
+    pub fn accept(&mut self, role: Role, talk: u64) -> bool {
+        if !role.hosts() {
+            return false;
+        }
+        let Some(held) = self.lineup.iter_mut().find(|t| t.id == talk && t.pending) else {
+            return false;
+        };
+        held.pending = false;
+        self.touch();
+        self.emit(&self.lineup_msg());
+        true
     }
 
     fn baton_msg(&self) -> ServerMsg {
@@ -1172,6 +1218,7 @@ impl Session {
             token: token.clone(),
             by,
             dropped: None,
+            pending: self.approval,
         });
         self.touch();
         self.emit(&self.lineup_msg());
@@ -1240,6 +1287,7 @@ impl Session {
             position,
             staged: self.staged == Some(talk),
             dropped: held.dropped.is_some(),
+            pending: held.pending,
             note: held.dropped.clone().unwrap_or_default(),
         })
     }
@@ -1395,10 +1443,7 @@ impl Session {
             return false;
         }
         if let Some(id) = talk
-            && !self
-                .lineup
-                .iter()
-                .any(|t| t.id == id && t.dropped.is_none())
+            && !self.ready(id)
         {
             return false;
         }
@@ -1494,10 +1539,7 @@ impl Session {
             return false;
         }
         if let Some(id) = talk
-            && !self
-                .lineup
-                .iter()
-                .any(|t| t.id == id && t.dropped.is_none())
+            && !self.ready(id)
         {
             return false;
         }
@@ -1637,6 +1679,7 @@ impl Registry {
                 seen: HashSet::new(),
                 history: VecDeque::new(),
                 moderated: false,
+                approval: false,
             },
         );
         Some((id, token))
@@ -1774,6 +1817,7 @@ impl Registry {
                         by: talk.by.clone(),
                         dropped: talk.dropped.is_some(),
                         note: talk.dropped.clone().unwrap_or_default(),
+                        pending: talk.pending,
                     })
                     .collect(),
                 next_talk_id: s.next_talk_id,
@@ -1810,6 +1854,7 @@ impl Registry {
                 banned: s.banned.clone(),
                 seen: s.seen.clone(),
                 moderated: s.moderated,
+                approval: s.approval,
                 opened_ms: millis(s.opened),
                 timeline: s
                     .timeline
@@ -1936,6 +1981,7 @@ impl Registry {
                             token: talk.token,
                             by: talk.by,
                             dropped: talk.dropped.then_some(talk.note),
+                            pending: talk.pending,
                         })
                         .collect(),
                     next_talk_id: item.next_talk_id.max(1),
@@ -1989,6 +2035,7 @@ impl Registry {
                     seen: item.seen,
                     history: VecDeque::new(),
                     moderated: item.moderated,
+                    approval: item.approval,
                 },
             );
             restored += 1;
@@ -3939,6 +3986,124 @@ mod tests {
         assert!(back.with(&id, |s| s.moderated).unwrap());
         assert!(shown(&back, &id, false).is_empty());
         assert_eq!(shown(&back, &id, true), vec!["held"]);
+    }
+
+    fn lineup_titles(reg: &Registry, id: &str, staff: bool) -> (Vec<String>, Vec<String>) {
+        let msg = reg.with(id, Session::lineup_msg).unwrap();
+        let msg = if staff { msg } else { msg.redacted().unwrap() };
+        let ServerMsg::Lineup { items, pending, .. } = msg else {
+            panic!("no lineup");
+        };
+        (
+            items.into_iter().map(|t| t.title).collect(),
+            pending.into_iter().map(|t| t.title).collect(),
+        )
+    }
+
+    #[test]
+    fn a_talk_waits_for_the_host_when_the_host_reads_first() {
+        let (reg, id, mc) = open_room();
+        assert!(
+            !reg.with_mut(&id, |s| s.set_approval(Role::CoHost, true))
+                .unwrap()
+        );
+        assert!(
+            reg.with_mut(&id, |s| s.set_approval(s.role_of(&mc), true))
+                .unwrap()
+        );
+        let (talk, _) = submit(&reg, &id, "ada", "# Borrowing");
+
+        assert_eq!(
+            lineup_titles(&reg, &id, true),
+            (vec![], vec!["Borrowing".into()])
+        );
+        assert_eq!(
+            lineup_titles(&reg, &id, false),
+            (vec![], vec![]),
+            "the room saw a waiting talk"
+        );
+        assert_eq!(
+            reg.with(&id, |s| s.talk_detail(talk).unwrap().position)
+                .unwrap(),
+            None
+        );
+        assert!(
+            reg.with(&id, |s| s.talk_detail(talk).unwrap().pending)
+                .unwrap()
+        );
+
+        // Not on stage and not driving until accepted.
+        assert!(
+            !reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+                .unwrap()
+        );
+        assert!(!reg.with_mut(&id, |s| s.hand(Role::Mc, Some(talk))).unwrap());
+
+        assert!(!reg.with_mut(&id, |s| s.accept(Role::CoHost, talk)).unwrap());
+        assert!(reg.with_mut(&id, |s| s.accept(Role::Mc, talk)).unwrap());
+        assert_eq!(
+            lineup_titles(&reg, &id, false),
+            (vec!["Borrowing".into()], vec![])
+        );
+        assert_eq!(
+            reg.with(&id, |s| s.talk_detail(talk).unwrap().position)
+                .unwrap(),
+            Some(1)
+        );
+        assert!(
+            reg.with_mut(&id, |s| s.stage(Role::Mc, Some(talk)))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn turning_reading_first_off_accepts_everything_waiting() {
+        let (reg, id, mc) = open_room();
+        reg.with_mut(&id, |s| s.set_approval(s.role_of(&mc), true));
+        submit(&reg, &id, "a", "# One");
+        submit(&reg, &id, "b", "# Two");
+        reg.with_mut(&id, |s| s.set_approval(s.role_of(&mc), false));
+        assert_eq!(lineup_titles(&reg, &id, false).0.len(), 2);
+    }
+
+    #[test]
+    fn a_waiting_talk_does_not_take_a_slot_in_the_running_order() {
+        let (reg, id, mc) = open_room();
+        let (first, _) = submit(&reg, &id, "a", "# First");
+        reg.with_mut(&id, |s| s.set_approval(s.role_of(&mc), true));
+        let (_held, _) = submit(&reg, &id, "b", "# Held");
+        reg.with_mut(&id, |s| s.set_approval(s.role_of(&mc), false));
+        reg.with_mut(&id, |s| s.set_approval(s.role_of(&mc), true));
+        let (_held2, _) = submit(&reg, &id, "c", "# Held two");
+        let (third, _) = {
+            reg.with_mut(&id, |s| s.set_approval(s.role_of(&mc), false));
+            submit(&reg, &id, "d", "# Third")
+        };
+        assert_eq!(
+            reg.with(&id, |s| s.talk_detail(third).unwrap().position)
+                .unwrap(),
+            Some(4),
+            "the accepted talks count, the held one does not"
+        );
+        assert_eq!(
+            reg.with(&id, |s| s.talk_detail(first).unwrap().position)
+                .unwrap(),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn a_waiting_talk_survives_a_restart_still_waiting() {
+        let (reg, id, mc) = open_room();
+        reg.with_mut(&id, |s| s.set_approval(s.role_of(&mc), true));
+        let (talk, _) = submit(&reg, &id, "a", "# Held");
+        let back = registry();
+        back.import(reg.export());
+        assert!(back.with(&id, |s| s.approval).unwrap());
+        assert!(
+            back.with(&id, |s| s.talk_detail(talk).unwrap().pending)
+                .unwrap()
+        );
     }
 
     fn qr_state(msgs: &[ServerMsg]) -> Option<bool> {

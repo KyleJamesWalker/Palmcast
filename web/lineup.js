@@ -4,13 +4,14 @@
 /// host sees the controls. One renderer, so the two can never disagree about
 /// what is on stage.
 export function renderLineup(root, lineup, opts = {}) {
-  const { items = [], dropped = [], staged = null, open = false } = lineup ?? {};
+  const { items = [], dropped = [], pending = [], staged = null, open = false } = lineup ?? {};
   const host = opts.role === 'mc';
   const baton = opts.baton ?? null;
   const shelf = host ? dropped : [];
+  const waiting = host ? pending : [];
   root.innerHTML = '';
 
-  if (!items.length && !shelf.length) {
+  if (!items.length && !shelf.length && !waiting.length) {
     const empty = document.createElement('p');
     empty.className = 'dim question-empty';
     empty.textContent = open
@@ -86,6 +87,40 @@ export function renderLineup(root, lineup, opts = {}) {
     }
     root.append(row);
   });
+
+  if (waiting.length) {
+    const split = document.createElement('li');
+    split.className = 'lineup-split label';
+    split.textContent = 'Waiting for you';
+    root.append(split);
+
+    waiting.forEach((talk) => {
+      const row = document.createElement('li');
+      row.className = 'lineup-row pending';
+
+      const body = document.createElement('div');
+      body.className = 'lineup-body';
+      const title = document.createElement('span');
+      title.className = 'lineup-title';
+      // Whatever a speaker typed, so it goes on screen as text.
+      title.textContent = talk.title;
+      const meta = document.createElement('span');
+      meta.className = 'lineup-meta dim';
+      meta.textContent = describe(talk);
+      body.append(title, meta);
+      row.append(body);
+
+      const actions = document.createElement('div');
+      actions.className = 'lineup-actions';
+      actions.append(
+        button('Read', () => opts.onPreview?.(talk)),
+        button('Accept', () => opts.onAccept?.(talk), 'primary'),
+        button('Drop', () => opts.onDrop?.(talk)),
+      );
+      row.append(actions);
+      root.append(row);
+    });
+  }
 
   if (!shelf.length) return;
 

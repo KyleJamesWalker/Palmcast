@@ -748,3 +748,4 @@ html[data-back]::view-transition-new(palmcast-surface) { z-index: var(--transiti
 
 .question.pending { border-color: var(--accent); }
 .question.pending .question-text { padding-top: 8px; }
+.lineup-row.pending { border-color: var(--accent); }

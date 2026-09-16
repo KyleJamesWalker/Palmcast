@@ -93,6 +93,12 @@ back.
 
 A room takes 40 talks, and three from any one person.
 
+**Read talks first** in the Lineup panel holds every new talk back until the
+host has read it. A waiting talk shows the host **Read**, **Accept** and
+**Drop**, and shows the room nothing. The speaker's phone says it is waiting for
+the host. Accepting puts it at the end of the running order. Turning the setting
+off accepts everything waiting at once. The setting survives a restart.
+
 **Save the evening** hands the host a zip. It holds every deck as its speaker
 left it, what the room asked during each talk, the board, and a `slides.vtt`
 cue file timed against a recording. A dropped talk stays out of it.

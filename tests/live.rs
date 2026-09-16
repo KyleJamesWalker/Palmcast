@@ -3072,3 +3072,40 @@ async fn a_moderated_question_reaches_the_host_and_then_the_room() {
     assert_eq!(shown["items"][0]["text"], "why?");
     assert!(shown["items"][0].get("pending").is_none(), "{shown}");
 }
+
+#[tokio::test]
+async fn a_talk_the_host_reads_first_stays_off_the_room_s_screens_until_accepted() {
+    let host = spawn().await;
+    let (id, mc) = open_mic(&host).await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+    settle(&mut console).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "approval", "on": true }),
+    )
+    .await;
+    assert_eq!(next_of(&mut console, "lineup").await["approval"], true);
+
+    let mut phone = open_as(&host, &id, None, "ann").await;
+    settle(&mut phone).await;
+
+    let (talk, _) = put_up(&host, &id, "ada", "# Borrowing").await;
+    let held = next_of(&mut console, "lineup").await;
+    assert_eq!(held["pending"][0]["title"], "Borrowing");
+    assert!(held["items"].as_array().unwrap().is_empty());
+
+    let room = next_of(&mut phone, "lineup").await;
+    assert!(room["items"].as_array().unwrap().is_empty(), "{room}");
+    assert!(
+        room.get("pending").is_none() || room["pending"].as_array().unwrap().is_empty(),
+        "{room}"
+    );
+
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "accept", "talk": talk }),
+    )
+    .await;
+    let shown = next_of(&mut phone, "lineup").await;
+    assert_eq!(shown["items"][0]["title"], "Borrowing");
+}

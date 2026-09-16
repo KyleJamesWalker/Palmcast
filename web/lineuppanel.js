@@ -18,6 +18,7 @@ export function mountLineupPanel({ id, token, send, role }) {
     panel: document.getElementById('lineup-panel'),
     list: document.getElementById('lineup'),
     submissions: document.getElementById('submissions'),
+    approval: document.getElementById('approval'),
     export: document.getElementById('export'),
     read: document.getElementById('talk-read'),
     readTitle: document.getElementById('talk-read-title'),
@@ -33,12 +34,19 @@ export function mountLineupPanel({ id, token, send, role }) {
     const mc = role() === 'mc';
     els.submissions.textContent = lineup.open ? 'Close submissions' : 'Open submissions';
     els.submissions.hidden = !mc;
+    els.approval.hidden = !mc;
+    els.approval.setAttribute('aria-pressed', String(Boolean(lineup.approval)));
+    els.approval.textContent = lineup.approval ? 'Reading talks first' : 'Read talks first';
+    els.approval.classList.toggle('primary', Boolean(lineup.approval));
     els.export.hidden = !mc;
     renderLineup(els.list, lineup, {
       role: role(),
       baton,
       onStage(talk) {
         send({ type: 'stage', talk });
+      },
+      onAccept(talk) {
+        send({ type: 'accept', talk: talk.id });
       },
       onHand(talk, staged) {
         // A driver moves the deck that is up without seeing its notes.
@@ -102,6 +110,10 @@ export function mountLineupPanel({ id, token, send, role }) {
 
   els.submissions.addEventListener('click', () => {
     send({ type: 'submissions', open: !lineup.open });
+  });
+
+  els.approval.addEventListener('click', () => {
+    send({ type: 'approval', on: !lineup.approval });
   });
 
   els.export.addEventListener('click', async () => {

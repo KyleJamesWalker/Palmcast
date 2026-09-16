@@ -350,7 +350,9 @@ function mineCard(detail) {
     ? 'On stage now.'
     : detail.dropped
       ? 'The host took this off the running order.'
-      : `Number ${detail.position} in the running order.`;
+      : detail.pending
+        ? 'Waiting for the host to read it.'
+        : `Number ${detail.position} in the running order.`;
   card.append(title, state);
 
   if (detail.note) {

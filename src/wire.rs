@@ -49,6 +49,8 @@ pub struct TalkDetail {
     pub position: Option<usize>,
     pub staged: bool,
     pub dropped: bool,
+    /// Waiting for the host to accept it onto the running order.
+    pub pending: bool,
     /// Why the host took it off, when they said. Empty when they did not.
     pub note: String,
 }
@@ -139,9 +141,14 @@ pub enum ServerMsg {
         /// Talks the host has taken off the running order. Staff only, because
         /// a room does not need to watch what was pulled from it.
         dropped: Vec<LineupEntry>,
+        /// Talks waiting for the host to accept them. Staff only: the room sees
+        /// a talk once it is in the running order and not before.
+        pending: Vec<LineupEntry>,
         /// The talk currently on stage, if any.
         staged: Option<u64>,
         open: bool,
+        /// Whether a new talk waits for the host before it joins the order.
+        approval: bool,
         /// How long the deck that is up has been up, so every console shows the
         /// same speaker clock whatever its own clock says.
         elapsed_ms: u64,
@@ -231,13 +238,16 @@ impl ServerMsg {
                 items,
                 staged,
                 open,
+                approval,
                 elapsed_ms,
                 ..
             } => Some(ServerMsg::Lineup {
                 items: items.clone(),
                 dropped: Vec::new(),
+                pending: Vec::new(),
                 staged: *staged,
                 open: *open,
+                approval: *approval,
                 elapsed_ms: *elapsed_ms,
             }),
             ServerMsg::Questions { items } => Some(ServerMsg::Questions {
@@ -291,6 +301,14 @@ pub enum ClientMsg {
     /// The host opening or closing submissions.
     Submissions {
         open: bool,
+    },
+    /// The host asking to read a talk before it joins the running order.
+    Approval {
+        on: bool,
+    },
+    /// The host letting a waiting talk onto the running order.
+    Accept {
+        talk: u64,
     },
     /// The host moving a talk to another place in the running order, counting
     /// from zero.
@@ -476,10 +494,15 @@ mod tests {
             items: vec![entry.clone()],
             dropped: vec![LineupEntry {
                 title: "Needs a rewrite".into(),
+                ..entry.clone()
+            }],
+            pending: vec![LineupEntry {
+                title: "Not yet accepted".into(),
                 ..entry
             }],
             staged: None,
             open: true,
+            approval: true,
             elapsed_ms: 0,
         });
 
@@ -487,6 +510,8 @@ mod tests {
         let audience = frame.for_socket(false).unwrap();
         assert!(owner.contains("Needs a rewrite"));
         assert!(!audience.contains("Needs a rewrite"), "{audience}");
+        assert!(owner.contains("Not yet accepted"));
+        assert!(!audience.contains("Not yet accepted"), "{audience}");
         assert!(audience.contains("Borrow checking"));
     }
 
