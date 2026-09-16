@@ -11,6 +11,15 @@ export const DIRECTIVES = [
   { value: 'transition', about: 'Moves from here on, until another replaces it.' },
   { value: '_transition', about: 'Moves this slide and no others.' },
   { value: 'timer', about: 'Counts the room down on this slide.' },
+  { value: 'poll', about: 'Asks the room for a word, a number or stars.' },
+];
+
+/// The polls a slide can ask.
+export const POLLS = [
+  { value: 'text', about: 'A word or two from everyone, shown as a cloud.' },
+  { value: 'scale 1-10', about: 'A number, one to ten.' },
+  { value: 'scale 1-5', about: 'A number, one to five.' },
+  { value: 'rating 5', about: 'Stars, one to five.' },
 ];
 
 /// Clocks worth offering. Any `<n>s`, `<n>m` or `<n>m<n>s` up to an hour works.
@@ -88,7 +97,13 @@ export function completionsAt(doc, looks = { themes: [], transitions: [] }) {
     const query = word[1];
     // A directive name is letters and underscores, and stops at its own colon.
     const ahead = found.after.match(/^[a-z_]*/i)[0];
-    return slot('name', start, query, ahead, rank(DIRECTIVES, query));
+    // Taking a name writes its colon too, so the value list opens on the same
+    // keystroke. Unless the colon is already there, past the caret.
+    const colonAhead = found.after.slice(ahead.length).trimStart().startsWith(':');
+    return {
+      ...slot('name', start, query, ahead, rank(DIRECTIVES, query)),
+      suffix: colonAhead ? '' : ': ',
+    };
   }
 
   const name = inner.slice(0, colon).trim();
@@ -172,6 +187,7 @@ function poolFor(name, looks) {
     return [{ value: 'none', about: 'Cuts, with no movement at all.' }, ...installed(looks.transitions)];
   }
   if (name === 'timer') return TIMERS;
+  if (name === 'poll') return POLLS;
   return null;
 }
 

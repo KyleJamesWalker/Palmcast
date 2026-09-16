@@ -157,12 +157,13 @@ export function attachCompleter(area, editor, looks, opts = {}) {
   const accept = (index) => {
     const item = found?.items[index];
     if (!item) return;
-    const { from, to } = found;
+    const { from, to, suffix = '' } = found;
     found = null;
     box.hidden = true;
     box.textContent = '';
     area.removeAttribute('aria-activedescendant');
-    editor.run({ from, to, insert: item.value, select: [from + item.value.length, from + item.value.length] });
+    const insert = item.value + suffix;
+    editor.run({ from, to, insert, select: [from + insert.length, from + insert.length] });
   };
 
   const refresh = () => {

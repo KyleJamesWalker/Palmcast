@@ -8,13 +8,38 @@
 export function survivingSlides(before, after) {
   const keep = new Set();
   after.forEach((slide, index) => {
-    const was = before[index]?.question?.options;
-    const now = slide.question?.options;
-    if (was && now && was.length === now.length && was.every((o, i) => o === now[i])) {
-      keep.add(index);
-    }
+    if (asksTheSame(before[index], slide)) keep.add(index);
   });
   return keep;
+}
+
+/// Whether two slides at the same position ask the same thing: a question
+/// with the same options, or a poll of the same kind and range. Prose asks
+/// nothing, so it never matches.
+function asksTheSame(was, now) {
+  const before = was?.question?.options;
+  const after = now?.question?.options;
+  if (before && after) {
+    return before.length === after.length && before.every((o, i) => o === after[i]);
+  }
+  if (was?.poll && now?.poll) return JSON.stringify(was.poll) === JSON.stringify(now.poll);
+  return false;
+}
+
+/// Which other tool a deck was written for, or null. Mirrors the server's
+/// `import::detect`: front matter with `marp: true`, or the habits of each.
+export function looksImported(markdown) {
+  const front = markdown.match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
+  const keys = front ? front[1] : '';
+  if (/^marp:\s*true/m.test(keys)) return 'Marp';
+  if (/^(separator|verticalSeparator|revealOptions):/m.test(keys)) return 'reveal.js';
+  if (/^(Notes?:|--$)/m.test(markdown) || /<!-- \.(slide|element):/.test(markdown)) {
+    return 'reveal.js';
+  }
+  if (/^<!-- (_class|paginate|_?backgroundColor)/m.test(markdown) || /^!\[bg/m.test(markdown)) {
+    return 'Marp';
+  }
+  return front ? 'Marp' : null;
 }
 
 /// The deck after a patch: the changed slides dropped into place.
@@ -30,10 +55,7 @@ export function applyPatch(slides, changed) {
 export function survivingPatch(before, changed) {
   const keep = new Set(before.map((_, index) => index));
   for (const { index, slide } of changed) {
-    const was = before[index]?.question?.options;
-    const now = slide.question?.options;
-    const same = was && now && was.length === now.length && was.every((o, i) => o === now[i]);
-    if (!same) keep.delete(index);
+    if (!asksTheSame(before[index], slide)) keep.delete(index);
   }
   return keep;
 }
@@ -89,6 +111,9 @@ export const DECK_RULES = [
   '  A name the instance does not have is ignored rather than breaking.',
   '- `<!-- timer: 30s -->` on a question slide counts the room down on every',
   '  screen. Votes stop at zero. Seconds or minutes, as in `90s` or `2m`.',
+  '- `<!-- poll: text -->` on a slide asks everyone for a word or two and shows',
+  '  them back as a word cloud when revealed. `<!-- poll: scale 1-10 -->` asks',
+  '  for a number and `<!-- poll: rating 5 -->` for stars. Polls score nothing.',
   'Neither `---` nor `???` applies inside a fenced code block.',
 ].join('\n');
 

@@ -1,4 +1,5 @@
 import { renderOptions } from '/quiz.js';
+import { pollLabel, renderPoll } from '/poll.js';
 
 /// Draws every slide in the deck as a card, in order.
 ///
@@ -47,6 +48,17 @@ export function renderPreview(root, slides) {
       kind.textContent = slide.question.multi
         ? `Question · pick all that apply · ${slide.question.correct.length} right answers`
         : 'Question · pick one';
+      card.append(kind);
+    }
+
+    if (slide.poll) {
+      const box = document.createElement('div');
+      box.className = 'options';
+      renderPoll(box, slide.poll, { interactive: false, result: null });
+      card.append(box);
+      const kind = document.createElement('p');
+      kind.className = 'preview-note dim';
+      kind.textContent = pollLabel(slide.poll);
       card.append(kind);
     }
 

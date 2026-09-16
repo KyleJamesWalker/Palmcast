@@ -145,3 +145,10 @@ test('directiveAt finds the opening, what precedes the caret, and what follows',
   });
   assert.equal(directiveAt('nothing here', 5), null);
 });
+
+test('taking a name writes the colon too, unless one is already ahead', () => {
+  const bare = completionsAt({ text: '<!-- po', start: 7 }, { themes: [], transitions: [] });
+  assert.equal(bare.suffix, ': ');
+  const withColon = completionsAt({ text: '<!-- po: text -->', start: 7 }, { themes: [], transitions: [] });
+  assert.equal(withColon.suffix, '');
+});

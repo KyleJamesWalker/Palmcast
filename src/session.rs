@@ -8,10 +8,12 @@ use tokio::sync::broadcast;
 
 use crate::deck::{self, Slide};
 use crate::images::Stored;
-use crate::persist::{Choice, PersistedCue, PersistedQuestion, PersistedSession, PersistedTalk};
+use crate::persist::{
+    Choice, PersistedCue, PersistedQuestion, PersistedSession, PersistedTalk, Response,
+};
 use crate::wire::{
-    AudienceQuestion, Changed, Frame, LineupEntry, Reaction, Refusal, ScoreRow, ServerMsg,
-    TalkDetail,
+    AudienceQuestion, Changed, Frame, LineupEntry, PollResult, Reaction, Refusal, ScoreRow,
+    ServerMsg, TalkDetail, Word,
 };
 
 /// No vowels, so an id cannot spell a word, and no glyphs that look alike when
@@ -54,6 +56,12 @@ const MAX_TITLE_CHARS: usize = 60;
 /// A note is a line telling a speaker what to fix, the same length the room
 /// gets for a question.
 const MAX_NOTE_CHARS: usize = 280;
+/// A poll answer is a word or a phrase, not a paragraph.
+const MAX_RESPONSE_CHARS: usize = 140;
+/// How many text answers travel with a reveal, and how many words a cloud
+/// holds. A stage screen cannot show more of either.
+const MAX_SHOWN_ANSWERS: usize = 60;
+const MAX_CLOUD_WORDS: usize = 40;
 /// An evening of slides, not a gallery. Every picture sits in memory for the
 /// life of the room and is served to everyone in it.
 const MAX_IMAGES: usize = 40;
@@ -130,6 +138,7 @@ pub struct Parked {
     /// twice. `score_table` counts these while they are parked.
     pub votes: HashMap<usize, HashMap<String, Vec<usize>>>,
     pub revealed: HashSet<usize>,
+    pub responses: HashMap<usize, HashMap<String, Response>>,
 }
 
 pub struct Session {
@@ -158,6 +167,9 @@ pub struct Session {
     /// and a later one replaces it rather than adding to it.
     pub votes: HashMap<usize, HashMap<String, Vec<usize>>>,
     pub revealed: HashSet<usize>,
+    /// slide index -> phone -> what it said to the poll there. One answer
+    /// each, and a later one replaces it.
+    pub responses: HashMap<usize, HashMap<String, Response>>,
     pub last_reaction: HashMap<String, Instant>,
     pub questions: Vec<StoredQuestion>,
     pub last_ask: HashMap<String, Instant>,
@@ -380,6 +392,96 @@ impl Session {
         (counts, total)
     }
 
+    /// A poll's answers, summarized for the wire.
+    fn poll_result(&self, slide: usize) -> Option<PollResult> {
+        let poll = self.slides.get(slide)?.poll.as_ref()?;
+        let given = self.responses.get(&slide);
+        let total = given.map(HashMap::len).unwrap_or(0);
+        let mut result = PollResult {
+            total,
+            ..Default::default()
+        };
+        let Some(given) = given else {
+            if poll.width() > 0 {
+                result.histogram = vec![0; poll.width()];
+            }
+            return Some(result);
+        };
+        if poll.width() > 0 {
+            let mut histogram = vec![0usize; poll.width()];
+            let mut sum = 0u64;
+            for response in given.values() {
+                if let Response::Number(value) = response
+                    && poll.accepts(*value)
+                {
+                    histogram[(*value - poll.floor()) as usize] += 1;
+                    sum += u64::from(*value);
+                }
+            }
+            result.histogram = histogram;
+            result.mean_x100 = if total > 0 {
+                (sum * 100 / total as u64) as u32
+            } else {
+                0
+            };
+        } else {
+            let mut answers: Vec<&String> = given
+                .values()
+                .filter_map(|r| match r {
+                    Response::Text(text) => Some(text),
+                    Response::Number(_) => None,
+                })
+                .collect();
+            answers.sort();
+            result.words = cloud(answers.iter().map(|s| s.as_str()));
+            result.answers = answers
+                .into_iter()
+                .take(MAX_SHOWN_ANSWERS)
+                .cloned()
+                .collect();
+        }
+        Some(result)
+    }
+
+    /// Records one phone's answer to a poll and returns the tally.
+    pub fn respond(
+        &mut self,
+        slide: usize,
+        who: &str,
+        text: &str,
+        value: Option<u32>,
+    ) -> Option<ServerMsg> {
+        if self.revealed.contains(&slide) || self.timed_out(slide) {
+            return None;
+        }
+        let poll = self.slides.get(slide)?.poll.as_ref()?;
+        let response = match (poll.width(), value) {
+            (0, _) => {
+                let text = text.trim();
+                if text.is_empty() || text.chars().count() > MAX_RESPONSE_CHARS {
+                    return None;
+                }
+                Response::Text(text.to_string())
+            }
+            (_, Some(value)) if poll.accepts(value) => Response::Number(value),
+            _ => return None,
+        };
+        if !self.admit(who) {
+            return None;
+        }
+        self.responses
+            .entry(slide)
+            .or_default()
+            .insert(who.to_string(), response);
+        self.touch();
+        let msg = ServerMsg::PollTally {
+            slide,
+            result: self.poll_result(slide)?,
+        };
+        self.emit(&msg);
+        Some(msg)
+    }
+
     /// What a token may do here.
     ///
     /// Constant time both ways, and both comparisons always run, so neither
@@ -443,7 +545,7 @@ impl Session {
     fn tallies(&self) -> Vec<ServerMsg> {
         let mut slides: Vec<usize> = self.votes.keys().copied().collect();
         slides.sort_unstable();
-        slides
+        let mut out: Vec<ServerMsg> = slides
             .into_iter()
             .filter_map(|slide| {
                 let (counts, total) = self.counts(slide);
@@ -453,7 +555,15 @@ impl Session {
                     total,
                 })
             })
-            .collect()
+            .collect();
+        let mut polled: Vec<usize> = self.responses.keys().copied().collect();
+        polled.sort_unstable();
+        out.extend(polled.into_iter().filter_map(|slide| {
+            let result = self.poll_result(slide)?;
+            (result.total > 0 && !self.revealed.contains(&slide))
+                .then_some(ServerMsg::PollTally { slide, result })
+        }));
+        out
     }
 
     /// Every answer the presenter has already opened. Unlike a tally this is
@@ -465,6 +575,9 @@ impl Session {
         slides
             .into_iter()
             .filter_map(|slide| {
+                if let Some(result) = self.poll_result(slide) {
+                    return Some(ServerMsg::PollReveal { slide, result });
+                }
                 let correct = self
                     .slides
                     .get(slide)
@@ -653,8 +766,20 @@ impl Session {
             })
             .map(|(index, _)| index)
             .collect();
+        // A poll keeps its answers while it asks the same thing.
+        let polled: HashSet<usize> = rebuilt
+            .iter()
+            .enumerate()
+            .filter(|(index, slide)| {
+                slide.poll.is_some()
+                    && self.slides.get(*index).map(|s| &s.poll) == Some(&slide.poll)
+            })
+            .map(|(index, _)| index)
+            .collect();
+        self.responses.retain(|slide, _| polled.contains(slide));
         self.votes.retain(|slide, _| intact.contains(slide));
-        self.revealed.retain(|slide| intact.contains(slide));
+        self.revealed
+            .retain(|slide| intact.contains(slide) || polled.contains(slide));
         // Which slides actually changed, while the old deck is still here.
         let same_length = rebuilt.len() == self.slides.len();
         let changed: Vec<Changed> = rebuilt
@@ -777,11 +902,22 @@ impl Session {
             }
         }
         self.votes.retain(|_, cast| !cast.is_empty());
+        let mut repolled = Vec::new();
+        for (slide, given) in self.responses.iter_mut() {
+            if given.remove(who).is_some() {
+                repolled.push(*slide);
+            }
+        }
+        self.responses.retain(|_, given| !given.is_empty());
         if let Some(parked) = self.parked.as_mut() {
             for cast in parked.votes.values_mut() {
                 cast.remove(who);
             }
             parked.votes.retain(|_, cast| !cast.is_empty());
+            for given in parked.responses.values_mut() {
+                given.remove(who);
+            }
+            parked.responses.retain(|_, given| !given.is_empty());
         }
         self.questions.retain(|q| q.by != who);
         for question in self.questions.iter_mut() {
@@ -802,6 +938,12 @@ impl Session {
                 counts,
                 total,
             });
+        }
+        repolled.sort_unstable();
+        for slide in repolled {
+            if let Some(result) = self.poll_result(slide) {
+                self.emit(&ServerMsg::PollTally { slide, result });
+            }
         }
         true
     }
@@ -1020,6 +1162,14 @@ impl Session {
         if !self.role_of(token).drives() {
             return None;
         }
+        if let Some(result) = self.poll_result(slide) {
+            self.revealed.insert(slide);
+            self.touch();
+            let msg = ServerMsg::PollReveal { slide, result };
+            self.emit(&msg);
+            self.stop_timer(slide);
+            return Some(msg);
+        }
         let correct = self
             .slides
             .get(slide)
@@ -1100,9 +1250,55 @@ impl Session {
         out
     }
 
+    /// Every poll that took answers, for the export, on the same decks as
+    /// `polls`.
+    fn poll_responses(&self) -> Vec<crate::export::ResponseView> {
+        let mut out = Vec::new();
+        let mut collect =
+            |talk: Option<u64>,
+             slides: &[Slide],
+             responses: &HashMap<usize, HashMap<String, Response>>| {
+                let mut indexes: Vec<usize> = responses.keys().copied().collect();
+                indexes.sort_unstable();
+                for slide in indexes {
+                    let Some(poll) = slides.get(slide).and_then(|s| s.poll.as_ref()) else {
+                        continue;
+                    };
+                    let mut answers: Vec<(Option<String>, String)> = responses[&slide]
+                        .iter()
+                        .map(|(who, response)| {
+                            let answer = match response {
+                                Response::Number(n) => n.to_string(),
+                                Response::Text(text) => text.clone(),
+                            };
+                            (self.names.get(who).cloned(), answer)
+                        })
+                        .collect();
+                    answers.sort();
+                    out.push(crate::export::ResponseView {
+                        talk,
+                        slide,
+                        prompt: crate::export::plain(&slides[slide].html),
+                        kind: match poll {
+                            deck::Poll::Text => "text".to_string(),
+                            deck::Poll::Scale { min, max } => format!("scale {min}-{max}"),
+                            deck::Poll::Rating { max } => format!("rating {max}"),
+                        },
+                        answers,
+                    });
+                }
+            };
+        if let Some(parked) = &self.parked {
+            collect(None, &parked.slides, &parked.responses);
+        }
+        collect(self.staged, &self.slides, &self.responses);
+        out
+    }
+
     pub fn export_view(&self, with_people: bool) -> crate::export::ExportView {
         crate::export::ExportView {
             polls: self.polls(),
+            responses: self.poll_responses(),
             with_people,
             opened: self.opened,
             host_markdown: match (&self.parked, self.staged) {
@@ -1561,6 +1757,7 @@ impl Session {
                     current: self.current,
                     votes: std::mem::take(&mut self.votes),
                     revealed: std::mem::take(&mut self.revealed),
+                    responses: std::mem::take(&mut self.responses),
                 });
             }
         }
@@ -1585,11 +1782,12 @@ impl Session {
                     current: self.current,
                     votes: HashMap::new(),
                     revealed: HashSet::new(),
+                    responses: HashMap::new(),
                 });
                 self.markdown = back.markdown;
                 self.slides = back.slides;
                 self.current = back.current.min(self.slides.len().saturating_sub(1));
-                Some((back.votes, back.revealed))
+                Some((back.votes, back.revealed, back.responses))
             }
         };
 
@@ -1601,9 +1799,10 @@ impl Session {
         // with it, so a replayed round cannot score a second time.
         self.questions.clear();
         self.last_ask.clear();
-        let (votes, revealed) = returning.unwrap_or_default();
+        let (votes, revealed, responses) = returning.unwrap_or_default();
         self.votes = votes;
         self.revealed = revealed;
+        self.responses = responses;
         self.touch();
         self.mark();
 
@@ -1632,6 +1831,45 @@ impl Session {
         self.emit(&self.baton_msg());
         true
     }
+}
+
+/// The words a room reached for, counted, biggest first.
+///
+/// A short answer is one word of the cloud whole, so "borrow checker" is not
+/// two. A long one is split, lowercased, and stripped of the words that carry
+/// no meaning on their own.
+fn cloud<'a>(answers: impl Iterator<Item = &'a str>) -> Vec<Word> {
+    const STOP: [&str; 34] = [
+        "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "is", "it", "its", "that",
+        "this", "with", "as", "at", "be", "by", "are", "was", "but", "not", "so", "we", "i", "you",
+        "my", "our", "they", "have", "has", "just",
+    ];
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for answer in answers {
+        let trimmed = answer.trim();
+        let short = trimmed.chars().count() <= 24 && trimmed.split_whitespace().count() <= 3;
+        let tokens: Vec<String> = if short {
+            vec![trimmed.to_lowercase()]
+        } else {
+            trimmed
+                .split(|c: char| !c.is_alphanumeric() && c != '\'')
+                .map(|w| w.trim_matches('\'').to_lowercase())
+                .filter(|w| w.chars().count() > 1 && !STOP.contains(&w.as_str()))
+                .collect()
+        };
+        for token in tokens {
+            if !token.is_empty() {
+                *counts.entry(token).or_insert(0) += 1;
+            }
+        }
+    }
+    let mut words: Vec<Word> = counts
+        .into_iter()
+        .map(|(text, count)| Word { text, count })
+        .collect();
+    words.sort_by(|a, b| b.count.cmp(&a.count).then(a.text.cmp(&b.text)));
+    words.truncate(MAX_CLOUD_WORDS);
+    words
 }
 
 /// The first heading in a deck, which is what a speaker has already written
@@ -1738,6 +1976,7 @@ impl Registry {
                 tx,
                 votes: HashMap::new(),
                 revealed: HashSet::new(),
+                responses: HashMap::new(),
                 last_reaction: HashMap::new(),
                 questions: Vec::new(),
                 last_ask: HashMap::new(),
@@ -1933,6 +2172,12 @@ impl Registry {
                     .as_ref()
                     .map(|p| p.revealed.clone())
                     .unwrap_or_default(),
+                responses: s.responses.clone(),
+                parked_responses: s
+                    .parked
+                    .as_ref()
+                    .map(|p| p.responses.clone())
+                    .unwrap_or_default(),
                 banked: s.banked.clone(),
                 locked: s.locked,
                 banned: s.banned.clone(),
@@ -2001,6 +2246,8 @@ impl Registry {
             votes.retain(|_, cast| !cast.is_empty());
             let mut revealed = item.revealed;
             revealed.retain(|slide| *slide < slides.len());
+            let mut responses = item.responses;
+            responses.retain(|slide, _| *slide < slides.len());
             let (tx, _) = broadcast::channel(CHANNEL_DEPTH);
             // Carrying the age forward means the next sweep drops whatever had
             // already run out, rather than the restart granting it a new life.
@@ -2030,6 +2277,7 @@ impl Registry {
                     tx,
                     votes,
                     revealed,
+                    responses,
                     last_reaction: HashMap::new(),
                     questions: item
                         .questions
@@ -2089,6 +2337,7 @@ impl Registry {
                                 })
                                 .collect(),
                             revealed: item.parked_revealed,
+                            responses: item.parked_responses,
                         }
                     }),
                     baton: item.baton,
@@ -4268,6 +4517,189 @@ mod tests {
             panic!("not a patch");
         };
         assert_eq!((from_rev, rev), (2, 3));
+    }
+
+    const POLLS: &str = "# Welcome\n\n---\n\n<!-- poll: text -->\n# One word\n\n---\n\n<!-- poll: scale 1-5 -->\n# How much\n\n---\n\n<!-- poll: rating 5 -->\n# Stars";
+
+    fn poll_of(msg: &ServerMsg) -> &PollResult {
+        match msg {
+            ServerMsg::PollTally { result, .. } | ServerMsg::PollReveal { result, .. } => result,
+            other => panic!("not a poll message: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_text_poll_collects_words_into_a_cloud_for_the_presenter() {
+        let reg = registry();
+        let (id, _mc) = reg.create(POLLS).unwrap();
+        reg.with_mut(&id, |s| s.respond(1, "a", "Rust", None))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.respond(1, "b", "rust", None))
+            .flatten()
+            .unwrap();
+        let msg = reg
+            .with_mut(&id, |s| s.respond(1, "c", "The borrow checker", None))
+            .flatten()
+            .unwrap();
+        assert!(matches!(msg, ServerMsg::PollTally { .. }));
+        let result = poll_of(&msg);
+        assert_eq!(result.total, 3);
+        assert_eq!(
+            result.words[0],
+            Word {
+                text: "rust".into(),
+                count: 2
+            }
+        );
+        assert_eq!(
+            result.words[1].text, "the borrow checker",
+            "a short answer is one word"
+        );
+        assert_eq!(result.answers, vec!["Rust", "The borrow checker", "rust"]);
+        assert!(
+            msg.redacted().is_none(),
+            "the room saw the answers before the reveal"
+        );
+    }
+
+    #[test]
+    fn a_numeric_poll_counts_each_value_and_refuses_one_off_the_scale() {
+        let reg = registry();
+        let (id, _mc) = reg.create(POLLS).unwrap();
+        assert!(
+            reg.with_mut(&id, |s| s.respond(2, "a", "", Some(0)))
+                .flatten()
+                .is_none()
+        );
+        assert!(
+            reg.with_mut(&id, |s| s.respond(2, "a", "", Some(6)))
+                .flatten()
+                .is_none()
+        );
+        assert!(
+            reg.with_mut(&id, |s| s.respond(2, "a", "five", None))
+                .flatten()
+                .is_none()
+        );
+        reg.with_mut(&id, |s| s.respond(2, "a", "", Some(5)))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.respond(2, "b", "", Some(3)))
+            .flatten()
+            .unwrap();
+        let msg = reg
+            .with_mut(&id, |s| s.respond(2, "a", "", Some(4)))
+            .flatten()
+            .unwrap();
+        let result = poll_of(&msg);
+        assert_eq!(
+            result.histogram,
+            vec![0, 0, 1, 1, 0],
+            "a second answer did not replace the first"
+        );
+        assert_eq!(result.total, 2);
+        assert_eq!(result.mean_x100, 350);
+    }
+
+    #[test]
+    fn revealing_a_poll_opens_it_to_the_room_and_closes_it_to_answers() {
+        let reg = registry();
+        let (id, mc) = reg.create(POLLS).unwrap();
+        reg.with_mut(&id, |s| s.respond(3, "a", "", Some(4)))
+            .flatten()
+            .unwrap();
+        let msg = reg.with_mut(&id, |s| s.reveal(&mc, 3)).flatten().unwrap();
+        assert!(matches!(msg, ServerMsg::PollReveal { slide: 3, .. }));
+        assert!(msg.redacted().is_some());
+        assert!(
+            reg.with_mut(&id, |s| s.respond(3, "b", "", Some(2)))
+                .flatten()
+                .is_none()
+        );
+        let opening = reg.with(&id, |s| s.catch_up(false)).unwrap();
+        assert!(
+            opening
+                .iter()
+                .any(|m| matches!(m, ServerMsg::PollReveal { slide: 3, .. })),
+            "a phone arriving late was not shown the poll"
+        );
+    }
+
+    #[test]
+    fn a_poll_that_still_asks_the_same_thing_keeps_its_answers_through_an_edit() {
+        let reg = registry();
+        let (id, _mc) = reg.create(POLLS).unwrap();
+        reg.with_mut(&id, |s| s.respond(2, "a", "", Some(5)))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| {
+            s.replace_deck(Role::Mc, None, &POLLS.replace("# How much", "# How much?"))
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            reg.with(&id, |s| s.poll_result(2).unwrap().total).unwrap(),
+            1
+        );
+        reg.with_mut(&id, |s| {
+            s.replace_deck(Role::Mc, None, &POLLS.replace("scale 1-5", "scale 1-3"))
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            reg.with(&id, |s| s.poll_result(2).unwrap().total).unwrap(),
+            0,
+            "answers to a different scale survived"
+        );
+    }
+
+    #[test]
+    fn poll_answers_are_parked_with_the_host_deck_and_dropped_with_a_removal() {
+        let (reg, id, mc) = open_room();
+        reg.with_mut(&id, |s| s.replace_deck(Role::Mc, None, POLLS))
+            .unwrap()
+            .unwrap();
+        reg.with_mut(&id, |s| s.respond(1, "sam", "Rust", None))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.respond(1, "ann", "Go", None))
+            .flatten()
+            .unwrap();
+        let (talk, _) = submit(&reg, &id, "ada", "# Talk");
+        reg.with_mut(&id, |s| s.stage(s.role_of(&mc), Some(talk)));
+        assert!(
+            reg.with(&id, |s| s.poll_result(1)).unwrap().is_none(),
+            "a talk deck had the host poll"
+        );
+        reg.with_mut(&id, |s| s.stage(s.role_of(&mc), None));
+        assert_eq!(
+            reg.with(&id, |s| s.poll_result(1).unwrap().total).unwrap(),
+            2
+        );
+        reg.with_mut(&id, |s| s.kick(s.role_of(&mc), "sam", "host"));
+        assert_eq!(
+            reg.with(&id, |s| s.poll_result(1).unwrap().answers)
+                .unwrap(),
+            vec!["Go"]
+        );
+        let back = registry();
+        back.import(reg.export());
+        assert_eq!(
+            back.with(&id, |s| s.poll_result(1).unwrap().total).unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_cloud_drops_the_words_that_say_nothing() {
+        let words =
+            cloud(["I think it is the borrow checker and the compiler messages"].into_iter());
+        let texts: Vec<&str> = words.iter().map(|w| w.text.as_str()).collect();
+        assert!(!texts.contains(&"the"));
+        assert!(!texts.contains(&"it"));
+        assert!(texts.contains(&"borrow"));
+        assert!(texts.contains(&"compiler"));
     }
 
     fn qr_state(msgs: &[ServerMsg]) -> Option<bool> {

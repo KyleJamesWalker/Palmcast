@@ -3,6 +3,7 @@
 
 import { clamp, navIntent } from '/shared.js';
 import { renderOptions } from '/quiz.js';
+import { renderPoll } from '/poll.js';
 import { applyPatch, pruneBySlide, survivingPatch, survivingSlides } from '/deckstate.js';
 import { applySteps, backward, forward, nextLabel, stepLabel, steps } from '/steps.js';
 import { mountCountdown } from '/countdown.js';
@@ -42,6 +43,9 @@ export function mountConsole({ send, roleKnown }) {
   let independent = false;
   const tallies = new Map();
   const revealed = new Map();
+  // Poll answers as they come in, and as revealed. The reveal wins.
+  const pollTallies = new Map();
+  const pollResults = new Map();
 
   const AUTO = 'palmcast:reveal-at-zero';
   try {
@@ -80,27 +84,40 @@ export function mountConsole({ send, roleKnown }) {
     els.nextBtn.disabled = !forward(slides, current, step);
 
     const question = now?.question;
+    const poll = now?.poll;
     const answer = revealed.get(current);
     const live = tallies.get(current);
     const counts = answer?.counts ?? live?.counts;
-    const total = answer?.total ?? live?.total ?? 0;
+    let total = answer?.total ?? live?.total ?? 0;
+    let opened = Boolean(answer);
 
-    renderOptions(els.options, question, {
-      interactive: false,
-      correct: answer ? answer.correct : question?.correct,
-      counts: counts ?? (question ? question.options.map(() => 0) : null),
-      total,
-    });
+    if (poll) {
+      const shown = pollResults.get(current);
+      const result = shown ?? pollTallies.get(current) ?? null;
+      opened = Boolean(shown);
+      total = result?.total ?? 0;
+      renderPoll(els.options, poll, { interactive: false, result });
+    } else {
+      els.options.classList.remove('poll');
+      renderOptions(els.options, question, {
+        interactive: false,
+        correct: answer ? answer.correct : question?.correct,
+        counts: counts ?? (question ? question.options.map(() => 0) : null),
+        total,
+      });
+    }
 
     paintJump();
     els.nextBtn.textContent = nextLabel(slides, current, step);
     els.follow.hidden = !independent;
     els.follow.textContent = `Room is on ${roomCurrent + 1} · follow`;
-    els.reveal.hidden = !question;
-    els.reveal.disabled = Boolean(answer);
-    els.reveal.textContent = answer
-      ? `Revealed · ${total} voted`
-      : `Reveal the answer${total ? ` · ${total} voted` : ''}`;
+    els.reveal.hidden = !question && !poll;
+    els.reveal.disabled = opened;
+    const what = poll ? 'answers' : 'answer';
+    const said = poll ? 'answered' : 'voted';
+    els.reveal.textContent = opened
+      ? `Revealed · ${total} ${said}`
+      : `Reveal the ${what}${total ? ` · ${total} ${said}` : ''}`;
   }
 
   /// A grid of slide numbers, marking which ones are questions.
@@ -188,6 +205,8 @@ export function mountConsole({ send, roleKnown }) {
         const keep = survivingSlides(slides, msg.slides);
         pruneBySlide(tallies, keep);
         pruneBySlide(revealed, keep);
+        pruneBySlide(pollTallies, keep);
+        pruneBySlide(pollResults, keep);
         rev = msg.rev;
       }
       slides = msg.slides;
@@ -211,6 +230,8 @@ export function mountConsole({ send, roleKnown }) {
       const keep = survivingPatch(slides, msg.changed);
       pruneBySlide(tallies, keep);
       pruneBySlide(revealed, keep);
+      pruneBySlide(pollTallies, keep);
+      pruneBySlide(pollResults, keep);
       slides = applyPatch(slides, msg.changed);
       rev = msg.rev;
       roomCurrent = msg.current;
@@ -230,6 +251,14 @@ export function mountConsole({ send, roleKnown }) {
     },
     reveal(msg) {
       revealed.set(msg.slide, msg);
+      paint();
+    },
+    poll_tally(msg) {
+      pollTallies.set(msg.slide, msg.result);
+      paint();
+    },
+    poll_reveal(msg) {
+      pollResults.set(msg.slide, msg.result);
       paint();
     },
   };

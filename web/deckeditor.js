@@ -7,6 +7,7 @@ import { lookPickers } from '/lookpicker.js';
 import { attachCompleter } from '/completer.js';
 import { agentPrompt } from '/deckstate.js';
 import { attachUpload, uploadsOn } from '/upload.js';
+import { downloadHandout } from '/handout.js';
 
 /// Wires the editor panel.
 ///
@@ -27,6 +28,8 @@ export function mountDeckEditor({ id, token, rev, questions }) {
     prompt: document.getElementById('deck-prompt'),
     link: document.getElementById('deck-link'),
     linkUrl: document.getElementById('deck-link-url'),
+    handout: document.getElementById('deck-handout'),
+    handoutNotes: document.getElementById('deck-handout-notes'),
     toolbar: document.getElementById('deck-toolbar'),
     image: document.getElementById('deck-image'),
     imageFile: document.getElementById('deck-image-file'),
@@ -210,6 +213,21 @@ export function mountDeckEditor({ id, token, rev, questions }) {
     setTimeout(() => {
       els.link.textContent = label;
     }, 2000);
+  });
+
+  els.handout.addEventListener('click', async () => {
+    els.handout.disabled = true;
+    try {
+      const query = els.handoutNotes.checked ? '?notes=1' : '';
+      await downloadHandout(
+        authFetch(`/api/sessions/${id}/handout${query}`, token),
+        `palmcast-${id}.html`,
+      );
+    } catch (error) {
+      els.status.textContent = `Could not make the file: ${error.message}`;
+    } finally {
+      els.handout.disabled = false;
+    }
   });
 
   return {

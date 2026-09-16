@@ -17,12 +17,13 @@ test('typing a directive offers the names, and Enter takes the one chosen', asyn
   await area.type('<!-- ');
 
   await expect(page.locator('.complete')).toBeVisible();
-  await expect(rows(page)).toHaveText(['theme', '_theme', 'transition', '_transition', 'timer']);
+  await expect(rows(page)).toHaveText(['theme', '_theme', 'transition', '_transition', 'timer', 'poll']);
   await expect(page.locator('.complete-hint')).toHaveText('Directive');
 
-  // The first row is the one Enter takes.
+  // The first row is the one Enter takes, colon and all, and the looks open.
   await page.keyboard.press('Enter');
-  await expect(area).toHaveValue('<!-- theme');
+  await expect(area).toHaveValue('<!-- theme: ');
+  await expect(page.locator('.complete-hint')).toHaveText('Look');
 });
 
 test('the list narrows as the name is typed', async ({ page }) => {
@@ -30,7 +31,7 @@ test('the list narrows as the name is typed', async ({ page }) => {
   await area.type('<!-- _tr');
   await expect(rows(page)).toHaveText(['_transition']);
   await page.keyboard.press('Tab');
-  await expect(area).toHaveValue('<!-- _transition');
+  await expect(area).toHaveValue('<!-- _transition: ');
 });
 
 test('after the colon it offers the looks this instance actually serves', async ({ page }) => {
@@ -93,7 +94,7 @@ test('arrow keys move the choice and Escape puts the list away', async ({ page }
   await page.keyboard.press('ArrowDown');
   await expect(page.locator('.complete-row.on .complete-value')).toHaveText('_theme');
   await page.keyboard.press('Enter');
-  await expect(area).toHaveValue('<!-- _theme');
+  await expect(area).toHaveValue('<!-- _theme: ');
 
   await area.fill('');
   await area.type('<!-- ');

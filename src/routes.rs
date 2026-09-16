@@ -247,6 +247,9 @@ pub fn router_with(app: App) -> Router {
         .route("/healthz", get(health))
         .route("/api/sessions", post(create_session))
         .route("/api/preview", post(preview_deck))
+        .route("/api/import", post(import_deck))
+        .route("/api/handout", post(handout_deck))
+        .route("/api/sessions/{id}/handout", get(session_handout))
         .route("/api/starter", get(starter_deck))
         .route("/api/config", get(config))
         .route("/themes/{file}", get(theme))
@@ -766,6 +769,104 @@ struct Packed {
 #[derive(Deserialize)]
 struct TokenBody {
     token: String,
+}
+
+#[derive(Deserialize)]
+struct HandoutBody {
+    markdown: String,
+    #[serde(default)]
+    notes: bool,
+}
+
+/// Reads a deck written for Marp or reveal.js and writes it for this
+/// application, with a list of what changed. No room needed.
+async fn import_deck(
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    axum::Json(body): axum::Json<DeckBody>,
+) -> Response {
+    if body.markdown.len() > MAX_DECK_BYTES {
+        return (StatusCode::PAYLOAD_TOO_LARGE, "deck too large").into_response();
+    }
+    if !app
+        .limiter
+        .take(client_ip(&app, &headers, peer), Limit::Pack)
+    {
+        return (StatusCode::TOO_MANY_REQUESTS, Limit::Pack.refused()).into_response();
+    }
+    axum::Json(crate::import::convert(&body.markdown)).into_response()
+}
+
+fn handout_response(html: String, name: &str) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{name}.html\""),
+            ),
+        ],
+        html,
+    )
+        .into_response()
+}
+
+/// The deck as one file, from the start page. Pictures a room held cannot
+/// travel here, because there is no room.
+async fn handout_deck(
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    axum::Json(body): axum::Json<HandoutBody>,
+) -> Response {
+    if body.markdown.len() > MAX_DECK_BYTES {
+        return (StatusCode::PAYLOAD_TOO_LARGE, "deck too large").into_response();
+    }
+    if !app
+        .limiter
+        .take(client_ip(&app, &headers, peer), Limit::Pack)
+    {
+        return (StatusCode::TOO_MANY_REQUESTS, Limit::Pack.refused()).into_response();
+    }
+    let html = crate::handout::render(&crate::handout::Handout {
+        markdown: &body.markdown,
+        styles: &app.styles,
+        session: None,
+        images: &[],
+        with_notes: body.notes,
+    });
+    handout_response(html, "palmcast-deck")
+}
+
+/// The live deck as one file, pictures included. For whoever may edit it.
+async fn session_handout(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let token = &token_from(&headers, &params);
+    let with_notes = params.get("notes").is_some_and(|v| v == "1" || v == "true");
+    let copy = app.registry.with(&id, |s| {
+        s.role_of(token)
+            .edits()
+            .then(|| (s.markdown.clone(), s.images.clone()))
+    });
+    match copy {
+        None => StatusCode::NOT_FOUND.into_response(),
+        Some(None) => StatusCode::FORBIDDEN.into_response(),
+        Some(Some((markdown, images))) => {
+            let html = crate::handout::render(&crate::handout::Handout {
+                markdown: &markdown,
+                styles: &app.styles,
+                session: Some(&id),
+                images: &images,
+                with_notes,
+            });
+            handout_response(html, &format!("palmcast-{id}"))
+        }
+    }
 }
 
 /// Turns a deck into the token half of a share link.

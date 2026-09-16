@@ -275,6 +275,9 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
         ClientMsg::Answer { slide, options } => {
             registry.with_mut(id, |s| s.answer(slide, who, &options));
         }
+        ClientMsg::Respond { slide, text, value } => {
+            registry.with_mut(id, |s| s.respond(slide, who, &text, value));
+        }
     }
 }
 
