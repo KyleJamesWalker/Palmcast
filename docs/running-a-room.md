@@ -32,6 +32,30 @@ split form votes differently from a room that cannot see it.
 
 One vote per browser. A second tap replaces the first rather than adding one.
 
+### Put a clock on a question
+
+```markdown
+<!-- timer: 30s -->
+# What year did Rust 1.0 ship?
+
+- [ ] 2012
+- [x] 2015
+- [ ] 2018
+```
+
+The clock starts when the slide lands and counts down on every screen, the
+stage included. At zero the phones stop taking votes and the server refuses any
+that arrive late. Seconds or minutes, as in `90s`, `2m` or `1m30s`, up to an
+hour. Leaving the slide stops the clock and coming back starts it again.
+
+The presenter console shows the same clock beside the reveal button, with
+**Reveal at zero**. Ticked, the console opens the answer the moment the clock
+runs out. The choice is remembered on that phone. A slide that is already
+revealed gets no clock.
+
+The console also carries a speaker clock in the top line: how long the deck
+that is up has been up. It restarts when a talk goes on stage or comes down.
+
 ## Run an open mic
 
 A room can take talks from the floor. **Lineup** in the presenter console opens
@@ -86,6 +110,20 @@ lands.
 Anyone asks, anyone upvotes, and the list ranks by votes. The presenter marks a
 question answered, which sinks it rather than deleting it. Someone who joins
 late gets the questions already asked and the board as it stands.
+
+### Remove somebody
+
+Every name on the host's leaderboard has **Remove** beside it. Removing someone
+takes their name, their votes, their points and the questions they asked out of
+the room, and their phone is shown out. The browser cannot rejoin. Nobody else
+sees anything but the board and the floor changing.
+
+## Lock the room
+
+**Lock room** on the presenter console stops new phones joining. Everyone
+already in stays, and a phone that drops off the wifi and reconnects is let
+back in, because the room remembers having seen it. Anyone new is told the room
+is locked. Press it again to open the room. The lock survives a restart.
 
 ## Let somebody in late
 

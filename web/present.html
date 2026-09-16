@@ -17,9 +17,11 @@
     <span id="role-badge" class="role-badge" hidden>co-host</span>
     <button id="position" class="position" aria-label="Jump to a slide">—</button>
     <span id="viewers" class="dim viewers">0 watching</span>
+    <span id="clock" class="dim clock" aria-label="Time on this deck" hidden>0:00</span>
     <button id="follow" class="ghost follow" hidden>Room is on 1 · follow</button>
     <button id="edit-toggle" class="ghost">Edit</button>
     <button id="qr-toggle" class="ghost" aria-pressed="false" hidden>Show QR</button>
+    <button id="lock-toggle" class="ghost" aria-pressed="false" hidden>Lock room</button>
     <button id="share-toggle" class="ghost">Share</button>
     <button id="lineup-toggle" class="ghost">Lineup</button>
   </div>
@@ -75,6 +77,11 @@
     </div>
     <input id="deck-image-file" type="file" accept="image/*" hidden>
     <textarea id="deck-text" spellcheck="false"></textarea>
+    <div id="deck-history" class="history" hidden>
+      <label class="look-label" for="deck-revisions">Earlier saves</label>
+      <select id="deck-revisions" class="pick"></select>
+      <button id="deck-restore" class="ghost" type="button">Load</button>
+    </div>
     <div class="editor-actions">
       <button id="deck-save" class="primary">Save</button>
       <button id="deck-prompt" class="ghost">Copy prompt for an agent</button>
@@ -90,6 +97,10 @@
     <h2 class="label">On screen</h2>
     <div id="slide" class="slide"></div>
     <div id="options" class="options" aria-live="polite" hidden></div>
+    <div id="timer-row" class="timer-row" hidden>
+      <span id="timer" class="timer" role="timer" aria-live="off"></span>
+      <label class="timer-auto"><input type="checkbox" id="timer-auto"> Reveal at zero</label>
+    </div>
     <button id="reveal" class="reveal" hidden>Reveal the answer</button>
   </section>
 

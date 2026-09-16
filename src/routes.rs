@@ -263,6 +263,8 @@ pub fn router_with(app: App) -> Router {
             get(session_exists).put(update_session),
         )
         .route("/api/sessions/{id}/markdown", get(get_markdown))
+        .route("/api/sessions/{id}/revisions", get(list_revisions))
+        .route("/api/sessions/{id}/revisions/{rev}", get(get_revision))
         .route("/api/sessions/{id}/talks", post(submit_talk))
         .route(
             "/api/sessions/{id}/talks/{talk}",
@@ -881,6 +883,46 @@ async fn get_markdown(
     match registry.markdown(&id) {
         Some(markdown) => markdown.into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// The decks earlier saves replaced, newest first. For whoever may edit, which
+/// is who would want one back.
+async fn list_revisions(
+    State(registry): State<Registry>,
+    Path(id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let token = &token_from(&headers, &params);
+    let found = registry.with(&id, |s| s.role_of(token).edits().then(|| s.revisions()));
+    match found {
+        Some(Some(revisions)) => axum::Json(revisions).into_response(),
+        Some(None) => StatusCode::FORBIDDEN.into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn get_revision(
+    State(registry): State<Registry>,
+    Path((id, rev)): Path<(String, u64)>,
+    Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let token = &token_from(&headers, &params);
+    let found = registry.with(&id, |s| {
+        s.role_of(token)
+            .edits()
+            .then(|| s.revision(rev).map(str::to_owned))
+    });
+    match found {
+        Some(Some(Some(markdown))) => (
+            [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+            markdown,
+        )
+            .into_response(),
+        Some(Some(None)) | None => StatusCode::NOT_FOUND.into_response(),
+        Some(None) => StatusCode::FORBIDDEN.into_response(),
     }
 }
 

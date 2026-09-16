@@ -5,6 +5,7 @@ import { clamp, navIntent } from '/shared.js';
 import { renderOptions } from '/quiz.js';
 import { pruneBySlide, survivingSlides } from '/deckstate.js';
 import { applySteps, backward, forward, nextLabel, stepLabel, steps } from '/steps.js';
+import { mountCountdown } from '/countdown.js';
 
 /// Wires the slide surface and its controls.
 ///
@@ -26,6 +27,9 @@ export function mountConsole({ send, roleKnown }) {
     options: document.getElementById('options'),
     reveal: document.getElementById('reveal'),
     jump: document.getElementById('jump'),
+    timerRow: document.getElementById('timer-row'),
+    timer: document.getElementById('timer'),
+    timerAuto: document.getElementById('timer-auto'),
   };
 
   let slides = [];
@@ -38,6 +42,29 @@ export function mountConsole({ send, roleKnown }) {
   let independent = false;
   const tallies = new Map();
   const revealed = new Map();
+
+  const AUTO = 'palmcast:reveal-at-zero';
+  try {
+    els.timerAuto.checked = localStorage.getItem(AUTO) === '1';
+  } catch {
+    /* the box just starts unticked */
+  }
+  els.timerAuto.addEventListener('change', () => {
+    try {
+      localStorage.setItem(AUTO, els.timerAuto.checked ? '1' : '0');
+    } catch {
+      /* not remembered, still honoured for this page */
+    }
+  });
+
+  // The server refuses a reveal from anyone but a driver, so this can fire on
+  // every console and only the right one lands.
+  const countdown = mountCountdown(els.timer, {
+    onZero(at) {
+      if (!els.timerAuto.checked || revealed.has(at) || !slides[at]?.question) return;
+      send({ type: 'reveal', slide: at });
+    },
+  });
 
   function paint() {
     const now = slides[current];
@@ -152,6 +179,10 @@ export function mountConsole({ send, roleKnown }) {
 
   return {
     rev: () => rev,
+    timer(msg) {
+      countdown.set(msg);
+      els.timerRow.hidden = els.timer.hidden;
+    },
     deck(msg) {
       if (msg.rev !== rev) {
         const keep = survivingSlides(slides, msg.slides);

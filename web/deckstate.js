@@ -66,6 +66,8 @@ export const DECK_RULES = [
   '  its own slide only. The names are Marp\'s: fade, slide, cover, push, pull,',
   '  reveal, zoom, flip, cube, iris-in, wipe, none and twenty more.',
   '  A name the instance does not have is ignored rather than breaking.',
+  '- `<!-- timer: 30s -->` on a question slide counts the room down on every',
+  '  screen. Votes stop at zero. Seconds or minutes, as in `90s` or `2m`.',
   'Neither `---` nor `???` applies inside a fenced code block.',
 ].join('\n');
 

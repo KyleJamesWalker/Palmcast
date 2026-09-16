@@ -2865,3 +2865,167 @@ async fn a_look_the_operator_added_at_startup_reaches_the_room() {
         "the room was never told: {themes:?}"
     );
 }
+
+/// Reads past the opening state. The lock frame is the last thing every socket
+/// is sent on arrival, so anything after it is a broadcast.
+async fn settle(socket: &mut Socket) {
+    next_of(socket, "lock").await;
+}
+
+/// Reads frames until one of the named type arrives.
+async fn next_of(socket: &mut Socket, kind: &str) -> Value {
+    loop {
+        let msg = next_json(socket).await;
+        if msg["type"] == kind {
+            return msg;
+        }
+    }
+}
+
+const TIMED_DECK: &str = "# Welcome\n\n---\n\n<!-- timer: 30s -->\n# Q\n\n- [x] yes\n- [ ] no";
+
+#[tokio::test]
+async fn the_clock_reaches_every_phone_as_time_left() {
+    let host = spawn().await;
+    let (id, mc) = create(&host, TIMED_DECK).await;
+    let mut phone = open(&host, &id, None).await;
+    let opening = next_of(&mut phone, "timer").await;
+    assert!(
+        opening["slide"].is_null(),
+        "a clock ran before the slide: {opening}"
+    );
+
+    let mut console = open(&host, &id, Some(&mc)).await;
+    let _ = next_json(&mut console).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "goto", "index": 1 }),
+    )
+    .await;
+
+    let started = next_of(&mut phone, "timer").await;
+    assert_eq!(started["slide"], 1);
+    let left = started["remaining_ms"].as_u64().unwrap();
+    assert!(left > 29_000 && left <= 30_000, "{started}");
+}
+
+#[tokio::test]
+async fn a_locked_room_tells_a_newcomer_and_closes_the_door() {
+    let host = spawn().await;
+    let (id, mc) = create(&host, DECK).await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+    settle(&mut console).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "lock", "on": true }),
+    )
+    .await;
+    let lock = next_of(&mut console, "lock").await;
+    assert_eq!(lock["on"], true);
+
+    let mut late = open_as(&host, &id, None, "late").await;
+    let refused = next_of(&mut late, "refused").await;
+    assert_eq!(refused["reason"], "locked");
+    let closed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match late.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break true,
+                _ => {}
+            }
+        }
+    })
+    .await;
+    assert_eq!(closed, Ok(true), "the socket stayed open after refusing");
+}
+
+#[tokio::test]
+async fn a_removed_phone_is_shown_out_and_the_room_is_told_nothing() {
+    let host = spawn().await;
+    let (id, mc) = create(&host, DECK).await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+    settle(&mut console).await;
+
+    let mut sam = open_as(&host, &id, None, "sam").await;
+    settle(&mut sam).await;
+    ws_send(
+        &mut sam,
+        serde_json::json!({ "type": "set_name", "name": "Sam" }),
+    )
+    .await;
+    let board = next_of(&mut console, "scores").await;
+    let row = board["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "Sam")
+        .expect("Sam is not on the board");
+    assert_eq!(
+        row["who"], "sam",
+        "the host was not told who is behind the name"
+    );
+
+    let mut bystander = open_as(&host, &id, None, "ann").await;
+    let audience_board = next_of(&mut bystander, "scores").await;
+    assert!(
+        audience_board["items"][0].get("who").is_none(),
+        "the room was told who is behind a name: {audience_board}"
+    );
+
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "kick", "who": "sam" }),
+    )
+    .await;
+    let refused = next_of(&mut sam, "refused").await;
+    assert_eq!(refused["reason"], "removed");
+
+    // The room sees the board change and nothing else.
+    let after = next_of(&mut bystander, "scores").await;
+    assert!(after["items"].as_array().unwrap().is_empty(), "{after}");
+
+    let mut again = open_as(&host, &id, None, "sam").await;
+    assert_eq!(next_of(&mut again, "refused").await["reason"], "removed");
+}
+
+#[tokio::test]
+async fn earlier_saves_answer_to_an_editor_and_nobody_else() {
+    let host = spawn().await;
+    let (id, mc) = create(&host, "# First").await;
+    assert_eq!(put_deck(&host, &id, &mc, "# Second").await, 204);
+    assert_eq!(put_deck(&host, &id, &mc, "# Third").await, 204);
+
+    let client = reqwest::Client::new();
+    let list: Value = client
+        .get(format!("http://{host}/api/sessions/{id}/revisions"))
+        .bearer_auth(&mc)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let rows = list.as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["title"], "Second", "newest first: {list}");
+    assert_eq!(rows[1]["title"], "First");
+
+    let rev = rows[1]["rev"].as_u64().unwrap();
+    let text = client
+        .get(format!("http://{host}/api/sessions/{id}/revisions/{rev}"))
+        .bearer_auth(&mc)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(text, "# First");
+
+    let denied = client
+        .get(format!("http://{host}/api/sessions/{id}/revisions"))
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(denied, 403);
+}

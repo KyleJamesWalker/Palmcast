@@ -47,6 +47,15 @@ export function renderScores(root, items, opts = {}) {
     points.textContent = String(item.score);
 
     row.append(rank, name, points);
+    if (opts.onKick && item.who) {
+      const kick = document.createElement('button');
+      kick.type = 'button';
+      kick.className = 'ghost score-kick';
+      kick.textContent = 'Remove';
+      kick.setAttribute('aria-label', `Remove ${item.name} from the room`);
+      kick.addEventListener('click', () => opts.onKick(item));
+      row.append(kick);
+    }
     root.append(row);
   });
 

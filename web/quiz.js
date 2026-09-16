@@ -58,6 +58,13 @@ export function renderOptions(root, question, state) {
     root.append(item);
   });
 
+  if (state.interactive && state.timedOut) {
+    const hint = document.createElement('p');
+    hint.className = 'dim option-hint';
+    hint.textContent = "Time's up. Waiting for the answer.";
+    root.append(hint);
+  }
+
   // A question with several right answers is a selection, so it needs saying
   // and it needs sending when the voter is done rather than on first tap.
   if (question.multi && state.interactive && !state.locked) {

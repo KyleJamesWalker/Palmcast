@@ -4,6 +4,7 @@
 import { authFetch } from '/shared.js';
 import { renderLineup } from '/lineup.js';
 import { previewDeck, renderPreview } from '/preview.js';
+import { mountClock } from '/countdown.js';
 
 /// Wires the lineup panel.
 ///
@@ -23,6 +24,7 @@ export function mountLineupPanel({ id, token, send, role }) {
     readClose: document.getElementById('talk-read-close'),
     preview: document.getElementById('talk-preview'),
   };
+  const clock = mountClock(document.getElementById('clock'));
 
   let lineup = { items: [], dropped: [], staged: null, open: false };
   let baton = null;
@@ -131,6 +133,7 @@ export function mountLineupPanel({ id, token, send, role }) {
     paint,
     lineup(msg) {
       lineup = msg;
+      clock.start(msg.elapsed_ms ?? 0);
       paint();
     },
     baton(msg) {

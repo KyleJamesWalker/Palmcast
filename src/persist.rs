@@ -75,6 +75,15 @@ pub struct PersistedSession {
     pub opened_ms: u64,
     #[serde(default)]
     pub timeline: Vec<PersistedCue>,
+    /// Whether the room was taking new phones, who it had turned away for good,
+    /// and who it had seen. A lock that did not survive a restart would let
+    /// everyone in the moment the host most wanted it shut.
+    #[serde(default)]
+    pub locked: bool,
+    #[serde(default)]
+    pub banned: HashSet<String>,
+    #[serde(default)]
+    pub seen: HashSet<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,6 +147,8 @@ pub struct PersistedQuestion {
     pub answered: bool,
     #[serde(default)]
     pub voters: HashSet<String>,
+    #[serde(default)]
+    pub by: String,
 }
 
 /// Writes through a temporary file in the same directory and renames it, so a
@@ -220,6 +231,7 @@ mod tests {
                 text: "why".into(),
                 answered: false,
                 voters: HashSet::from(["sam".to_string()]),
+                by: "sam".into(),
             }],
             next_question_id: 2,
             names: HashMap::from([("sam".to_string(), "Sam".to_string())]),

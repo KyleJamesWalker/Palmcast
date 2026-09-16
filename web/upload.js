@@ -52,12 +52,7 @@ export function attachUpload({
 }) {
   button.addEventListener('click', () => input.click());
 
-  input.addEventListener('change', async () => {
-    const file = input.files?.[0];
-    // The same file picked twice in a row is still a change worth taking.
-    input.value = '';
-    if (!file) return;
-
+  const take = async (file) => {
     const label = button.textContent;
     button.disabled = true;
     button.textContent = 'Adding…';
@@ -69,7 +64,30 @@ export function attachUpload({
       button.disabled = false;
       button.textContent = label;
     }
+  };
+
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    // The same file picked twice in a row is still a change worth taking.
+    input.value = '';
+    if (file) take(file);
   });
+
+  // A hidden button means this instance keeps no pictures, so the paste stays
+  // a paste.
+  textarea.addEventListener('paste', (event) => {
+    if (button.hidden) return;
+    const file = pastedImage(event.clipboardData);
+    if (!file) return;
+    event.preventDefault();
+    take(file);
+  });
+}
+
+/// The first image on a clipboard, or null when it holds none.
+export function pastedImage(clipboard) {
+  const files = clipboard?.files ? [...clipboard.files] : [];
+  return files.find((file) => file.type?.startsWith('image/')) ?? null;
 }
 
 /// Writes at the cursor and leaves it between the brackets, which is where the

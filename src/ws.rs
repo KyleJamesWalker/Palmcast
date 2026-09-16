@@ -86,10 +86,15 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join, beat: Hear
             return;
         }
     }
-    // A full room closes the socket. A viewer who silently saw nothing would
-    // look like a broken app rather than a full one.
-    if registry.with_mut(&id, Session::join).flatten().is_none() {
-        return;
+    // A room that will not take this phone says why, then closes. A viewer who
+    // silently saw nothing would look like a broken app rather than a full one.
+    match registry.with_mut(&id, |s| s.join(&who)) {
+        Some(Ok(_)) => {}
+        Some(Err(reason)) => {
+            let _ = send(&mut sink, &ServerMsg::Refused { reason }, is_staff).await;
+            return;
+        }
+        None => return,
     }
     if let Some(msg) = early.take() {
         handle(&registry, &id, token.as_deref(), &who, msg);
@@ -123,6 +128,13 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join, beat: Hear
                         // was to or from this socket, what it may see changed,
                         // and it needs the state it was not being sent.
                         if frame.rerole {
+                            if registry.banned(&id, &who) {
+                                let refused = ServerMsg::Refused {
+                                    reason: crate::wire::Refusal::Removed,
+                                };
+                                let _ = send(&mut sink, &refused, is_staff).await;
+                                break;
+                            }
                             let now = staff_now(&registry, &id, token.as_deref());
                             if now != is_staff {
                                 is_staff = now;
@@ -216,6 +228,12 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
         }
         ClientMsg::Remove { talk } => {
             registry.with_mut(id, |s| s.remove_talk(s.role_of(token), talk));
+        }
+        ClientMsg::Lock { on } => {
+            registry.with_mut(id, |s| s.set_lock(s.role_of(token), on));
+        }
+        ClientMsg::Kick { who: target } => {
+            registry.with_mut(id, |s| s.kick(s.role_of(token), &target, who));
         }
         ClientMsg::SetName { name } => {
             registry.with_mut(id, |s| s.set_name(who, &name));

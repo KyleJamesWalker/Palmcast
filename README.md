@@ -149,6 +149,11 @@ drops them only where the options themselves changed, because a vote for an
 option that no longer exists means nothing. Changing which option is right keeps
 the votes and rescores the room.
 
+Every save keeps the deck it replaced, ten deep. **Earlier saves** in the editor
+lists them by time and first heading, and **Load** puts one back in the editor
+to save again. The history lives with the room in memory and is not written to
+the state file.
+
 ## Bring a list in one line at a time
 
 A list written with `*` arrives one item per press. A list written with `-`
@@ -202,7 +207,8 @@ palmcast --uploads
 
 Then the deck editor and the talk form grow a picture button. It opens the
 phone's own picker, and what comes back is a line of markdown at the cursor with
-the brackets waiting for alt text.
+the brackets waiting for alt text. Pasting a picture into either editor goes
+the same way.
 
 An upload is never kept as it arrived. The server decodes it, brings the longest
 edge down to 1600 pixels, and encodes it again: jpeg for a photograph, png for
