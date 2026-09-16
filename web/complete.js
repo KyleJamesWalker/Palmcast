@@ -97,7 +97,13 @@ export function completionsAt(doc, looks = { themes: [], transitions: [] }) {
     const query = word[1];
     // A directive name is letters and underscores, and stops at its own colon.
     const ahead = found.after.match(/^[a-z_]*/i)[0];
-    return slot('name', start, query, ahead, rank(DIRECTIVES, query));
+    // Taking a name writes its colon too, so the value list opens on the same
+    // keystroke. Unless the colon is already there, past the caret.
+    const colonAhead = found.after.slice(ahead.length).trimStart().startsWith(':');
+    return {
+      ...slot('name', start, query, ahead, rank(DIRECTIVES, query)),
+      suffix: colonAhead ? '' : ': ',
+    };
   }
 
   const name = inner.slice(0, colon).trim();
