@@ -23,25 +23,31 @@ body.awake { cursor: default; }
   position: fixed;
   right: 3vmin;
   bottom: 3vmin;
+  padding: .3em .9em;
+  border-radius: var(--pill);
+  background: var(--raised);
+  font-family: var(--display);
+  font-weight: 700;
   font-size: clamp(14px, 1.6vw, 24px);
   font-variant-numeric: tabular-nums;
 }
+.corner:empty { display: none; }
 
 .waiting { color: var(--ink-dim); }
 
 .pane { width: 100%; }
 
-.stage .score-list { margin-top: 4vmin; }
-.stage .score { font-size: clamp(18px, 2.4vw, 34px); padding: 1.2vmin 2vmin; }
+.stage .score-list { margin-top: 4vmin; gap: 0; }
+.stage .score { font-size: clamp(18px, 2.4vw, 34px); padding: 1.2vmin 0; gap: 2vmin; }
+.stage .score-rank { width: 1.6em; height: 1.6em; font-size: .7em; }
 
 /* The options carry the answer, so they scale with the stage rather than
    keeping the size a thumb needs. */
 .stage .option {
   font-size: clamp(22px, 3.1vw, 54px);
   min-height: 0;
-  padding: 1.4vmin 2.4vmin;
+  padding: 1.4vmin 3vmin;
   gap: 2vmin;
-  border-radius: 1.6vmin;
 }
 .stage .option-count { font-size: .75em; }
 .stage .options { gap: 1.4vmin; margin-top: 3vmin; }
@@ -58,15 +64,16 @@ body.awake { cursor: default; }
   position: fixed;
   top: 2vmin;
   right: 2vmin;
-  min-height: 44px;
-  min-width: 44px;
+  min-height: 48px;
+  min-width: 48px;
   padding: 0;
+  border-radius: 50%;
   font-size: 20px;
   line-height: 1;
   opacity: 0;
   transition: opacity .2s ease;
   pointer-events: none;
 }
-body.awake .fullscreen { opacity: .7; pointer-events: auto; }
+body.awake .fullscreen { opacity: .8; pointer-events: auto; }
 body.awake .fullscreen:hover { opacity: 1; }
 :fullscreen .fullscreen { display: none; }

@@ -1,15 +1,59 @@
-/* Dark ground, warm white text, one amber accent. Built to be read at
-   arm's length on a phone in a dim room without lighting up the table. */
+/* Deep plum ground, warm cream ink, coral for the one thing to press. Built
+   to be read at arm's length on a phone in a dim room without lighting up
+   the table. Two faces, both served by the binary: the room may be offline. */
+@font-face {
+  font-family: "Bricolage Grotesque";
+  font-style: normal;
+  font-weight: 500 800;
+  font-display: swap;
+  src: url(/fonts/bricolage-latin.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Bricolage Grotesque";
+  font-style: normal;
+  font-weight: 500 800;
+  font-display: swap;
+  src: url(/fonts/bricolage-latin-ext.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Nunito";
+  font-style: normal;
+  font-weight: 500 800;
+  font-display: swap;
+  src: url(/fonts/nunito-latin.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Nunito";
+  font-style: normal;
+  font-weight: 500 800;
+  font-display: swap;
+  src: url(/fonts/nunito-latin-ext.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 :root {
-  --ground: #0b0b0d;
-  --raised: #17171b;
-  --edge: #2a2a31;
-  --ink: #f4f1ea;
-  --ink-dim: #9a978f;
-  --accent: #f5a623;
-  --accent-ink: #1a1206;
+  --ground: #1c1226;
+  --raised: #2a1c38;
+  --edge: #3a2a4a;
+  --ink: #fbf3ea;
+  --ink-dim: #b8a6c4;
+  --accent: #ff7a59;
+  --accent-ink: #2a0f12;
+  --butter: #ffd27a;
+  --butter-ink: #3a2400;
+  --mint: #58c98e;
+  --mint-ink: #0f2a1c;
+  --danger: #ff5c6c;
+  --display: "Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif;
+  --body: "Nunito", "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --tap: 56px;
   --pad: 20px;
+  --card: 22px;
+  --pill: 999px;
 }
 
 * { box-sizing: border-box; }
@@ -20,26 +64,31 @@
 
 /* Keep a visible ring for keyboard users, in the palette rather than the
  browser's blue. */
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--butter); outline-offset: 2px; }
 
 html, body {
   margin: 0;
   padding: 0;
   background: var(--ground);
   color: var(--ink);
-  font: 400 17px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 500 16px/1.45 var(--body);
   -webkit-text-size-adjust: 100%;
   overscroll-behavior: none;
 }
 
+h1, h2, h3 { font-family: var(--display); font-weight: 800; letter-spacing: -.02em; }
+
+/* Three tiers of button. Plain is the one you reach for; `primary` is the
+   one thing on the screen to press; `ghost` is a chip for tools and toggles. */
 button {
   font: inherit;
+  font-weight: 700;
   color: var(--ink);
   background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 12px;
+  border: 0;
+  border-radius: var(--pill);
   min-height: var(--tap);
-  padding: 0 20px;
+  padding: 0 22px;
   cursor: pointer;
   touch-action: manipulation;
 }
@@ -47,26 +96,56 @@ button:active { background: var(--edge); }
 button.primary {
   background: var(--accent);
   color: var(--accent-ink);
-  border-color: var(--accent);
-  font-weight: 650;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 1.0625em;
 }
+button.primary:active { background: #ff9377; }
 button[disabled] { opacity: .35; cursor: default; }
+button.ghost, .ghost-small {
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 14px;
+  background: var(--raised);
+}
+button.ghost[aria-pressed="true"] { background: var(--ink); color: var(--ground); }
 
 /* The format's own characters, as buttons. A phone keyboard keeps brackets and
    dashes two taps deep, and this is a deck written on a phone. */
-.toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .toolbar button {
   flex: 0 0 auto;
-  min-height: 44px;
-  min-width: 46px;
+  min-height: 42px;
+  min-width: 44px;
   padding: 0 10px;
-  border-radius: 10px;
+  border-radius: 12px;
   color: var(--ink-dim);
-  font: 400 15px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--edge);
+  font: 500 15px/1 var(--mono);
 }
 .toolbar button:active { color: var(--ink); }
 
 a { color: var(--accent); }
+
+/* Section labels. One style everywhere, so a phone and the console agree. */
+.label {
+  margin: 0 0 8px;
+  font-family: var(--body);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.dim { color: var(--ink-dim); }
+
+/* A raised surface. Only what groups or is pressed gets one; a list inside
+   is flat rows with hairlines, never card on card. */
+.card {
+  padding: 16px 18px;
+  background: var(--raised);
+  border-radius: var(--card);
+}
 
 /* Rendered slide body. Sized so a phone at arm's length stays comfortable
    and a TV across the room still works. */
@@ -77,51 +156,65 @@ a { color: var(--accent); }
 }
 .slide :first-child { margin-top: 0; }
 .slide :last-child { margin-bottom: 0; }
-.slide h1 { font-size: 1.5em; line-height: 1.15; margin: 0 0 .5em; letter-spacing: -.02em; }
-.slide h2 { font-size: 1.25em; line-height: 1.2; margin: 0 0 .5em; }
+.slide h1 { font-size: 1.5em; line-height: 1.1; margin: 0 0 .5em; letter-spacing: -.025em; }
+.slide h2 { font-size: 1.25em; line-height: 1.15; margin: 0 0 .5em; }
 .slide h3 { font-size: 1.1em; margin: 0 0 .5em; }
 .slide p, .slide ul, .slide ol { margin: 0 0 .7em; }
 .slide li { margin-bottom: .35em; }
 .slide code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: .85em;
   background: var(--raised);
-  border: 1px solid var(--edge);
   border-radius: 6px;
   padding: .1em .35em;
 }
 .slide pre {
   background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 12px;
-  padding: 14px;
+  border-radius: 14px;
+  padding: 14px 16px;
   overflow-x: auto;
   font-size: .62em;
 }
-.slide pre code { background: none; border: 0; padding: 0; font-size: 1em; }
+.slide pre code { background: none; padding: 0; font-size: 1em; }
 .slide blockquote {
   margin: 0 0 .7em;
   padding-left: .7em;
   border-left: 3px solid var(--accent);
   color: var(--ink-dim);
 }
-.slide img { max-width: 100%; height: auto; border-radius: 10px; }
+.slide img { max-width: 100%; height: auto; border-radius: 14px; }
 .slide table { border-collapse: collapse; width: 100%; font-size: .7em; }
-.slide th, .slide td { border: 1px solid var(--edge); padding: .4em .5em; text-align: left; }
+.slide th, .slide td { border-bottom: 1px solid var(--edge); padding: .4em .5em; text-align: left; }
 .slide hr { border: 0; border-top: 1px solid var(--edge); margin: 1em 0; }
 
-.dim { color: var(--ink-dim); }
-
+/* The connection, as a small pill with a light. */
 .status {
   position: fixed;
-  top: 8px;
-  right: 10px;
-  font-size: 12px;
-  letter-spacing: .08em;
+  top: max(10px, env(safe-area-inset-top));
+  right: 12px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border-radius: var(--pill);
+  background: var(--raised);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .1em;
   text-transform: uppercase;
   color: var(--ink-dim);
 }
-.status[data-state="offline"] { color: #e0564f; }
+.status::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mint);
+}
+.status[data-state="offline"] { color: var(--danger); }
+.status[data-state="offline"]::before { background: var(--danger); }
+.status[data-state="connecting"]::before { background: var(--butter); }
 
 @media (prefers-reduced-motion: no-preference) {
   .slide { transition: opacity .12s ease; }
@@ -131,7 +224,7 @@ a { color: var(--accent); }
 .options {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   margin-top: 18px;
 }
 
@@ -142,13 +235,14 @@ a { color: var(--accent); }
   gap: 12px;
   width: 100%;
   min-height: var(--tap);
-  padding: 12px 16px;
+  padding: 12px 20px;
   text-align: left;
   font-size: clamp(17px, 4vw, 22px);
+  font-weight: 700;
   background: var(--raised);
   color: var(--ink);
-  border: 1px solid var(--edge);
-  border-radius: 12px;
+  border: 2px solid transparent;
+  border-radius: var(--pill);
   overflow: hidden;
 }
 
@@ -164,9 +258,10 @@ a { color: var(--accent); }
 .option-text { position: relative; flex: 1; }
 .option-count {
   position: relative;
+  font-family: var(--display);
   font-variant-numeric: tabular-nums;
   color: var(--ink-dim);
-  font-size: .8em;
+  font-size: .9em;
 }
 
 /* A locked option is still the result the room wants to read, so it keeps full
@@ -175,16 +270,11 @@ a { color: var(--accent); }
 .option[aria-disabled="true"] { opacity: 1; cursor: default; }
 
 .option.chosen { border-color: var(--accent); }
-.option.correct {
-  border-color: #4caf7d;
-  background: #14271f;
-}
-.option.correct::before { background: #1d4633; }
-.option.wrong {
-  border-color: #e0564f;
-  background: #2a1513;
-}
-.option.wrong::before { background: #4a201d; }
+.option.correct { background: #1f3b2c; }
+.option.correct::before { background: var(--mint); }
+.option.correct .option-count { color: var(--ink); }
+.option.wrong { background: #3d1c24; }
+.option.wrong::before { background: #5a2a36; }
 
 /* Reactions */
 .reaction-bar {
@@ -192,7 +282,6 @@ a { color: var(--accent); }
   gap: 8px;
   justify-content: space-between;
   padding: 8px var(--pad) max(8px, env(safe-area-inset-bottom));
-  border-top: 1px solid var(--edge);
 }
 .reaction {
   flex: 1;
@@ -200,7 +289,7 @@ a { color: var(--accent); }
   padding: 0;
   font-size: 26px;
   line-height: 1;
-  border-radius: 12px;
+  border-radius: var(--pill);
 }
 .reaction:active { transform: scale(.92); }
 
@@ -228,59 +317,56 @@ a { color: var(--accent); }
   }
 }
 
-/* Questions from the floor */
+/* Questions from the floor: flat rows, a hairline between them. */
 .question-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 .question {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 12px;
-  font-size: clamp(15px, 3.6vw, 18px);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--edge);
+  font-size: 15px;
 }
+.question:first-child { border-top: 0; }
 .question.answered { opacity: .5; }
 .question.answered .question-text { text-decoration: line-through; }
 
 .question-vote {
   flex: 0 0 auto;
-  min-height: 38px;
-  padding: 0 10px;
-  font-size: 14px;
+  min-height: 40px;
+  min-width: 40px;
+  padding: 0 12px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
-  border-radius: 9px;
 }
 .question-vote[disabled] { opacity: .5; }
-.question-text { flex: 1; overflow-wrap: anywhere; padding-top: 8px; }
+.question-text { flex: 1; overflow-wrap: anywhere; }
 .question-done {
   flex: 0 0 auto;
-  min-height: 38px;
-  padding: 0 12px;
-  font-size: 14px;
-  border-radius: 9px;
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 13px;
 }
 .question-empty { margin: 0; font-size: 14px; }
 
 .ask-form { display: flex; gap: 8px; margin-bottom: 10px; }
-.ask-form input {
+input[type="text"], .ask-form input, .name-form input, .poll-form input, input.url {
   flex: 1;
   min-height: 48px;
-  padding: 0 14px;
+  padding: 0 16px;
   font: inherit;
   color: var(--ink);
-  background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 12px;
+  background: var(--ground);
+  border: 2px solid transparent;
+  border-radius: var(--pill);
 }
-.ask-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+input[type="text"]:focus, textarea:focus { outline: none; border-color: var(--butter); }
 .ask-form button { flex: 0 0 auto; }
 
 /* Leaderboard */
@@ -290,46 +376,56 @@ a { color: var(--accent); }
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
 }
 .score {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 9px 12px;
-  background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 10px;
-  font-size: clamp(15px, 3.6vw, 18px);
+  padding: 9px 0;
+  border-top: 1px solid var(--edge);
+  font-size: 15px;
 }
+.score:first-child { border-top: 0; }
 .score-rank {
-  flex: 0 0 1.6em;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--edge);
   color: var(--ink-dim);
+  font-family: var(--display);
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
-  font-size: .85em;
+  font-size: 13px;
 }
-.score-name { flex: 1; overflow-wrap: anywhere; }
+.score-name { flex: 1; overflow-wrap: anywhere; font-weight: 700; }
 .score-points {
+  font-family: var(--display);
   font-variant-numeric: tabular-nums;
-  font-weight: 650;
+  font-weight: 800;
+  font-size: 1.1em;
 }
-.score.leading { border-color: var(--accent); }
-.score.leading .score-points { color: var(--accent); }
-.score.me { background: #1d1a12; }
+.score.leading .score-rank { background: var(--butter); color: var(--butter-ink); }
+.score.leading .score-points { color: var(--butter); }
+.score.me .score-name::after {
+  content: "you";
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: var(--pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
 .score-empty { margin: 0; font-size: 14px; }
 
 .name-form { display: flex; gap: 8px; margin-bottom: 10px; }
-.name-form input {
-  flex: 1;
-  min-height: 48px;
-  padding: 0 14px;
-  font: inherit;
-  color: var(--ink);
-  background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 12px;
-}
-.name-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 
 /* A room that has ended. Better than a blank slide that never fills. */
@@ -346,7 +442,7 @@ a { color: var(--accent); }
   background: var(--ground);
   z-index: 30;
 }
-.ended h2 { margin: 0; font-size: clamp(20px, 5vw, 30px); }
+.ended h2 { margin: 0; font-size: clamp(22px, 5vw, 32px); }
 .ended p { margin: 0; color: var(--ink-dim); }
 
 
@@ -371,16 +467,15 @@ a { color: var(--accent); }
   opacity: 1;
   background: transparent;
   color: var(--accent);
-  border-color: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 /* Suggestions for a deck directive. Docked under the editor by default, which
    is where a phone wants them; floated at the caret where there is a pointer. */
 .complete {
-  margin-top: 6px;
+  margin-top: 8px;
   background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 12px;
+  border-radius: 16px;
   overflow: hidden;
 }
 .complete.floating {
@@ -393,9 +488,10 @@ a { color: var(--accent); }
 }
 .complete-hint {
   margin: 0;
-  padding: 6px 12px;
-  font-size: 12px;
-  letter-spacing: .08em;
+  padding: 8px 14px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .1em;
   text-transform: uppercase;
   border-bottom: 1px solid var(--edge);
 }
@@ -411,11 +507,11 @@ a { color: var(--accent); }
   display: flex;
   gap: 10px;
   align-items: baseline;
-  padding: 8px 12px;
+  padding: 8px 14px;
   cursor: pointer;
 }
 .complete-row.on { background: var(--edge); }
-.complete-value { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.complete-value { font-family: var(--mono); font-weight: 500; }
 .complete-about {
   color: var(--ink-dim);
   font-size: 13px;
@@ -436,10 +532,10 @@ a { color: var(--accent); }
   .complete-row {
     display: block;
     flex: 0 0 auto;
-    min-height: var(--tap);
-    padding: 8px 14px;
-    border: 1px solid var(--edge);
-    border-radius: 10px;
+    min-height: 44px;
+    padding: 10px 16px;
+    background: var(--edge);
+    border-radius: var(--pill);
   }
   /* The description would not fit beside a chip, and the name is the thing
      being chosen. */
@@ -451,31 +547,37 @@ input.url {
   display: block;
   width: 100%;
   margin-top: 10px;
-  padding: 10px 12px;
-  font: inherit;
   font-size: 12px;
   color: var(--ink-dim);
   background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 10px;
 }
-input.url:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* Running order */
-.lineup { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.lineup { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .lineup-row {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 12px 14px;
-  background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--edge);
 }
-.lineup-row.staged { border-color: var(--accent); }
+.lineup-row:first-child { border-top: 0; }
+.lineup-row.staged .lineup-num { background: var(--accent); color: var(--accent-ink); }
 .lineup-row.dropped { opacity: .6; }
-.lineup-num { font-size: 12px; color: var(--ink-dim); min-width: 1.2em; }
+.lineup-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--edge);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--ink-dim);
+}
 .lineup-move { display: flex; flex-direction: column; gap: 2px; }
 .lineup-move button {
   min-height: 22px;
@@ -484,17 +586,22 @@ input.url:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   font-size: 12px;
   line-height: 1;
   border-radius: 7px;
+  background: var(--edge);
 }
 .lineup-body { display: flex; flex-direction: column; flex: 1; min-width: 40%; }
-.lineup-title { font-size: 15px; overflow-wrap: anywhere; }
+.lineup-title { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
 .lineup-meta { font-size: 12px; }
 .lineup-now {
+  padding: 3px 9px;
+  border-radius: var(--pill);
+  background: var(--accent);
+  color: var(--accent-ink);
   font-size: 11px;
-  letter-spacing: .08em;
+  font-weight: 800;
+  letter-spacing: .06em;
   text-transform: uppercase;
-  color: var(--accent);
 }
-.lineup-split { margin-top: 6px; }
+.lineup-split { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--edge); }
 .lineup-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .lineup-button { min-height: 38px; padding: 0 12px; font-size: 13px; }
 
@@ -503,22 +610,20 @@ input.url:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .mine-card {
   display: block;
   margin-top: 8px;
-  padding: 14px;
-  background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 12px;
+  padding: 16px;
+  background: var(--ground);
+  border-radius: 18px;
 }
-.mine-card.dropped { border-color: #e0564f; }
-.mine-title { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+.mine-card.dropped { box-shadow: inset 0 0 0 2px var(--danger); }
+.mine-title { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
 .mine-state { margin: 4px 0 0; font-size: 13px; }
 .mine-note {
   margin: 10px 0 0;
-  padding: 10px 12px;
+  padding: 10px 14px;
   font-size: 14px;
   overflow-wrap: anywhere;
-  background: var(--ground);
-  border-left: 3px solid var(--accent);
-  border-radius: 0 8px 8px 0;
+  background: var(--raised);
+  border-radius: 12px;
 }
 .mine-card .talk-actions { margin-top: 12px; }
 .mine-card .preview { max-height: 50vh; margin-top: 12px; }
@@ -527,27 +632,31 @@ input.url:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .preview {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   /* The deck, not the page, is what scrolls: the editor stays reachable. */
   max-height: 60vh;
   overflow-y: auto;
-  padding: 4px;
+  padding: 2px;
 }
 .preview-card {
   position: relative;
-  padding: 16px 16px 14px;
+  padding: 16px 18px;
   background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 14px;
+  border-radius: var(--card);
 }
 .preview-number {
-  display: block;
+  display: inline-block;
   margin-bottom: 10px;
+  padding: 2px 9px;
+  border-radius: var(--pill);
+  background: var(--edge);
   font-size: 11px;
+  font-weight: 800;
   letter-spacing: .08em;
   color: var(--ink-dim);
 }
 .preview-card .options { margin-top: 12px; }
+.preview-card .slide { font-size: clamp(17px, 3.8vw, 22px); }
 .preview-note {
   margin: 10px 0 0;
   font-size: 12px;
@@ -642,29 +751,29 @@ html[data-back]::view-transition-new(palmcast-surface) { z-index: var(--transiti
    they do. The demo carries `viewer` because that is exactly what it is: the
    same reading surface the room gets, at the size of a thumbnail, so a theme
    paints it and a transition moves it without either knowing about it. */
-.looks { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-.look-field { display: flex; align-items: center; gap: 6px; flex: 1 1 210px; min-width: 0; }
-.look-label { flex: 0 0 auto; font-size: 13px; color: var(--ink-dim); }
+.looks { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.look-field { display: flex; align-items: center; gap: 8px; flex: 1 1 210px; min-width: 0; }
+.look-label { flex: 0 0 auto; font-size: 13px; font-weight: 700; color: var(--ink-dim); }
 .pick {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 44px;
+  min-height: 42px;
   font: inherit;
   font-size: 14px;
+  font-weight: 700;
   color: var(--ink);
-  background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 10px;
-  padding: 0 10px;
+  background: var(--edge);
+  border: 0;
+  border-radius: var(--pill);
+  padding: 0 14px;
 }
-.pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pick:focus-visible { outline: 2px solid var(--butter); outline-offset: 1px; }
 
 .look-demo {
   height: 128px;
-  margin-bottom: 8px;
-  padding: 14px 16px;
-  border: 1px solid var(--edge);
-  border-radius: 12px;
+  margin-bottom: 10px;
+  padding: 14px 18px;
+  border-radius: 18px;
   display: flex;
   align-items: center;
   overflow: hidden;
@@ -677,10 +786,11 @@ html[data-back]::view-transition-new(palmcast-surface) { z-index: var(--transiti
 .look-scope {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: 0 0 auto;
-  min-height: 44px;
+  min-height: 42px;
   font-size: 13px;
+  font-weight: 700;
   color: var(--ink-dim);
   cursor: pointer;
 }
@@ -707,13 +817,13 @@ html[data-back]::view-transition-new(palmcast-surface) { z-index: var(--transiti
   background: var(--ground);
   text-align: center;
 }
-.qr-overlay h2 { margin: 0; font-size: clamp(20px, 3.4vw, 48px); }
+.qr-overlay h2 { margin: 0; font-size: clamp(22px, 3.4vw, 48px); }
 /* The code carries its own white, because a dark one does not scan. */
 .qr-overlay img {
   width: min(58vmin, 460px);
   height: auto;
   padding: 2.4vmin;
-  border-radius: 12px;
+  border-radius: 22px;
   background: #fff;
 }
 .qr-url {
@@ -725,55 +835,49 @@ html[data-back]::view-transition-new(palmcast-surface) { z-index: var(--transiti
 
 /* The same code, small, in the Room panel. Somebody who missed the code going
    up can hand their neighbour a phone instead of asking the presenter. */
-.qr-join { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
-.qr-join img { width: 112px; height: auto; padding: 8px; border-radius: 10px; background: #fff; }
+.qr-join { display: flex; align-items: center; gap: 14px; margin-bottom: 4px; }
+.qr-join img { width: 112px; height: auto; padding: 8px; border-radius: 14px; background: #fff; }
 .qr-join .url { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
 
 /* Clocks. Tabular digits so the last second does not jiggle the layout. */
 .timer {
   margin: 10px 0 0;
+  font-family: var(--display);
   font-size: clamp(18px, 4.5vw, 26px);
-  font-weight: 650;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
-  color: var(--accent);
+  color: var(--butter);
 }
-.timer.over { color: #e0564f; }
+.timer.over { color: var(--danger); }
 .score-kick {
   min-height: 30px;
   padding: 0 10px;
   font-size: 12px;
-  border-radius: 8px;
   margin-left: 8px;
 }
 
-.question.pending { border-color: var(--accent); }
-.question.pending .question-text { padding-top: 8px; }
-.lineup-row.pending { border-color: var(--accent); }
+.question.pending .question-text { font-weight: 700; }
+.lineup-row.pending .lineup-num { background: var(--butter); color: var(--butter-ink); }
 
 /* Code colors. Coarse scopes, so a theme sets seven variables and every
    grammar follows. The defaults suit the dark looks. */
 .slide pre code.hl { color: var(--code-variable, var(--ink)); }
-.hl-comment { color: var(--code-comment, #8a877f); font-style: italic; }
-.hl-string { color: var(--code-string, #98c379); }
-.hl-constant { color: var(--code-number, #d19a66); }
-.hl-keyword, .hl-storage { color: var(--code-keyword, #c678dd); }
-.hl-entity, .hl-support.hl-function { color: var(--code-function, #61afef); }
+.hl-comment { color: var(--code-comment, #9a8aa8); font-style: italic; }
+.hl-string { color: var(--code-string, #8fd9a8); }
+.hl-constant { color: var(--code-number, #ffd27a); }
+.hl-keyword, .hl-storage { color: var(--code-keyword, #ff9bd6); }
+.hl-entity, .hl-support.hl-function { color: var(--code-function, #8fc7ff); }
 .hl-support.hl-type, .hl-support.hl-class, .hl-entity.hl-name.hl-type {
-  color: var(--code-type, #e5c07b);
+  color: var(--code-type, #ffb36b);
 }
 .hl-variable { color: var(--code-variable, var(--ink)); }
 
 /* Polls. A cloud, a row of numbers, or a row of stars. */
 .poll-form { display: flex; gap: 8px; }
 .poll-form input {
-  flex: 1;
   min-height: var(--tap);
-  padding: 0 14px;
   font-size: clamp(16px, 4vw, 20px);
   background: var(--raised);
-  color: var(--ink);
-  border: 1px solid var(--edge);
-  border-radius: 12px;
 }
 .cloud {
   display: flex;
@@ -784,7 +888,7 @@ html[data-back]::view-transition-new(palmcast-surface) { z-index: var(--transiti
   margin: 14px 0 0;
   line-height: 1.1;
 }
-.cloud-word { color: var(--accent); font-weight: 650; overflow-wrap: anywhere; }
+.cloud-word { color: var(--accent); font-family: var(--display); font-weight: 800; overflow-wrap: anywhere; }
 .poll-answers {
   list-style: none;
   margin: 12px 0 0;
@@ -809,12 +913,14 @@ html[data-back]::view-transition-new(palmcast-surface) { z-index: var(--transiti
   min-width: var(--tap);
   min-height: var(--tap);
   padding: 0 10px;
+  font-family: var(--display);
   font-size: clamp(17px, 4.5vw, 24px);
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   background: var(--raised);
   color: var(--ink);
-  border: 1px solid var(--edge);
-  border-radius: 12px;
+  border: 2px solid transparent;
+  border-radius: 16px;
   overflow: hidden;
 }
 .stars .scale-item { font-size: clamp(24px, 7vw, 40px); min-width: auto; padding: 0 6px; border: 0; background: none; border-radius: 8px; }

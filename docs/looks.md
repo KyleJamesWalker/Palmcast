@@ -181,8 +181,9 @@ A deck picks its colours with one line:
 A three minute case, made at a bar
 ```
 
-Five themes ship with the binary. `ember` is the dark default, meant for a phone
-in a dim room; `daylight` is for a room with the lights on; `bold` is pure
+Five themes ship with the binary, and a deck naming none gets the plum and
+coral the rest of Palmcast wears. `ember` is near black with an amber accent,
+meant for a phone in a dim room; `daylight` is for a room with the lights on; `bold` is pure
 contrast and heavier type for reading from the back; `paper` is warm stock and
 serif headings; `neon` is cyan and magenta on near black.
 
