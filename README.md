@@ -286,6 +286,25 @@ chat client would carry.
 The token sits in the URL fragment. Browsers never send a fragment to the
 server, so a deck shared in a chat leaves no trace in an access log.
 
+## Bring a deck from Marp or reveal.js
+
+Paste a deck written for [Marp](https://marp.app) or
+[reveal.js](https://revealjs.com) into the start page and it is recognized by
+its front matter or its habits. **Convert from Marp or reveal.js** appears and
+rewrites it: front matter becomes directives, a Marp comment becomes speaker
+notes, `Note:` blocks become speaker notes, vertical slides join the run of the
+deck, a fragment becomes a `*` item, background images become pictures, and
+the theme maps to the nearest one here. Whatever cannot be carried is dropped
+and listed above the editor, so you know what to look at before the room does.
+
+## Take the deck away as HTML or PDF
+
+**Download as HTML** on the start page, and in the presenter console under
+**Edit**, hands you the deck as one file: every slide, the theme it named, and
+the pictures the room held. Open it in a browser and print it for a PDF, one
+slide per landscape page. The console's copy can carry the speaker notes and
+mark the right answers; tick **with notes** first.
+
 ## Start an instance on your own deck
 
 An instance that runs the same quiz every week should not make its host paste

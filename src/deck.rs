@@ -379,14 +379,14 @@ fn duration_ms(value: &str) -> Option<u32> {
 /// this format uses: YAML separates documents with `---`, and `???` turns up in
 /// regexes and stubs. Inside a fence they are content, not markup.
 #[derive(Default)]
-struct Fence {
+pub(crate) struct Fence {
     open: Option<(char, usize)>,
 }
 
 impl Fence {
     /// Feeds one line and returns whether that line sits inside a fence, the
     /// opening and closing lines included.
-    fn consume(&mut self, line: &str) -> bool {
+    pub(crate) fn consume(&mut self, line: &str) -> bool {
         let trimmed = line.trim_start();
         let indent = line.len() - trimmed.len();
         // Four spaces already means an indented code block, not a fence.

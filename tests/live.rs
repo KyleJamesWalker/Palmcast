@@ -3288,3 +3288,105 @@ async fn a_text_poll_reaches_the_presenter_as_it_forms_and_the_room_at_the_revea
         serde_json::json!(["Go", "Rust"])
     );
 }
+
+#[tokio::test]
+async fn a_marp_deck_is_converted_and_the_changes_are_listed() {
+    let host = spawn().await;
+    let deck = "---\nmarp: true\ntheme: gaia\npaginate: true\n---\n\n# Hi\n\n<!-- breathe -->\n";
+    let res = reqwest::Client::new()
+        .post(format!("http://{host}/api/import"))
+        .json(&serde_json::json!({ "markdown": deck }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let out: Value = res.json().await.unwrap();
+    assert_eq!(out["source"], "marp");
+    let markdown = out["markdown"].as_str().unwrap();
+    assert!(markdown.starts_with("<!-- theme: paper -->"), "{markdown}");
+    assert!(markdown.contains("???\nbreathe"), "{markdown}");
+    assert!(
+        out["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c.as_str().unwrap().contains("paginate"))
+    );
+}
+
+#[tokio::test]
+async fn a_deck_downloads_as_one_file_and_the_room_s_copy_needs_an_editor() {
+    let host = spawn_with_uploads().await;
+    let (id, mc) = create(&host, "# Hand\n\n???\nsecret\n\n---\n\n# Out").await;
+
+    let client = reqwest::Client::new();
+    let anyone = client
+        .post(format!("http://{host}/api/handout"))
+        .json(&serde_json::json!({ "markdown": "# Loose\n\n???\nhushword", "notes": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anyone.status(), 200);
+    assert!(
+        anyone.headers()[reqwest::header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .contains(".html")
+    );
+    let html = anyone.text().await.unwrap();
+    assert!(html.contains("<h1>Loose</h1>"), "{html}");
+    assert!(!html.contains("hushword"), "notes went out without being asked for");
+
+    let denied = client
+        .get(format!("http://{host}/api/sessions/{id}/handout?notes=1"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), 403);
+
+    let (status, body) = put_image(
+        &host,
+        &id,
+        &format!("token={mc}"),
+        "image/png",
+        picture(40, 30),
+    )
+    .await;
+    assert_eq!(status, 201, "{body}");
+    let url = serde_json::from_str::<Value>(&body).unwrap()["url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        put_deck(
+            &host,
+            &id,
+            &mc,
+            &format!("# Hand\n\n![](\n{url})\n\n???\nsecret")
+        )
+        .await,
+        204
+    );
+
+    let mine = client
+        .get(format!("http://{host}/api/sessions/{id}/handout?notes=1"))
+        .bearer_auth(&mc)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mine.status(), 200);
+    let html = mine.text().await.unwrap();
+    assert!(
+        html.contains("secret"),
+        "the notes were asked for and missing"
+    );
+    assert!(
+        html.contains("data:image/jpeg;base64,") || html.contains("data:image/png;base64,"),
+        "{}",
+        &html[html.len().saturating_sub(600)..]
+    );
+    assert!(
+        !html.contains(&format!("src=\"{url}\"")),
+        "the room's picture link survived"
+    );
+}

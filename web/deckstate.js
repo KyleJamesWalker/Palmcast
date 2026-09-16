@@ -26,6 +26,22 @@ function asksTheSame(was, now) {
   return false;
 }
 
+/// Which other tool a deck was written for, or null. Mirrors the server's
+/// `import::detect`: front matter with `marp: true`, or the habits of each.
+export function looksImported(markdown) {
+  const front = markdown.match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
+  const keys = front ? front[1] : '';
+  if (/^marp:\s*true/m.test(keys)) return 'Marp';
+  if (/^(separator|verticalSeparator|revealOptions):/m.test(keys)) return 'reveal.js';
+  if (/^(Notes?:|--$)/m.test(markdown) || /<!-- \.(slide|element):/.test(markdown)) {
+    return 'reveal.js';
+  }
+  if (/^<!-- (_class|paginate|_?backgroundColor)/m.test(markdown) || /^!\[bg/m.test(markdown)) {
+    return 'Marp';
+  }
+  return front ? 'Marp' : null;
+}
+
 /// The deck after a patch: the changed slides dropped into place.
 export function applyPatch(slides, changed) {
   const next = [...slides];

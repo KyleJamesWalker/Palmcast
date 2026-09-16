@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { survivingSlides, pruneBySlide, applyPatch, survivingPatch } = await import('./deckstate.js');
+const { survivingSlides, pruneBySlide, applyPatch, survivingPatch, looksImported } = await import('./deckstate.js');
 
 const q = (...options) => ({ html: '', notes: '', question: { options, correct: [] } });
 const prose = (html) => ({ html, notes: '' });
@@ -70,4 +70,21 @@ test('a patched question keeps its votes only if its options came through the sa
   ]);
   assert.ok(keep.has(0));
   assert.ok(!keep.has(1));
+});
+
+test('a Marp deck is recognised by its front matter or its habits', () => {
+  assert.equal(looksImported('---\nmarp: true\n---\n# Hi'), 'Marp');
+  assert.equal(looksImported('# Hi\n\n<!-- _class: lead -->'), 'Marp');
+  assert.equal(looksImported('# Hi\n\n![bg](x.png)'), 'Marp');
+});
+
+test('a reveal deck is recognised by its notes, verticals or attributes', () => {
+  assert.equal(looksImported('# Hi\n\nNote: hello'), 'reveal.js');
+  assert.equal(looksImported('# Hi\n\n--\n\n# Down'), 'reveal.js');
+  assert.equal(looksImported('- a <!-- .element: class="fragment" -->'), 'reveal.js');
+});
+
+test('a palmcast deck is not offered a conversion', () => {
+  assert.equal(looksImported('# Hi\n\n---\n\n# Two\n\n???\nnotes'), null);
+  assert.equal(looksImported('<!-- theme: neon -->\n# Hi'), null);
 });

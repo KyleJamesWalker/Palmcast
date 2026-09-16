@@ -1,8 +1,10 @@
 pub mod assets;
 pub mod deck;
 pub mod export;
+pub mod handout;
 pub mod highlight;
 pub mod images;
+pub mod import;
 pub mod origin;
 pub mod persist;
 pub mod routes;

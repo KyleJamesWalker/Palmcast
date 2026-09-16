@@ -14,7 +14,8 @@ import { smartEditor } from '/editing.js';
 import { lookPickers } from '/lookpicker.js';
 import { attachCompleter } from '/completer.js';
 import { previewDeck, renderPreview } from '/preview.js';
-import { starterPrompt } from '/deckstate.js';
+import { looksImported, starterPrompt } from '/deckstate.js';
+import { downloadHandout } from '/handout.js';
 import { SAMPLE } from '/sample.js';
 
 const editor = document.getElementById('markdown');
@@ -28,6 +29,8 @@ const previewToggle = document.getElementById('preview-toggle');
 const preview = document.getElementById('preview');
 const agentButton = document.getElementById('agent-prompt');
 const agentBox = document.getElementById('agent-prompt-text');
+const convert = document.getElementById('convert');
+const handout = document.getElementById('handout');
 
 async function paintPreview() {
   try {
@@ -75,6 +78,13 @@ editor.value = draft || SAMPLE;
 function refresh() {
   const n = slideCount(editor.value);
   count.textContent = `${n} slide${n === 1 ? '' : 's'}`;
+  // A deck written for another tool gets the offer, and only then.
+  const foreign = looksImported(editor.value);
+  convert.hidden = !foreign;
+  if (foreign && loaded.hidden) {
+    loaded.textContent = `This looks like a ${foreign} deck. Convert it to keep its notes and slides.`;
+    loaded.hidden = false;
+  }
   repaintPreviewSoon();
 }
 
@@ -164,6 +174,52 @@ async function fill() {
 }
 
 fill();
+
+convert.addEventListener('click', async () => {
+  convert.disabled = true;
+  error.hidden = true;
+  try {
+    const res = await fetch('/api/import', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ markdown: editor.value }),
+    });
+    if (!res.ok) throw new Error((await res.text()) || `server said ${res.status}`);
+    const out = await res.json();
+    editor.value = out.markdown;
+    refresh();
+    keep();
+    const changes = out.changes.length ? ` ${out.changes.join('. ')}.` : '';
+    loaded.textContent = `Converted from ${out.source === 'reveal' ? 'reveal.js' : 'Marp'}.${changes}`;
+    loaded.hidden = false;
+    convert.hidden = true;
+  } catch (e) {
+    error.textContent = `Could not convert: ${e.message}`;
+    error.hidden = false;
+  }
+  convert.disabled = false;
+});
+
+handout.addEventListener('click', async () => {
+  const label = handout.textContent;
+  handout.disabled = true;
+  error.hidden = true;
+  try {
+    await downloadHandout(
+      fetch('/api/handout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ markdown: editor.value, notes: false }),
+      }),
+      'palmcast-deck.html',
+    );
+  } catch (e) {
+    error.textContent = `Could not make the file: ${e.message}`;
+    error.hidden = false;
+  }
+  handout.disabled = false;
+  handout.textContent = label;
+});
 
 // The rules, not the deck. Someone arriving with a topic, a page of notes or
 // an existing deck has the source an agent needs and no idea what shape the
