@@ -91,6 +91,13 @@ regex full of question marks stays code. Nor does a `<!-- theme: -->` or
 `<!-- transition: -->` line, so a slide showing what one looks like stays an
 example.
 
+A fenced block that names its language is colored: ` ```rust `, ` ```py `,
+` ```yaml ` and a hundred more, by name or file extension. The server does the
+coloring once, at save, and sends class names. The theme picks the colors, so a
+deck in `daylight` reads code on a light ground. A block naming no language, or
+one the server does not know, renders plain. See
+[docs/design/syntax-highlighting.md](docs/design/syntax-highlighting.md).
+
 ```markdown
 # Why Rust
 
