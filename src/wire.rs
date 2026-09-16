@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::deck::{Look, Question, Slide};
+use crate::deck::{Look, Poll, Question, Slide};
 
 /// Why a socket was closed on arrival, or shortly after.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -216,6 +216,51 @@ pub enum ServerMsg {
         counts: Vec<usize>,
         total: usize,
     },
+    /// What a poll has collected so far. Presenter only, for the same reason a
+    /// tally is: a room watching the answers form answers differently.
+    PollTally {
+        slide: usize,
+        result: PollResult,
+    },
+    /// The presenter opening a poll's answers to everyone.
+    PollReveal {
+        slide: usize,
+        result: PollResult,
+    },
+}
+
+/// A poll's answers, summarized. `answers` and every word are text strangers
+/// typed, so every view puts them on screen as text and never as markup.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct PollResult {
+    pub total: usize,
+    /// One slot per value for a numeric poll, lowest first. Empty for text.
+    pub histogram: Vec<usize>,
+    /// The mean of a numeric poll, times one hundred so the wire carries an
+    /// integer. Zero with no answers.
+    pub mean_x100: u32,
+    /// The words the room reached for most, biggest first. Empty for a
+    /// numeric poll.
+    pub words: Vec<Word>,
+    /// The text answers themselves, sorted, capped. Empty for a numeric poll.
+    pub answers: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Word {
+    pub text: String,
+    pub count: usize,
+}
+
+impl Poll {
+    /// Whether a value is one this poll takes.
+    pub fn accepts(&self, value: u32) -> bool {
+        match self {
+            Poll::Text => false,
+            Poll::Scale { min, max } => (*min..=*max).contains(&value),
+            Poll::Rating { max } => (1..=*max).contains(&value),
+        }
+    }
 }
 
 /// A slide as the room may see it: no notes, no right answers. The look stays,
@@ -228,6 +273,7 @@ fn redact_slide(s: &Slide) -> Slide {
         transition: s.transition.clone(),
         theme: s.theme.clone(),
         timer: s.timer,
+        poll: s.poll.clone(),
         question: s.question.as_ref().map(|q| Question {
             options: q.options.clone(),
             multi: q.multi,
@@ -304,7 +350,10 @@ impl ServerMsg {
                     })
                     .collect(),
             }),
-            ServerMsg::Tally { .. } | ServerMsg::Viewers { .. } | ServerMsg::Removed { .. } => None,
+            ServerMsg::Tally { .. }
+            | ServerMsg::PollTally { .. }
+            | ServerMsg::Viewers { .. }
+            | ServerMsg::Removed { .. } => None,
             other => Some(other.clone()),
         }
     }
@@ -400,6 +449,15 @@ pub enum ClientMsg {
     Answer {
         slide: usize,
         options: Vec<usize>,
+    },
+    /// One answer to a poll, replacing whatever this phone said before. A
+    /// text poll takes `text`, a numeric one takes `value`.
+    Respond {
+        slide: usize,
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        value: Option<u32>,
     },
     Reveal {
         slide: usize,
@@ -497,6 +555,7 @@ mod tests {
                     knobs: BTreeMap::from([("heading".into(), "#ff8800".into())]),
                 }),
                 timer: Some(30_000),
+                poll: None,
                 question: Some(Question {
                     options: vec!["a".into(), "b".into()],
                     multi: false,
@@ -670,6 +729,28 @@ mod tests {
         assert!(!audience.contains("the secret note"), "{audience}");
         assert!(audience.contains("\"correct\":[]"), "{audience}");
         assert!(audience.contains("\"index\":0"));
+    }
+
+    #[test]
+    fn a_poll_tally_is_the_presenter_s_and_a_poll_reveal_is_everyone_s() {
+        let result = PollResult {
+            total: 2,
+            answers: vec!["rust".into()],
+            ..Default::default()
+        };
+        assert!(
+            ServerMsg::PollTally {
+                slide: 0,
+                result: result.clone()
+            }
+            .redacted()
+            .is_none()
+        );
+        assert!(
+            ServerMsg::PollReveal { slide: 0, result }
+                .redacted()
+                .is_some()
+        );
     }
 
     #[test]

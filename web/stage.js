@@ -1,5 +1,6 @@
 import { connect, sessionId } from '/shared.js';
 import { renderOptions } from '/quiz.js';
+import { renderPoll } from '/poll.js';
 import { applyPatch, pruneBySlide, survivingPatch, survivingSlides } from '/deckstate.js';
 import { burst } from '/reactions.js';
 import { renderScores } from '/scores.js';
@@ -21,6 +22,7 @@ let rev = 0;
 /// The deck's own look. A slide naming `_theme` overrides it for that slide.
 let deckTheme = null;
 const revealed = new Map();
+const pollResults = new Map();
 
 /// The element the themes paint, and so the one the knobs belong on.
 const surface = document.querySelector('.stage');
@@ -37,6 +39,14 @@ function paint() {
   position.textContent = slides.length ? `${current + 1} / ${slides.length}` : '';
 
   const answer = revealed.get(current);
+  if (now?.poll) {
+    renderPoll(options, now.poll, {
+      interactive: false,
+      result: pollResults.get(current) ?? null,
+    });
+    return;
+  }
+  options.classList.remove('poll');
   renderOptions(options, now?.question, {
     interactive: false,
     correct: answer?.correct,
@@ -60,6 +70,7 @@ const socket = connect(id, null, {
       // Keep what the server kept, and drop what it dropped.
       const keep = survivingSlides(slides, msg.slides);
       pruneBySlide(revealed, keep);
+      pruneBySlide(pollResults, keep);
       rev = msg.rev;
     }
     slides = msg.slides;
@@ -76,7 +87,9 @@ const socket = connect(id, null, {
       socket.send({ type: 'resync' });
       return;
     }
-    pruneBySlide(revealed, survivingPatch(slides, msg.changed));
+    const keep = survivingPatch(slides, msg.changed);
+    pruneBySlide(revealed, keep);
+    pruneBySlide(pollResults, keep);
     slides = applyPatch(slides, msg.changed);
     rev = msg.rev;
     current = msg.current;
@@ -93,6 +106,10 @@ const socket = connect(id, null, {
   },
   reveal(msg) {
     revealed.set(msg.slide, msg);
+    paint();
+  },
+  poll_reveal(msg) {
+    pollResults.set(msg.slide, msg.result);
     paint();
   },
   react(msg) {

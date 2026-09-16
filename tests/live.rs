@@ -3236,3 +3236,55 @@ async fn a_socket_that_cannot_apply_a_patch_asks_for_the_deck_and_gets_it() {
     let deck = next_of(&mut phone, "deck").await;
     assert_eq!(deck["slides"].as_array().unwrap().len(), 5);
 }
+
+#[tokio::test]
+async fn a_text_poll_reaches_the_presenter_as_it_forms_and_the_room_at_the_reveal() {
+    let host = spawn().await;
+    let (id, mc) = create(&host, "# Hi\n\n---\n\n<!-- poll: text -->\n# One word").await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+    settle(&mut console).await;
+    let mut phone = open_as(&host, &id, None, "sam").await;
+    settle(&mut phone).await;
+    let mut other = open_as(&host, &id, None, "ann").await;
+    settle(&mut other).await;
+
+    ws_send(
+        &mut phone,
+        serde_json::json!({ "type": "respond", "slide": 1, "text": "Rust" }),
+    )
+    .await;
+    let tally = next_of(&mut console, "poll_tally").await;
+    assert_eq!(tally["result"]["total"], 1);
+    assert_eq!(tally["result"]["words"][0]["text"], "rust");
+
+    // A number to a text poll, and an empty answer, both bounce.
+    ws_send(
+        &mut other,
+        serde_json::json!({ "type": "respond", "slide": 1, "value": 3 }),
+    )
+    .await;
+    ws_send(
+        &mut other,
+        serde_json::json!({ "type": "respond", "slide": 1, "text": "   " }),
+    )
+    .await;
+    ws_send(
+        &mut other,
+        serde_json::json!({ "type": "respond", "slide": 1, "text": "Go" }),
+    )
+    .await;
+    let tally = next_of(&mut console, "poll_tally").await;
+    assert_eq!(tally["result"]["total"], 2, "{tally}");
+
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "reveal", "slide": 1 }),
+    )
+    .await;
+    let shown = next_of(&mut other, "poll_reveal").await;
+    assert_eq!(shown["slide"], 1);
+    assert_eq!(
+        shown["result"]["answers"],
+        serde_json::json!(["Go", "Rust"])
+    );
+}

@@ -104,6 +104,8 @@ const socket = connect(id, token, {
   move: console_.move,
   tally: console_.tally,
   reveal: console_.reveal,
+  poll_tally: console_.poll_tally,
+  poll_reveal: console_.poll_reveal,
   timer: console_.timer,
   lock(msg) {
     share.lock(msg.on);

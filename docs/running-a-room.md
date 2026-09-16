@@ -56,6 +56,27 @@ revealed gets no clock.
 The console also carries a speaker clock in the top line: how long the deck
 that is up has been up. It restarts when a talk goes on stage or comes down.
 
+## Ask the room something else
+
+A slide can ask for an answer with no right one:
+
+```markdown
+<!-- poll: text -->
+# One word for how the talk went
+```
+
+`text` takes a word or two from every phone and shows them back as a word
+cloud when the presenter reveals it, biggest for the word most people reached
+for, with the answers listed under it. `scale 1-10` takes a number from a row of
+buttons and shows the spread and the average. `rating 5` takes stars and shows
+the average as stars. A scale runs over at most eleven values and a rating to
+at most ten stars, because each is a row on a phone.
+
+A poll scores nothing and moves nobody on the board. The presenter sees the
+answers form; the room sees them at the reveal. One answer per phone, and a
+later one replaces it. A slide that carries both a poll and a checklist asks
+the poll. An edit keeps the answers while the poll asks the same thing.
+
 ## Run an open mic
 
 A room can take talks from the floor. **Lineup** in the presenter console opens

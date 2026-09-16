@@ -762,3 +762,71 @@ html[data-back]::view-transition-new(palmcast-surface) { z-index: var(--transiti
   color: var(--code-type, #e5c07b);
 }
 .hl-variable { color: var(--code-variable, var(--ink)); }
+
+/* Polls. A cloud, a row of numbers, or a row of stars. */
+.poll-form { display: flex; gap: 8px; }
+.poll-form input {
+  flex: 1;
+  min-height: var(--tap);
+  padding: 0 14px;
+  font-size: clamp(16px, 4vw, 20px);
+  background: var(--raised);
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+}
+.cloud {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: .3em .7em;
+  margin: 14px 0 0;
+  line-height: 1.1;
+}
+.cloud-word { color: var(--accent); font-weight: 650; overflow-wrap: anywhere; }
+.poll-answers {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: .8em;
+}
+.poll-answers li { overflow-wrap: anywhere; }
+.scale, .stars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+.scale-item {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0 10px;
+  font-size: clamp(17px, 4.5vw, 24px);
+  font-variant-numeric: tabular-nums;
+  background: var(--raised);
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.stars .scale-item { font-size: clamp(24px, 7vw, 40px); min-width: auto; padding: 0 6px; border: 0; background: none; }
+.scale-item.chosen { border-color: var(--accent); color: var(--accent); }
+.scale-item.counted::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: var(--share, 0%);
+  background: var(--edge);
+  transition: height .25s ease;
+}
+.scale-item > * { position: relative; }
+.scale-item[aria-disabled="true"] { cursor: default; }
+.poll-mean { margin: 12px 0 0; text-align: center; font-size: clamp(16px, 4vw, 22px); color: var(--ink-dim); }

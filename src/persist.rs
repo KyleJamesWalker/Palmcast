@@ -64,6 +64,11 @@ pub struct PersistedSession {
     pub parked_votes: HashMap<usize, HashMap<String, Choice>>,
     #[serde(default)]
     pub parked_revealed: HashSet<usize>,
+    /// What each phone said to each poll, live deck and parked deck.
+    #[serde(default)]
+    pub responses: HashMap<usize, HashMap<String, Response>>,
+    #[serde(default)]
+    pub parked_responses: HashMap<usize, HashMap<String, Response>>,
     /// Points from talks that have already come down. Derived scores cannot
     /// survive the deck they were derived from, so they are banked.
     #[serde(default)]
@@ -119,6 +124,14 @@ pub struct PersistedTalk {
     pub note: String,
     #[serde(default)]
     pub pending: bool,
+}
+
+/// One phone's answer to one poll.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Response {
+    Number(u32),
+    Text(String),
 }
 
 /// What one voter chose on one slide.

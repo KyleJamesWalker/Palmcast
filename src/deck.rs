@@ -26,6 +26,42 @@ pub struct Slide {
     /// runs on the server; this is only what the deck asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timer: Option<u32>,
+    /// An unscored poll, from `poll`. A slide has a question or a poll, and a
+    /// poll wins if a deck writes both.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poll: Option<Poll>,
+}
+
+/// What a slide asks the room, when it is not a question with a right answer.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Poll {
+    /// A line of text from each phone, shown back as a word cloud.
+    Text,
+    /// A number between `min` and `max`, tapped from a row.
+    Scale { min: u32, max: u32 },
+    /// Stars, one to `max`.
+    Rating { max: u32 },
+}
+
+impl Poll {
+    /// How many values a numeric poll can take. Zero for text.
+    pub fn width(&self) -> usize {
+        match self {
+            Poll::Text => 0,
+            Poll::Scale { min, max } => (max - min + 1) as usize,
+            Poll::Rating { max } => *max as usize,
+        }
+    }
+
+    /// The lowest value a numeric poll takes.
+    pub fn floor(&self) -> u32 {
+        match self {
+            Poll::Text => 0,
+            Poll::Scale { min, .. } => *min,
+            Poll::Rating { .. } => 1,
+        }
+    }
 }
 
 /// A transition, as the deck named it. Whether the name is installed is the
@@ -82,11 +118,14 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
 
         let (body, notes) = split_notes(&raw);
         let (prompt, question) = split_question(&body);
+        // A slide asks one thing. The poll is the one the author wrote out.
+        let question = if asked.poll.is_some() { None } else { question };
         let (html, steps) = stage_items(&render(&prompt), &fragments(&prompt));
         let notes = notes.trim().to_string();
         // A slide holding nothing but a directive is not a slide, but it has
         // already had its say: `carried` is set above this line, not below it.
-        if html.trim().is_empty() && notes.is_empty() && question.is_none() {
+        if html.trim().is_empty() && notes.is_empty() && question.is_none() && asked.poll.is_none()
+        {
             continue;
         }
         slides.push(Slide {
@@ -97,6 +136,7 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
             transition,
             theme: asked.spot_theme,
             timer: asked.timer,
+            poll: asked.poll,
         });
     }
 
@@ -109,6 +149,7 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
             transition: None,
             theme: None,
             timer: None,
+            poll: None,
         }];
     }
     slides
@@ -150,6 +191,7 @@ struct Directives {
     spot: Option<Transition>,
     spot_theme: Option<Look>,
     timer: Option<u32>,
+    poll: Option<Poll>,
 }
 
 /// Lifts the directive lines out of a slide and reads them.
@@ -172,6 +214,7 @@ fn split_directives(raw: &str) -> (String, Directives) {
             Some(("_transition", value)) => asked.spot = transition(value),
             Some(("_theme", value)) => asked.spot_theme = look(value),
             Some(("timer", value)) => asked.timer = timer_ms(value),
+            Some(("poll", value)) => asked.poll = poll(value),
             // Read deck wide by `theme_of`, and dropped here so it never draws.
             Some(("theme", _)) => {}
             _ => body.push(line),
@@ -271,6 +314,33 @@ fn is_hex_colour(value: &str) -> bool {
 
 fn is_number(value: &str) -> bool {
     !value.is_empty() && value.parse::<f64>().is_ok_and(f64::is_finite)
+}
+
+/// `text`, `scale 1-10`, `scale 0-5`, or `rating 5`. A scale runs over at most
+/// eleven values and a rating to at most ten stars, because each is a row of
+/// buttons on a phone.
+fn poll(value: &str) -> Option<Poll> {
+    let mut words = value.split_whitespace();
+    let kind = words.next()?;
+    let arg = words.next();
+    if words.next().is_some() {
+        return None;
+    }
+    match (kind, arg) {
+        ("text", None) => Some(Poll::Text),
+        ("scale", Some(range)) => {
+            let (lo, hi) = range.split_once('-')?;
+            let (min, max) = (lo.parse::<u32>().ok()?, hi.parse::<u32>().ok()?);
+            (min < max && max - min < 11 && max <= 100).then_some(Poll::Scale { min, max })
+        }
+        ("scale", None) => Some(Poll::Scale { min: 1, max: 10 }),
+        ("rating", Some(n)) => {
+            let max = n.parse::<u32>().ok()?;
+            (2..=10).contains(&max).then_some(Poll::Rating { max })
+        }
+        ("rating", None) => Some(Poll::Rating { max: 5 }),
+        _ => None,
+    }
 }
 
 /// `30s`, `90s`, `2m` or `1m30s`, up to an hour. A room is not kept waiting on
@@ -1292,6 +1362,50 @@ mod tests {
             let deck = format!("<!-- timer: {bad} -->\n# One");
             assert_eq!(parse(&deck)[0].timer, None, "accepted {bad}");
         }
+    }
+
+    #[test]
+    fn a_poll_directive_reads_its_kind_and_range() {
+        let deck = "<!-- poll: text -->\n# Word?\n\n---\n\n<!-- poll: scale 1-10 -->\n# How much?\n\n---\n\n<!-- poll: rating 5 -->\n# Stars\n\n---\n\n<!-- poll: scale -->\n# Default\n\n---\n\n<!-- poll: rating -->\n# Default stars";
+        let slides = parse(deck);
+        assert_eq!(slides[0].poll, Some(Poll::Text));
+        assert_eq!(slides[1].poll, Some(Poll::Scale { min: 1, max: 10 }));
+        assert_eq!(slides[2].poll, Some(Poll::Rating { max: 5 }));
+        assert_eq!(slides[3].poll, Some(Poll::Scale { min: 1, max: 10 }));
+        assert_eq!(slides[4].poll, Some(Poll::Rating { max: 5 }));
+        assert!(!slides[0].html.contains("poll"), "{}", slides[0].html);
+    }
+
+    #[test]
+    fn a_poll_that_would_not_fit_a_phone_is_refused() {
+        for bad in [
+            "scale 1-20",
+            "scale 5-1",
+            "scale 1",
+            "rating 1",
+            "rating 11",
+            "cloud",
+            "text now",
+        ] {
+            let deck = format!("<!-- poll: {bad} -->\n# One");
+            assert_eq!(parse(&deck)[0].poll, None, "accepted {bad}");
+        }
+    }
+
+    #[test]
+    fn a_slide_with_a_poll_and_a_checklist_is_a_poll() {
+        let slides = parse("<!-- poll: text -->\n# Pick\n\n- [ ] a\n- [x] b");
+        assert!(slides[0].poll.is_some());
+        assert!(
+            slides[0].question.is_none(),
+            "a slide asked two things at once"
+        );
+    }
+
+    #[test]
+    fn a_poll_with_no_body_is_still_a_slide() {
+        assert_eq!(parse("<!-- poll: text -->").len(), 1);
+        assert!(parse("<!-- poll: text -->")[0].poll.is_some());
     }
 
     #[test]

@@ -34,6 +34,17 @@ pub struct ExportView {
     pub polls: Vec<PollView>,
     /// Whether `answers.csv` names who chose what. The host opts in.
     pub with_people: bool,
+    /// Every poll that took answers, on the same decks as `polls`.
+    pub responses: Vec<ResponseView>,
+}
+
+pub struct ResponseView {
+    pub talk: Option<u64>,
+    pub slide: usize,
+    pub prompt: String,
+    pub kind: String,
+    /// The name of whoever answered, when they set one, and the answer.
+    pub answers: Vec<(Option<String>, String)>,
 }
 
 pub struct PollView {
@@ -159,6 +170,32 @@ pub fn answers_csv(polls: &[PollView]) -> String {
                 csv(name),
                 csv(&listed),
                 if picked == want { "yes" } else { "no" },
+            ));
+        }
+    }
+    out
+}
+
+/// `responses.csv`: one row per answer to a poll. Names only when the host
+/// asked for them; every other row leaves the column empty.
+pub fn responses_csv(polls: &[ResponseView], with_people: bool) -> String {
+    let mut out = String::from("talk,slide,prompt,kind,name,answer\n");
+    for poll in polls {
+        let talk = poll.talk.map_or("host".to_string(), |id| id.to_string());
+        for (name, answer) in &poll.answers {
+            let name = if with_people {
+                name.as_deref().unwrap_or("")
+            } else {
+                ""
+            };
+            out.push_str(&format!(
+                "{},{},{},{},{},{}\n",
+                csv(&talk),
+                poll.slide + 1,
+                csv(&poll.prompt),
+                csv(&poll.kind),
+                csv(name),
+                csv(answer),
             ));
         }
     }
@@ -390,6 +427,10 @@ pub fn bundle(session: &ExportView) -> std::io::Result<Vec<u8>> {
             writer.write_all(answers_csv(&session.polls).as_bytes())?;
         }
     }
+    if !session.responses.is_empty() {
+        writer.start_file("responses.csv", options)?;
+        writer.write_all(responses_csv(&session.responses, session.with_people).as_bytes())?;
+    }
 
     Ok(writer.finish()?.into_inner())
 }
@@ -442,6 +483,29 @@ mod tests {
             lines[2],
             "\"host\",2,\"Year, \"\"roughly\"\"\",\"Sam\",\"1\",no"
         );
+    }
+
+    #[test]
+    fn a_response_row_names_nobody_unless_asked() {
+        let polls = [ResponseView {
+            talk: None,
+            slide: 0,
+            prompt: "One word".into(),
+            kind: "text".into(),
+            answers: vec![
+                (Some("Ada".into()), "rust".into()),
+                (None, "go, fast".into()),
+            ],
+        }];
+        let anonymous = responses_csv(&polls, false);
+        assert!(
+            anonymous.contains("\"host\",1,\"One word\",\"text\",,\"rust\""),
+            "{anonymous}"
+        );
+        assert!(!anonymous.contains("Ada"));
+        let named = responses_csv(&polls, true);
+        assert!(named.contains("\"Ada\",\"rust\""), "{named}");
+        assert!(named.contains(",,\"go, fast\""), "{named}");
     }
 
     #[test]

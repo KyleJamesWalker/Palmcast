@@ -2,6 +2,7 @@ import { authFetch, connect, copyText, sessionId, showRefusal, viewerId } from '
 import { renderLineup, rememberTalk, talksHeld, forgetTalk } from '/lineup.js';
 import { starterPrompt } from '/deckstate.js';
 import { renderOptions } from '/quiz.js';
+import { renderPoll } from '/poll.js';
 import { applyPatch, pruneBySlide, survivingPatch, survivingSlides } from '/deckstate.js';
 import { burst, reactionBar } from '/reactions.js';
 import { previewDeck, renderPreview } from '/preview.js';
@@ -46,6 +47,9 @@ let deckTheme = null;
 const chosen = new Map();
 const sent = new Set();
 const revealed = new Map();
+// What this phone said to each poll, and what the room said once revealed.
+const responded = new Map();
+const pollResults = new Map();
 
 /// The element the themes paint, and so the one the knobs belong on.
 const surface = document.getElementById('stage');
@@ -66,6 +70,31 @@ function paint() {
 
   const answer = revealed.get(current);
   const timedOut = !answer && countdown.expired(current);
+  if (now?.poll) {
+    const result = pollResults.get(current) ?? null;
+    renderPoll(options, now.poll, {
+      interactive: true,
+      locked: Boolean(result) || timedOut,
+      timedOut,
+      sent: sent.has(current),
+      mine: responded.get(current),
+      result,
+      onText(text) {
+        responded.set(current, { text });
+        socket.send({ type: 'respond', slide: current, text });
+        sent.add(current);
+        paint();
+      },
+      onValue(value) {
+        responded.set(current, { value });
+        socket.send({ type: 'respond', slide: current, value });
+        sent.add(current);
+        paint();
+      },
+    });
+    return;
+  }
+  options.classList.remove('poll');
   renderOptions(options, now?.question, {
     interactive: true,
     locked: Boolean(answer) || timedOut,
@@ -124,6 +153,8 @@ const socket = connect(id, null, {
       pruneBySlide(chosen, keep);
       for (const slide of [...sent]) if (!keep.has(slide)) sent.delete(slide);
       pruneBySlide(revealed, keep);
+      pruneBySlide(responded, keep);
+      pruneBySlide(pollResults, keep);
       rev = msg.rev;
     }
     slides = msg.slides;
@@ -144,6 +175,8 @@ const socket = connect(id, null, {
     pruneBySlide(chosen, keep);
     for (const slide of [...sent]) if (!keep.has(slide)) sent.delete(slide);
     pruneBySlide(revealed, keep);
+    pruneBySlide(responded, keep);
+    pruneBySlide(pollResults, keep);
     slides = applyPatch(slides, msg.changed);
     rev = msg.rev;
     current = msg.current;
@@ -160,6 +193,10 @@ const socket = connect(id, null, {
   },
   reveal(msg) {
     revealed.set(msg.slide, msg);
+    paint();
+  },
+  poll_reveal(msg) {
+    pollResults.set(msg.slide, msg.result);
     paint();
   },
   react(msg) {
