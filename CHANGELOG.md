@@ -35,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A new look across every page: deep plum ground, coral for the one thing to
+  press, Bricolage Grotesque headings and Nunito text, both served by the
+  binary so a venue without internet gets them too. Buttons come in three
+  tiers, lists are flat rows instead of stacked cards, and section labels
+  match on every page. The presenter console leads with the live slide, keeps
+  the tools in one row of chips and the controls under the thumb, and puts the
+  room in a second column on a laptop. The audience Room panel is a sheet.
 - The presenter token travels in an `Authorization` header and in the socket's
   first frame, never in a URL. `?token=` still works for one release.
 - The default session cap is 500, down from 2000.
