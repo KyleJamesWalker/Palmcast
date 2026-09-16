@@ -3335,7 +3335,10 @@ async fn a_deck_downloads_as_one_file_and_the_room_s_copy_needs_an_editor() {
     );
     let html = anyone.text().await.unwrap();
     assert!(html.contains("<h1>Loose</h1>"), "{html}");
-    assert!(!html.contains("hushword"), "notes went out without being asked for");
+    assert!(
+        !html.contains("hushword"),
+        "notes went out without being asked for"
+    );
 
     let denied = client
         .get(format!("http://{host}/api/sessions/{id}/handout?notes=1"))
