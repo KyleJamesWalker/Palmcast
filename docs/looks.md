@@ -162,6 +162,11 @@ A colour (`#f80`, `#ff8800`, `#ff8800cc`), a time (`400ms`, `1.5s`), a number,
 a share (`40%`), or a bare word in the same narrow alphabet a look's own name
 uses: lowercase letters, digits and dashes, up to 32 of them. Nothing else.
 
+A theme's knobs and a transition's are set on the same root, so the two share one
+namespace: a theme and a transition that both offer `distance` get one value
+between them, whichever was written last. Name a knob after what it turns in your
+own look and the question does not come up.
+
 That list is short on purpose. A knob becomes a custom property in the room's
 stylesheet, and one holding `url(...)` would make every phone in the room fetch
 an address the deck chose. A deck still cannot carry CSS of its own; it can only
