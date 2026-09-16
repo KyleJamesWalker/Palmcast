@@ -13,33 +13,39 @@
 
 <h1 class="visually-hidden">Palmcast presenter console</h1>
 <main class="console">
-  <div class="topline">
-    <span id="role-badge" class="role-badge" hidden>co-host</span>
-    <button id="position" class="position" aria-label="Jump to a slide">—</button>
-    <span id="viewers" class="dim viewers">0 watching</span>
-    <span id="clock" class="dim clock" aria-label="Time on this deck" hidden>0:00</span>
-    <button id="follow" class="ghost follow" hidden>Room is on 1 · follow</button>
-    <button id="edit-toggle" class="ghost">Edit</button>
-    <button id="qr-toggle" class="ghost" aria-pressed="false" hidden>Show QR</button>
-    <button id="lock-toggle" class="ghost" aria-pressed="false" hidden>Lock room</button>
-    <button id="share-toggle" class="ghost">Share</button>
-    <button id="lineup-toggle" class="ghost">Lineup</button>
-  </div>
+  <header class="head">
+    <div class="topline">
+      <button id="position" class="position" aria-label="Jump to a slide">—</button>
+      <div class="readout">
+        <span id="role-badge" class="role-badge" hidden>co-host</span>
+        <span id="viewers" class="viewers">0 watching</span>
+        <span id="clock" class="clock" aria-label="Time on this deck" hidden>0:00</span>
+      </div>
+      <button id="follow" class="ghost follow" hidden>Room is on 1 · follow</button>
+    </div>
+    <div class="tools" role="group" aria-label="Room tools">
+      <button id="edit-toggle" class="ghost">Edit</button>
+      <button id="qr-toggle" class="ghost" aria-pressed="false" hidden>Show QR</button>
+      <button id="lock-toggle" class="ghost" aria-pressed="false" hidden>Lock room</button>
+      <button id="share-toggle" class="ghost">Share</button>
+      <button id="lineup-toggle" class="ghost">Lineup</button>
+    </div>
+  </header>
 
-  <section id="share" class="share" hidden>
+  <section id="share" class="share card" hidden>
     <img id="qr" alt="QR code linking to this session" width="180" height="180">
     <div class="share-links">
       <button id="copy" class="ghost">Copy audience link</button>
-      <a id="stage-link" href="#" target="_blank" rel="noopener">Open stage view</a>
+      <a id="stage-link" class="ghost-link" href="#" target="_blank" rel="noopener">Open stage view</a>
       <button id="handoff" class="ghost">Copy my presenter link</button>
       <button id="cohost" class="ghost">Copy co-host link</button>
       <p id="share-url" class="dim url"></p>
     </div>
   </section>
 
-  <nav id="jump" class="jump" hidden aria-label="Slides"></nav>
+  <nav id="jump" class="jump card" hidden aria-label="Slides"></nav>
 
-  <section id="editor" class="editor" hidden>
+  <section id="editor" class="editor card" hidden>
     <label class="label" for="deck-text">Deck</label>
     <div id="deck-toolbar" class="toolbar" role="group" aria-label="Insert Markdown">
       <button type="button" data-edit="slide" aria-label="New slide"
@@ -84,77 +90,85 @@
     </div>
     <div class="editor-actions">
       <button id="deck-save" class="primary">Save</button>
+      <button id="deck-cancel" class="ghost">Cancel</button>
+      <span id="deck-status" class="dim"></span>
+    </div>
+    <div class="editor-more">
       <button id="deck-prompt" class="ghost">Copy prompt for an agent</button>
       <button id="deck-link" class="ghost">Copy deck link</button>
       <button id="deck-handout" class="ghost">Download as HTML</button>
       <label class="look-scope"><input type="checkbox" id="deck-handout-notes"> with notes</label>
-      <button id="deck-cancel" class="ghost">Cancel</button>
-      <span id="deck-status" class="dim"></span>
     </div>
     <input id="deck-link-url" class="url" readonly hidden
       aria-label="Shareable link to this deck">
   </section>
 
-  <section class="now">
-    <h2 class="label">On screen</h2>
-    <div id="slide" class="slide"></div>
-    <div id="options" class="options" aria-live="polite" hidden></div>
-    <div id="timer-row" class="timer-row" hidden>
-      <span id="timer" class="timer" role="timer" aria-live="off"></span>
-      <label class="timer-auto"><input type="checkbox" id="timer-auto"> Reveal at zero</label>
-    </div>
-    <button id="reveal" class="reveal" hidden>Reveal the answer</button>
-  </section>
-
-  <section class="notes">
-    <h2 class="label">Notes</h2>
-    <div id="notes" class="notes-body dim"></div>
-  </section>
-
-  <section id="lineup-panel" class="lineup-panel" hidden>
-    <div class="lineup-head">
-      <h2 class="label">Running order</h2>
-      <span class="lineup-head-actions">
-        <button id="export" class="ghost-link" type="button">Save the evening</button>
-        <label id="export-people-field" class="look-scope" hidden>
-          <input type="checkbox" id="export-people">
-          <span>with who answered what</span>
-        </label>
-        <button id="submissions" class="ghost">Open submissions</button>
-        <button id="approval" class="ghost" aria-pressed="false">Read talks first</button>
-      </span>
-    </div>
-    <ul id="lineup" class="lineup"></ul>
-    <div id="talk-read" class="talk-read" hidden>
-      <div class="lineup-head">
-        <h2 id="talk-read-title" class="label">Reading</h2>
-        <button id="talk-read-close" class="ghost">Close</button>
+  <div class="drive">
+    <section class="now card">
+      <h2 class="label">On screen</h2>
+      <div id="slide" class="slide"></div>
+      <div id="options" class="options" aria-live="polite" hidden></div>
+      <div id="timer-row" class="timer-row" hidden>
+        <span id="timer" class="timer" role="timer" aria-live="off"></span>
+        <label class="timer-auto"><input type="checkbox" id="timer-auto"> Reveal at zero</label>
       </div>
-      <section id="talk-preview" class="preview" aria-label="Talk preview"></section>
-    </div>
-  </section>
+      <button id="reveal" class="reveal primary" hidden>Reveal the answer</button>
+    </section>
 
-  <section class="qa-console">
-    <div class="lineup-head">
-      <h2 class="label">Questions</h2>
-      <button id="moderate-toggle" class="ghost" aria-pressed="false" hidden>Review first</button>
-    </div>
-    <ul id="questions" class="question-list"></ul>
-  </section>
+    <section class="notes">
+      <h2 class="tag tag-butter">Notes</h2>
+      <div id="notes" class="notes-body"></div>
+    </section>
 
-  <section class="board">
-    <h2 class="label">Leaderboard</h2>
-    <ul id="scores" class="score-list"></ul>
-  </section>
+    <section class="next">
+      <h2 class="tag">Up next</h2>
+      <div id="next" class="slide next-body dim"></div>
+    </section>
+  </div>
 
-  <section class="next">
-    <h2 class="label">Next</h2>
-    <div id="next" class="slide next-body dim"></div>
-  </section>
+  <div class="room card">
+    <section id="lineup-panel" class="lineup-panel" hidden>
+      <div class="lineup-head">
+        <h2 class="label">Running order</h2>
+        <span class="lineup-head-actions">
+          <button id="export" class="ghost" type="button">Save the evening</button>
+          <label id="export-people-field" class="look-scope" hidden>
+            <input type="checkbox" id="export-people">
+            <span>with who answered what</span>
+          </label>
+          <button id="submissions" class="ghost">Open submissions</button>
+          <button id="approval" class="ghost" aria-pressed="false">Read talks first</button>
+        </span>
+      </div>
+      <ul id="lineup" class="lineup"></ul>
+      <div id="talk-read" class="talk-read" hidden>
+        <div class="lineup-head">
+          <h2 id="talk-read-title" class="label">Reading</h2>
+          <button id="talk-read-close" class="ghost">Close</button>
+        </div>
+        <section id="talk-preview" class="preview" aria-label="Talk preview"></section>
+      </div>
+    </section>
+
+    <section class="qa-console">
+      <div class="lineup-head">
+        <h2 class="label">Questions</h2>
+        <button id="moderate-toggle" class="ghost" aria-pressed="false" hidden>Review first</button>
+      </div>
+      <ul id="questions" class="question-list"></ul>
+    </section>
+
+    <section class="board">
+      <h2 class="label">Leaderboard</h2>
+      <ul id="scores" class="score-list"></ul>
+    </section>
+  </div>
 </main>
 
 <nav class="controls">
-  <button id="prev" aria-label="Previous slide">←</button>
+  <button id="prev" aria-label="Previous slide">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
+  </button>
   <button id="next-btn" class="primary" aria-label="Next slide">Next →</button>
 </nav>
 
