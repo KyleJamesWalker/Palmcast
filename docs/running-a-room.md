@@ -103,6 +103,17 @@ off accepts everything waiting at once. The setting survives a restart.
 left it, what the room asked during each talk, the board, and a `slides.vtt`
 cue file timed against a recording. A dropped talk stays out of it.
 
+`votes.csv` has one row per option per question that took votes: the talk, the
+slide, the slide's text, the option, how many chose it, whether it was right and
+whether the answer was revealed. It covers the decks whose votes the room still
+holds, which is the host deck and the talk on stage. A talk that has come down
+kept only its points.
+
+Tick **with who answered what** before saving and the zip also holds
+`answers.csv`: one row per named player per question, what they chose and
+whether they were right. People who never set a name are counted in `votes.csv`
+and appear nowhere else.
+
 ## Reactions and questions
 
 The audience gets five reactions in a bar under the slide. A tap floats the

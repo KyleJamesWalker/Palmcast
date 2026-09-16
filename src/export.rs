@@ -29,6 +29,28 @@ pub struct ExportView {
     pub images: Vec<Stored>,
     pub board: Vec<ScoreRow>,
     pub timeline: Vec<Cue>,
+    /// Every question that took votes, on the decks whose votes the room still
+    /// holds: the host deck and the talk on stage.
+    pub polls: Vec<PollView>,
+    /// Whether `answers.csv` names who chose what. The host opts in.
+    pub with_people: bool,
+}
+
+pub struct PollView {
+    /// `None` for the host deck.
+    pub talk: Option<u64>,
+    pub talk_title: String,
+    pub slide: usize,
+    /// The slide's own text, tags stripped, so a row can be read without the
+    /// deck beside it.
+    pub prompt: String,
+    pub options: Vec<String>,
+    pub correct: Vec<usize>,
+    pub counts: Vec<usize>,
+    pub revealed: bool,
+    /// Named voters and what they chose. Anonymous voters are counted above
+    /// and not listed here.
+    pub answers: Vec<(String, Vec<usize>)>,
 }
 
 pub struct TalkView {
@@ -76,6 +98,97 @@ struct Record {
     talks: Vec<TalkRecord>,
     board: Vec<crate::wire::ScoreRow>,
     timeline: Vec<CueRecord>,
+}
+
+/// One field of a csv row. Quoted whenever it has to be, and always for text
+/// somebody typed, so a name holding a comma stays one field.
+fn csv(field: &str) -> String {
+    if field.is_empty() {
+        return String::new();
+    }
+    format!("\"{}\"", field.replace('"', "\"\""))
+}
+
+/// `votes.csv`: one row per option per question, with the count.
+pub fn votes_csv(polls: &[PollView]) -> String {
+    let mut out = String::from("talk,slide,prompt,option,text,votes,correct,revealed\n");
+    for poll in polls {
+        let talk = poll.talk.map_or("host".to_string(), |id| id.to_string());
+        for (index, text) in poll.options.iter().enumerate() {
+            out.push_str(&format!(
+                "{},{},{},{},{},{},{},{}\n",
+                csv(&talk),
+                poll.slide + 1,
+                csv(&poll.prompt),
+                index + 1,
+                csv(text),
+                poll.counts.get(index).copied().unwrap_or(0),
+                if poll.correct.contains(&index) {
+                    "yes"
+                } else {
+                    "no"
+                },
+                if poll.revealed { "yes" } else { "no" },
+            ));
+        }
+    }
+    out
+}
+
+/// `answers.csv`: one row per named voter per question. Options are numbered
+/// as in `votes.csv`, several joined with `;`.
+pub fn answers_csv(polls: &[PollView]) -> String {
+    let mut out = String::from("talk,slide,prompt,name,chose,right\n");
+    for poll in polls {
+        let talk = poll.talk.map_or("host".to_string(), |id| id.to_string());
+        let mut want = poll.correct.clone();
+        want.sort_unstable();
+        for (name, chosen) in &poll.answers {
+            let mut picked = chosen.clone();
+            picked.sort_unstable();
+            let listed = picked
+                .iter()
+                .map(|o| (o + 1).to_string())
+                .collect::<Vec<_>>()
+                .join(";");
+            out.push_str(&format!(
+                "{},{},{},{},{},{}\n",
+                csv(&talk),
+                poll.slide + 1,
+                csv(&poll.prompt),
+                csv(name),
+                csv(&listed),
+                if picked == want { "yes" } else { "no" },
+            ));
+        }
+    }
+    out
+}
+
+/// The text of a rendered slide, for a csv column: tags gone, whitespace
+/// folded, the few entities the renderer writes put back.
+pub fn plain(html: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                out.push(' ');
+            }
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    let text = out
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'");
+    let folded = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    folded.chars().take(120).collect()
 }
 
 /// A file name from a title: lowercase, no spaces, nothing a filesystem or a
@@ -246,5 +359,73 @@ pub fn bundle(session: &ExportView) -> std::io::Result<Vec<u8>> {
     writer.start_file("slides.vtt", options)?;
     writer.write_all(vtt(session).as_bytes())?;
 
+    if !session.polls.is_empty() {
+        writer.start_file("votes.csv", options)?;
+        writer.write_all(votes_csv(&session.polls).as_bytes())?;
+        if session.with_people {
+            writer.start_file("answers.csv", options)?;
+            writer.write_all(answers_csv(&session.polls).as_bytes())?;
+        }
+    }
+
     Ok(writer.finish()?.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn poll() -> PollView {
+        PollView {
+            talk: None,
+            talk_title: "Host".into(),
+            slide: 1,
+            prompt: "Year, \"roughly\"".into(),
+            options: vec!["2012".into(), "20,15".into()],
+            correct: vec![1],
+            counts: vec![1, 2],
+            revealed: true,
+            answers: vec![("Ada, Countess".into(), vec![1]), ("Sam".into(), vec![0])],
+        }
+    }
+
+    #[test]
+    fn a_vote_row_per_option_with_text_quoted() {
+        let csv = votes_csv(&[poll()]);
+        let mut lines = csv.lines();
+        assert_eq!(
+            lines.next().unwrap(),
+            "talk,slide,prompt,option,text,votes,correct,revealed"
+        );
+        assert_eq!(
+            lines.next().unwrap(),
+            "\"host\",2,\"Year, \"\"roughly\"\"\",1,\"2012\",1,no,yes"
+        );
+        assert_eq!(
+            lines.next().unwrap(),
+            "\"host\",2,\"Year, \"\"roughly\"\"\",2,\"20,15\",2,yes,yes"
+        );
+    }
+
+    #[test]
+    fn an_answer_row_per_named_voter_says_whether_they_were_right() {
+        let csv = answers_csv(&[poll()]);
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(
+            lines[1],
+            "\"host\",2,\"Year, \"\"roughly\"\"\",\"Ada, Countess\",\"2\",yes"
+        );
+        assert_eq!(
+            lines[2],
+            "\"host\",2,\"Year, \"\"roughly\"\"\",\"Sam\",\"1\",no"
+        );
+    }
+
+    #[test]
+    fn a_slide_reads_as_its_text() {
+        assert_eq!(
+            plain("<h1>Year <em>Rust</em> 1.0 &amp; more</h1>\n<p>shipped?</p>"),
+            "Year Rust 1.0 & more shipped?"
+        );
+    }
 }

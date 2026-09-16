@@ -3109,3 +3109,88 @@ async fn a_talk_the_host_reads_first_stays_off_the_room_s_screens_until_accepted
     let shown = next_of(&mut phone, "lineup").await;
     assert_eq!(shown["items"][0]["title"], "Borrowing");
 }
+
+#[tokio::test]
+async fn the_export_counts_the_votes_and_names_who_cast_them_only_when_asked() {
+    let host = spawn().await;
+    let (id, mc) = create(
+        &host,
+        "# Warm up\n\n---\n\n# Year of Rust 1.0?\n\n- [ ] 2012\n- [x] 2015",
+    )
+    .await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+    settle(&mut console).await;
+    let mut ada = open_as(&host, &id, None, "ada").await;
+    settle(&mut ada).await;
+    ws_send(
+        &mut ada,
+        serde_json::json!({ "type": "set_name", "name": "Ada, Countess" }),
+    )
+    .await;
+    ws_send(
+        &mut ada,
+        serde_json::json!({ "type": "answer", "slide": 1, "options": [1] }),
+    )
+    .await;
+    let mut anon = open_as(&host, &id, None, "anon").await;
+    settle(&mut anon).await;
+    ws_send(
+        &mut anon,
+        serde_json::json!({ "type": "answer", "slide": 1, "options": [0] }),
+    )
+    .await;
+    let _ = next_of(&mut console, "tally").await;
+    let _ = next_of(&mut console, "tally").await;
+
+    let fetch = |query: &str| {
+        let host = host.clone();
+        let id = id.clone();
+        let mc = mc.clone();
+        let query = query.to_string();
+        async move {
+            let bytes = reqwest::Client::new()
+                .get(format!("http://{host}/api/sessions/{id}/export{query}"))
+                .bearer_auth(&mc)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+            let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.to_vec())).unwrap();
+            let names: Vec<String> = (0..zip.len())
+                .map(|n| zip.by_index(n).unwrap().name().to_string())
+                .collect();
+            let read = |zip: &mut zip::ZipArchive<std::io::Cursor<Vec<u8>>>, name: &str| {
+                use std::io::Read;
+                let mut out = String::new();
+                zip.by_name(name).unwrap().read_to_string(&mut out).unwrap();
+                out
+            };
+            let votes = read(&mut zip, "votes.csv");
+            let answers = names
+                .contains(&"answers.csv".to_string())
+                .then(|| read(&mut zip, "answers.csv"));
+            (votes, answers)
+        }
+    };
+
+    let (votes, answers) = fetch("").await;
+    assert!(
+        votes.contains("\"host\",2,\"Year of Rust 1.0?\",1,\"2012\",1,no,no"),
+        "{votes}"
+    );
+    assert!(
+        votes.contains("\"host\",2,\"Year of Rust 1.0?\",2,\"2015\",1,yes,no"),
+        "{votes}"
+    );
+    assert!(answers.is_none(), "names went out without being asked for");
+
+    let (_, answers) = fetch("?people=1").await;
+    let answers = answers.expect("answers.csv is missing");
+    assert!(answers.contains("\"Ada, Countess\",\"2\",yes"), "{answers}");
+    assert!(
+        !answers.contains("anon"),
+        "an unnamed voter was listed: {answers}"
+    );
+}

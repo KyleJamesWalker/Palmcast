@@ -1018,8 +1018,66 @@ impl Session {
     /// The leaderboard as rows, for anything that is not a wire message.
     /// Everything the export needs, copied out so the zip can run without the
     /// registry lock. Cloning is memcpy; zipping walks every deck and picture.
-    pub fn export_view(&self) -> crate::export::ExportView {
+    /// Every question that took votes on a deck whose votes the room still
+    /// holds, for the export. Talks that have come down kept only their points.
+    fn polls(&self) -> Vec<crate::export::PollView> {
+        let mut out = Vec::new();
+        let mut collect = |talk: Option<u64>,
+                           slides: &[Slide],
+                           votes: &HashMap<usize, HashMap<String, Vec<usize>>>,
+                           revealed: &HashSet<usize>| {
+            let title = talk
+                .and_then(|id| self.lineup.iter().find(|t| t.id == id))
+                .map(|t| t.title.clone())
+                .unwrap_or_else(|| "Host".to_string());
+            let mut indexes: Vec<usize> = votes.keys().copied().collect();
+            indexes.sort_unstable();
+            for slide in indexes {
+                let Some(question) = slides.get(slide).and_then(|s| s.question.as_ref()) else {
+                    continue;
+                };
+                let cast = &votes[&slide];
+                let mut counts = vec![0usize; question.options.len()];
+                for chosen in cast.values() {
+                    for option in chosen {
+                        if let Some(slot) = counts.get_mut(*option) {
+                            *slot += 1;
+                        }
+                    }
+                }
+                let mut answers: Vec<(String, Vec<usize>)> = cast
+                    .iter()
+                    .filter_map(|(who, chosen)| {
+                        self.names
+                            .get(who)
+                            .map(|name| (name.clone(), chosen.clone()))
+                    })
+                    .collect();
+                answers.sort();
+                out.push(crate::export::PollView {
+                    talk,
+                    talk_title: title.clone(),
+                    slide,
+                    prompt: crate::export::plain(&slides[slide].html),
+                    options: question.options.clone(),
+                    correct: question.correct.clone(),
+                    counts,
+                    revealed: revealed.contains(&slide),
+                    answers,
+                });
+            }
+        };
+        if let Some(parked) = &self.parked {
+            collect(None, &parked.slides, &parked.votes, &parked.revealed);
+        }
+        collect(self.staged, &self.slides, &self.votes, &self.revealed);
+        out
+    }
+
+    pub fn export_view(&self, with_people: bool) -> crate::export::ExportView {
         crate::export::ExportView {
+            polls: self.polls(),
+            with_people,
             opened: self.opened,
             host_markdown: match (&self.parked, self.staged) {
                 (Some(parked), Some(_)) => parked.markdown.clone(),

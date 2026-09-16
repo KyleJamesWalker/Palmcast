@@ -20,6 +20,8 @@ export function mountLineupPanel({ id, token, send, role }) {
     submissions: document.getElementById('submissions'),
     approval: document.getElementById('approval'),
     export: document.getElementById('export'),
+    people: document.getElementById('export-people'),
+    peopleField: document.getElementById('export-people-field'),
     read: document.getElementById('talk-read'),
     readTitle: document.getElementById('talk-read-title'),
     readClose: document.getElementById('talk-read-close'),
@@ -39,6 +41,7 @@ export function mountLineupPanel({ id, token, send, role }) {
     els.approval.textContent = lineup.approval ? 'Reading talks first' : 'Read talks first';
     els.approval.classList.toggle('primary', Boolean(lineup.approval));
     els.export.hidden = !mc;
+    els.peopleField.hidden = !mc;
     renderLineup(els.list, lineup, {
       role: role(),
       baton,
@@ -121,7 +124,8 @@ export function mountLineupPanel({ id, token, send, role }) {
     els.export.disabled = true;
     els.export.textContent = 'Packing…';
     try {
-      const res = await authFetch(`/api/sessions/${id}/export`, token);
+      const query = els.people.checked ? '?people=1' : '';
+      const res = await authFetch(`/api/sessions/${id}/export${query}`, token);
       if (!res.ok) throw new Error(`server said ${res.status}`);
       const blob = await res.blob();
       const href = URL.createObjectURL(blob);
