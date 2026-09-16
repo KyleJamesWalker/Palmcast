@@ -817,7 +817,8 @@ html[data-back]::view-transition-new(palmcast-surface) { z-index: var(--transiti
   border-radius: 12px;
   overflow: hidden;
 }
-.stars .scale-item { font-size: clamp(24px, 7vw, 40px); min-width: auto; padding: 0 6px; border: 0; background: none; }
+.stars .scale-item { font-size: clamp(24px, 7vw, 40px); min-width: auto; padding: 0 6px; border: 0; background: none; border-radius: 8px; }
+.stars .scale-item.counted::before { opacity: .6; }
 .scale-item.chosen { border-color: var(--accent); color: var(--accent); }
 .scale-item.counted::before {
   content: "";
