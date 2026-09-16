@@ -10,74 +10,77 @@
 </head>
 <body>
 <main class="wrap">
-  <header>
-    <h1>Palmcast</h1>
-    <p class="dim">Write a deck. Everyone in the room follows on their own screen.</p>
-  </header>
+  <div class="write">
+    <header class="hero">
+      <h1 class="wordmark">palmcast</h1>
+      <p class="tagline">Write a deck. Everyone in the room follows on their own phone.</p>
+    </header>
 
-  <div class="field">
-    <label class="label" for="markdown">Your deck</label>
-    <div id="toolbar" class="toolbar" role="group" aria-label="Insert Markdown">
-      <button type="button" data-edit="slide" aria-label="New slide"
-        title="New slide (Ctrl/&#8984; + Enter)">---</button>
-      <button type="button" data-edit="question" aria-label="Answer option"
-        title="Answer option">[&#8201;]</button>
-      <button type="button" data-edit="item" aria-label="List item"
-        title="List item">&bull;</button>
-      <button type="button" data-edit="notes" aria-label="Speaker notes"
-        title="Speaker notes">???</button>
-      <button type="button" data-edit="bold" aria-label="Bold"
-        title="Bold (Ctrl/&#8984; + B)"><b>B</b></button>
-      <button type="button" data-edit="italic" aria-label="Italic"
-        title="Italic (Ctrl/&#8984; + I)"><i>I</i></button>
+    <div class="field card">
+      <label class="label" for="markdown">Your deck</label>
+      <div id="toolbar" class="toolbar" role="group" aria-label="Insert Markdown">
+        <button type="button" data-edit="slide" aria-label="New slide"
+          title="New slide (Ctrl/&#8984; + Enter)">---</button>
+        <button type="button" data-edit="question" aria-label="Answer option"
+          title="Answer option">[&#8201;]</button>
+        <button type="button" data-edit="item" aria-label="List item"
+          title="List item">&bull;</button>
+        <button type="button" data-edit="notes" aria-label="Speaker notes"
+          title="Speaker notes">???</button>
+        <button type="button" data-edit="bold" aria-label="Bold"
+          title="Bold (Ctrl/&#8984; + B)"><b>B</b></button>
+        <button type="button" data-edit="italic" aria-label="Italic"
+          title="Italic (Ctrl/&#8984; + I)"><i>I</i></button>
+      </div>
+      <div class="looks" role="group" aria-label="Look of the deck">
+        <label id="theme-field" class="look-field" hidden>
+          <span class="look-label">Theme</span>
+          <select id="theme-pick" class="pick"></select>
+        </label>
+        <label id="transition-field" class="look-field" hidden>
+          <span class="look-label">Transition</span>
+          <select id="transition-pick" class="pick"></select>
+        </label>
+        <label id="scope-field" class="look-scope" hidden>
+          <input type="checkbox" id="transition-scope">
+          <span>This slide only</span>
+        </label>
+      </div>
+      <div id="look-demo" class="look-demo viewer" hidden
+        role="button" tabindex="0" aria-label="Play the transition again">
+        <div class="slide" aria-hidden="true"></div>
+      </div>
+      <textarea id="markdown" spellcheck="false" autocapitalize="sentences"
+        aria-describedby="syntax"></textarea>
+      <p id="syntax" class="dim syntax">
+        <code>---</code> on its own line starts a new slide.
+        <code>???</code> starts speaker notes only you can see.
+        <code>&lt;!--</code> offers the looks this instance has.
+      </p>
     </div>
-    <div class="looks" role="group" aria-label="Look of the deck">
-      <label id="theme-field" class="look-field" hidden>
-        <span class="look-label">Theme</span>
-        <select id="theme-pick" class="pick"></select>
-      </label>
-      <label id="transition-field" class="look-field" hidden>
-        <span class="look-label">Transition</span>
-        <select id="transition-pick" class="pick"></select>
-      </label>
-      <label id="scope-field" class="look-scope" hidden>
-        <input type="checkbox" id="transition-scope">
-        <span>This slide only</span>
-      </label>
+
+    <div class="actions">
+      <button id="start" class="primary start">Start presenting</button>
+      <span id="count" class="count"></span>
     </div>
-    <div id="look-demo" class="look-demo viewer" hidden
-      role="button" tabindex="0" aria-label="Play the transition again">
-      <div class="slide" aria-hidden="true"></div>
+    <div class="more" role="group" aria-label="More you can do with this deck">
+      <button id="preview-toggle" class="ghost" aria-expanded="false"
+        aria-controls="preview">Preview deck</button>
+      <button id="convert" class="ghost" hidden>Convert from Marp or reveal.js</button>
+      <button id="deck-link" class="ghost">Copy deck link</button>
+      <button id="agent-prompt" class="ghost">Copy prompt for an agent</button>
+      <button id="handout" class="ghost">Download as HTML</button>
     </div>
-    <textarea id="markdown" spellcheck="false" autocapitalize="sentences"
-      aria-describedby="syntax"></textarea>
+    <p id="loaded" class="dim note" role="status" hidden></p>
+    <input id="deck-link-url" class="url" readonly hidden
+      aria-label="Shareable link to this deck">
+
+    <textarea id="agent-prompt-text" class="fallback" readonly hidden
+      aria-label="Prompt to paste into an agent"></textarea>
+    <p id="error" class="error" hidden></p>
   </div>
-
-  <p id="syntax" class="dim syntax">
-    <code>---</code> on its own line starts a new slide.
-    <code>???</code> starts speaker notes only you can see.
-    <code>&lt;!--</code> offers the looks this instance has.
-  </p>
-
-  <div class="actions">
-    <button id="start" class="primary">Start presenting</button>
-    <button id="preview-toggle" class="ghost" aria-expanded="false"
-      aria-controls="preview">Preview deck</button>
-    <button id="deck-link" class="ghost">Copy deck link</button>
-    <button id="agent-prompt" class="ghost">Copy prompt for an agent</button>
-    <button id="convert" class="ghost" hidden>Convert from Marp or reveal.js</button>
-    <button id="handout" class="ghost">Download as HTML</button>
-    <span id="count" class="dim"></span>
-  </div>
-  <p id="loaded" class="dim" role="status" hidden></p>
-  <input id="deck-link-url" class="url" readonly hidden
-    aria-label="Shareable link to this deck">
-
-  <textarea id="agent-prompt-text" class="fallback" readonly hidden
-    aria-label="Prompt to paste into an agent"></textarea>
 
   <section id="preview" class="preview" hidden aria-label="Deck preview"></section>
-  <p id="error" class="error" hidden></p>
 </main>
 <script type="module" src="/new.js"></script>
 </body>
