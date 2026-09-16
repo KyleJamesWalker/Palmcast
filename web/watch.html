@@ -17,45 +17,58 @@
     <p id="timer" class="timer" role="timer" hidden></p>
   </div>
 </main>
-<section id="qa" class="qa" hidden>
-  <h2 class="label">Join this room</h2>
-  <div class="qr-join">
-    <img id="qr-join-img" alt="QR code linking to this room" width="132" height="132">
-    <p id="qr-join-url" class="dim url"></p>
-  </div>
-  <h2 class="label label-spaced">Leaderboard</h2>
-  <form id="name-form" class="name-form">
-    <input id="name-text" type="text" maxlength="24" placeholder="Your name, to join the game"
-      autocomplete="off" aria-label="Your name">
-    <button type="submit">Join</button>
-  </form>
-  <ul id="scores" class="score-list"></ul>
-  <h2 class="label label-spaced">Running order</h2>
-  <ul id="lineup" class="lineup"></ul>
-  <section id="mine" class="mine" hidden aria-label="Your talks"></section>
-  <button id="submit-talk" class="ghost" hidden>Put a talk up</button>
-  <form id="talk-form" class="talk-form" hidden>
-    <input id="talk-title" type="text" maxlength="60" placeholder="Title (or leave it to the first heading)"
-      autocomplete="off" aria-label="Talk title">
-    <textarea id="talk-deck" spellcheck="false" aria-label="Your deck"
-      placeholder="# My talk&#10;&#10;---&#10;&#10;## A point"></textarea>
-    <div class="talk-actions">
-      <button id="talk-submit" type="submit" class="primary">Put it up</button>
-      <button id="talk-image" type="button" class="ghost" hidden>Add a picture</button>
-      <button id="talk-rules" type="button" class="ghost">Copy prompt for an agent</button>
-      <button id="talk-cancel" type="button" class="ghost">Cancel</button>
-    </div>
-    <input id="talk-image-file" type="file" accept="image/*" hidden>
-    <p id="talk-error" class="error" hidden></p>
-  </form>
+<section id="qa" class="qa" hidden aria-label="The room">
+  <div class="qa-grip" aria-hidden="true"></div>
+  <div class="qa-body">
+    <section class="qa-section">
+      <h2 class="label">Join this room</h2>
+      <div class="qr-join">
+        <img id="qr-join-img" alt="QR code linking to this room" width="132" height="132">
+        <p id="qr-join-url" class="dim url"></p>
+      </div>
+    </section>
 
-  <h2 class="label label-spaced">Questions</h2>
-  <form id="ask-form" class="ask-form">
-    <input id="ask-text" type="text" maxlength="280" placeholder="Ask a question"
-      autocomplete="off" aria-label="Ask a question">
-    <button type="submit" class="primary">Ask</button>
-  </form>
-  <ul id="questions" class="question-list"></ul>
+    <section class="qa-section">
+      <h2 class="label">Leaderboard</h2>
+      <form id="name-form" class="name-form">
+        <input id="name-text" type="text" maxlength="24" placeholder="Your name, to join the game"
+          autocomplete="off" aria-label="Your name">
+        <button type="submit">Join</button>
+      </form>
+      <ul id="scores" class="score-list"></ul>
+    </section>
+
+    <section class="qa-section">
+      <h2 class="label">Running order</h2>
+      <ul id="lineup" class="lineup"></ul>
+      <section id="mine" class="mine" hidden aria-label="Your talks"></section>
+      <button id="submit-talk" class="ghost" hidden>Put a talk up</button>
+      <form id="talk-form" class="talk-form" hidden>
+        <input id="talk-title" type="text" maxlength="60" placeholder="Title (or leave it to the first heading)"
+          autocomplete="off" aria-label="Talk title">
+        <textarea id="talk-deck" spellcheck="false" aria-label="Your deck"
+          placeholder="# My talk&#10;&#10;---&#10;&#10;## A point"></textarea>
+        <div class="talk-actions">
+          <button id="talk-submit" type="submit" class="primary">Put it up</button>
+          <button id="talk-image" type="button" class="ghost" hidden>Add a picture</button>
+          <button id="talk-rules" type="button" class="ghost">Copy prompt for an agent</button>
+          <button id="talk-cancel" type="button" class="ghost">Cancel</button>
+        </div>
+        <input id="talk-image-file" type="file" accept="image/*" hidden>
+        <p id="talk-error" class="error" hidden></p>
+      </form>
+    </section>
+
+    <section class="qa-section">
+      <h2 class="label">Questions</h2>
+      <form id="ask-form" class="ask-form">
+        <input id="ask-text" type="text" maxlength="280" placeholder="Ask a question"
+          autocomplete="off" aria-label="Ask a question">
+        <button type="submit" class="primary">Ask</button>
+      </form>
+      <ul id="questions" class="question-list"></ul>
+    </section>
+  </div>
 </section>
 <div id="yours" class="yours" hidden role="status">
   <span>You are up.</span>
@@ -63,8 +76,8 @@
 </div>
 <div id="reactions" class="reaction-bar"></div>
 <footer class="bar">
-  <span id="position" class="dim">—</span>
-  <button id="qa-toggle" class="ghost-small">Room</button>
+  <span id="position" class="position">—</span>
+  <button id="qa-toggle" class="ghost-small" aria-expanded="false" aria-controls="qa">Room</button>
 </footer>
 <div id="qr-overlay" class="qr-overlay" hidden role="dialog" aria-label="Join this room">
   <h2>Join this room</h2>

@@ -283,6 +283,7 @@ function paintQuestions() {
 
 qaToggle.addEventListener('click', () => {
   qa.hidden = !qa.hidden;
+  qaToggle.setAttribute('aria-expanded', String(!qa.hidden));
   if (!qa.hidden) askText.focus();
 });
 
@@ -384,7 +385,7 @@ async function refreshMine() {
   if (!mine.length) return;
 
   const label = document.createElement('h2');
-  label.className = 'label label-spaced';
+  label.className = 'label';
   label.textContent = mine.length === 1 ? 'Your talk' : 'Your talks';
   mineBox.append(label, ...mine.map(mineCard));
 }
