@@ -58,3 +58,18 @@ test('forward and back are the same walk in both directions', () => {
 test('a missing slide stages nothing', () => {
   assert.equal(steps(deck(1), 9), 0);
 });
+
+const { stepLabel, nextLabel } = await import('./steps.js');
+
+test('a slide that arrives whole has no step label', () => {
+  assert.equal(stepLabel(deck(0), 0, 0), '');
+});
+
+test('a staged slide says which item the room is on', () => {
+  assert.equal(stepLabel(deck(3), 0, 2), ' · 2 / 3');
+});
+
+test('the forward button reads next item while the press stays on the slide', () => {
+  assert.equal(nextLabel(deck(2, 0), 0, 1), 'Next item →');
+  assert.equal(nextLabel(deck(2, 0), 0, 2), 'Next →');
+});

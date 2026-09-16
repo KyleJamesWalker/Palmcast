@@ -31,3 +31,16 @@ export function backward(slides, current, step) {
 export function steps(slides, index) {
   return slides[index]?.steps ?? 0;
 }
+
+/// Says which of the slide's staged items the room is on, and nothing at all
+/// for a slide that arrives whole.
+export function stepLabel(slides, current, step) {
+  const total = steps(slides, current);
+  return total ? ` · ${step} / ${total}` : '';
+}
+
+/// What the forward button offers: the next staged item on this slide, or the
+/// next slide.
+export function nextLabel(slides, current, step) {
+  return forward(slides, current, step)?.index === current ? 'Next item →' : 'Next →';
+}
