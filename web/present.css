@@ -9,82 +9,112 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: max(30px, env(safe-area-inset-top)) var(--pad) 12px;
+  padding: max(14px, env(safe-area-inset-top)) var(--pad) 12px;
   overflow-y: auto;
 }
 
+/* Where the room is, who is in it, and the tools. The tools are a row of
+   chips that scrolls sideways on a phone rather than wrapping into the slide. */
+.head { display: flex; flex-direction: column; gap: 12px; }
 .topline {
   display: flex;
   align-items: center;
   gap: 12px;
+  /* Room for the status pill in the corner. */
+  padding-right: 72px;
 }
 .position {
-  font-size: 20px;
-  font-weight: 650;
+  flex: 0 0 auto;
+  min-height: 52px;
+  padding: 0 18px;
+  font-family: var(--display);
+  font-size: 22px;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
-  color: var(--accent);
-  background: none;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  min-height: 40px;
-  padding: 0 8px;
+  letter-spacing: -.02em;
+  color: var(--accent-ink);
+  background: var(--accent);
 }
-.position:active { border-color: var(--edge); }
-.viewers { flex: 1; font-size: 14px; }
-
-button.ghost {
-  min-height: 40px;
-  padding: 0 14px;
-  font-size: 14px;
-  border-radius: 10px;
-}
-
-.label {
-  margin: 0 0 6px;
-  font-size: 11px;
-  letter-spacing: .09em;
-  text-transform: uppercase;
+.position:active { background: #ff9377; }
+.readout {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+  font-size: 13px;
   color: var(--ink-dim);
-  font-weight: 600;
 }
+.viewers { font-weight: 700; }
+.clock { font-variant-numeric: tabular-nums; }
+.tools {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 0 calc(-1 * var(--pad));
+  padding: 0 var(--pad);
+}
+.tools::-webkit-scrollbar { display: none; }
+.tools button { flex: 0 0 auto; }
 
 .share {
   display: flex;
   gap: 16px;
   align-items: center;
   flex-wrap: wrap;
-  padding: 14px;
-  background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 14px;
 }
-.share img { background: #fff; border-radius: 10px; padding: 8px; }
+.share img { background: #fff; border-radius: 16px; padding: 8px; }
 .share-links { display: flex; flex-direction: column; gap: 8px; min-width: 180px; flex: 1; }
 .url { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
 
+.drive { display: flex; flex-direction: column; gap: 16px; }
+
 /* The presenter reads this at a glance, so it stays smaller than the
    audience copy and never grows past a thumb's reach. */
-.now .slide { font-size: clamp(17px, 3.6vw, 22px); }
-.next-body { font-size: clamp(14px, 3vw, 17px); opacity: .75; }
+.now .slide { font-size: clamp(18px, 3.8vw, 23px); }
+.now .label { margin-bottom: 10px; }
+.next-body { font-size: clamp(14px, 3vw, 17px); }
 
+/* A pill label beside a paragraph, for the two things read mid-sentence. */
+.notes, .next { display: flex; gap: 12px; align-items: flex-start; padding: 0 4px; }
+.tag {
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+  padding: 4px 11px;
+  border-radius: var(--pill);
+  background: var(--raised);
+  color: var(--ink-dim);
+  font-family: var(--body);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.tag-butter { background: var(--butter); color: var(--butter-ink); }
 .notes-body {
+  flex: 1;
+  min-width: 0;
   font-size: clamp(16px, 3.6vw, 19px);
   line-height: 1.45;
   white-space: pre-wrap;
-  border-left: 3px solid var(--accent);
-  padding-left: 12px;
   min-height: 1.4em;
 }
+.next .next-body { flex: 1; min-width: 0; }
+
+.room { display: flex; flex-direction: column; gap: 18px; }
 
 .controls {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
   display: flex;
   gap: 10px;
-  padding: 10px var(--pad) max(12px, env(safe-area-inset-bottom));
-  border-top: 1px solid var(--edge);
+  padding: 12px var(--pad) max(14px, env(safe-area-inset-bottom));
   background: var(--ground);
 }
-.controls button { min-height: 64px; font-size: 19px; }
-#prev { flex: 0 0 30%; }
+.controls button { min-height: 64px; font-size: 20px; }
+#prev { flex: 0 0 64px; padding: 0; border-radius: 50%; }
 #next-btn { flex: 1; }
 
 .denied {
@@ -103,51 +133,43 @@ button.ghost {
   margin-top: 10px;
   background: var(--accent);
   color: var(--accent-ink);
-  font-weight: 650;
+  font-family: var(--display);
+  font-weight: 800;
   text-decoration: none;
-  border-radius: 12px;
+  border-radius: var(--pill);
   padding: 16px 28px;
 }
 
-.reveal {
-  width: 100%;
-  margin-top: 12px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  border-color: var(--accent);
-  font-weight: 650;
-}
-.reveal[disabled] { background: var(--raised); color: var(--ink-dim); border-color: var(--edge); }
+.reveal { width: 100%; margin-top: 14px; }
+.reveal[disabled] { opacity: 1; background: var(--edge); color: var(--ink-dim); }
 
 /* The presenter reads the tally at a glance, so it stays compact. */
-.console .options { margin-top: 12px; }
-.console .option { min-height: 44px; font-size: clamp(15px, 3.4vw, 18px); padding: 8px 12px; }
-
-.board .score { min-height: 38px; padding: 6px 10px; font-size: clamp(14px, 3.2vw, 17px); }
+.console .options { margin-top: 12px; gap: 6px; }
+.console .option { min-height: 44px; font-size: clamp(15px, 3.4vw, 18px); padding: 8px 16px; background: var(--ground); }
+.console .option.counted::before { background: var(--edge); }
+.console .option.correct { background: #1f3b2c; }
+.console .option.wrong { background: #3d1c24; }
 
 .editor {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 14px;
-  background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 14px;
 }
 .editor textarea {
   min-height: 34vh;
   resize: vertical;
   background: var(--ground);
   color: var(--ink);
-  border: 1px solid var(--edge);
-  border-radius: 12px;
-  padding: 12px;
-  font: 400 15px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  border: 2px solid transparent;
+  border-radius: 16px;
+  padding: 12px 14px;
+  font: 500 15px/1.55 var(--mono);
 }
-.editor textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.editor textarea:focus { outline: none; border-color: var(--butter); }
 .editor-actions { display: flex; align-items: center; gap: 10px; }
-.editor-actions button { min-height: 46px; }
+.editor-actions .primary { flex: 1; min-height: 52px; }
 .editor-actions .dim { font-size: 13px; }
+.editor-more { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* Stepping one slide at a time is fine going forward and miserable going back,
    so the position doubles as a jump target. */
@@ -159,14 +181,15 @@ button.ghost {
 .jump button {
   min-height: 52px;
   padding: 0;
+  border-radius: 16px;
+  background: var(--ground);
+  font-family: var(--display);
   font-variant-numeric: tabular-nums;
   font-size: 16px;
 }
 .jump button.current {
   background: var(--accent);
   color: var(--accent-ink);
-  border-color: var(--accent);
-  font-weight: 650;
 }
 .jump button.quiz::after {
   content: "?";
@@ -177,14 +200,15 @@ button.ghost {
 .jump button.current.quiz::after { color: var(--accent-ink); }
 
 .role-badge {
+  align-self: flex-start;
   font-size: 11px;
   letter-spacing: .08em;
   text-transform: uppercase;
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-radius: 999px;
+  color: var(--butter-ink);
+  background: var(--butter);
+  border-radius: var(--pill);
   padding: 3px 9px;
-  font-weight: 650;
+  font-weight: 800;
 }
 
 /* A co-host does not drive, so the controls that drive are not shown a dead
@@ -195,34 +219,33 @@ body[data-role="cohost"] .reveal { display: none; }
 /* A co-host looking ahead needs to know where the room actually is, and one
    tap back to it. */
 .follow {
-  min-height: 34px;
-  padding: 0 12px;
-  font-size: 13px;
-  border-radius: 9px;
-  border-color: var(--accent);
-  color: var(--accent);
+  flex: 0 0 auto;
+  background: var(--butter);
+  color: var(--butter-ink);
 }
 
 /* Running order */
-.lineup-panel { margin-top: 18px; }
-.lineup-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.lineup-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.lineup-head .label { margin: 0; }
 .talk-read { margin-top: 16px; }
 .talk-read .preview { max-height: 50vh; overflow-y: auto; }
-.lineup-head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lineup-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ghost-link {
   display: inline-flex;
   align-items: center;
-  min-height: 44px;
+  justify-content: center;
+  min-height: 40px;
   padding: 0 14px;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 700;
   color: var(--ink);
   text-decoration: none;
-  background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 12px;
+  background: var(--edge);
+  border-radius: var(--pill);
 }
+.share .ghost { background: var(--edge); }
+.qa-console .lineup-head, .lineup-panel .lineup-head { margin-bottom: 8px; }
 
-.clock { font-size: 14px; font-variant-numeric: tabular-nums; }
 .timer-row {
   display: flex;
   align-items: center;
@@ -231,12 +254,42 @@ body[data-role="cohost"] .reveal { display: none; }
   margin-top: 10px;
 }
 .console .timer { margin: 0; }
-.timer-auto { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-dim); }
+.timer-auto { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--ink-dim); }
+.timer-auto input { accent-color: var(--accent); }
 .history {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 8px;
 }
 .history .pick { flex: 1; min-width: 160px; }
+
+/* A laptop puts the drive on the left and the room on the right, so the
+   presenter never scrolls past the slide to reach a question. */
+@media (min-width: 960px) {
+  .console {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    grid-template-areas:
+      "head head"
+      "share share"
+      "jump jump"
+      "editor editor"
+      "drive room";
+    align-items: start;
+    align-content: start;
+    column-gap: 24px;
+    max-width: 1320px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  .head { grid-area: head; }
+  .share { grid-area: share; }
+  .jump { grid-area: jump; }
+  .editor { grid-area: editor; }
+  .drive { grid-area: drive; }
+  /* Below the status pill, which is fixed in the same corner. */
+  .room { grid-area: room; position: sticky; top: 52px; }
+  .controls { max-width: 1320px; width: 100%; margin: 0 auto; }
+  .tools { margin: 0; padding: 0; flex-wrap: wrap; overflow: visible; }
+}
