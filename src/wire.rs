@@ -25,6 +25,13 @@ pub enum Reaction {
     Wow,
 }
 
+/// One slide an edit replaced, and where it sits.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Changed {
+    pub index: usize,
+    pub slide: Slide,
+}
+
 /// One row of the running order. The deck stays behind: only a title, who is
 /// giving it, and how long it runs.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -98,6 +105,18 @@ pub enum ServerMsg {
         /// nothing wants.
         theme: Option<Look>,
         slides: Vec<Slide>,
+    },
+    /// An edit that touched a few slides, sent as just those. A client whose
+    /// deck is not at `from_rev` cannot apply it and asks for the whole deck
+    /// instead. The full `Deck` still goes out when the length changed or most
+    /// of the deck did.
+    Patch {
+        from_rev: u64,
+        rev: u64,
+        current: usize,
+        step: usize,
+        theme: Option<Look>,
+        changed: Vec<Changed>,
     },
     Move {
         current: usize,
@@ -199,6 +218,24 @@ pub enum ServerMsg {
     },
 }
 
+/// A slide as the room may see it: no notes, no right answers. The look stays,
+/// because it paints the audience's own screen and names only a stylesheet.
+fn redact_slide(s: &Slide) -> Slide {
+    Slide {
+        html: s.html.clone(),
+        notes: String::new(),
+        steps: s.steps,
+        transition: s.transition.clone(),
+        theme: s.theme.clone(),
+        timer: s.timer,
+        question: s.question.as_ref().map(|q| Question {
+            options: q.options.clone(),
+            multi: q.multi,
+            correct: Vec::new(),
+        }),
+    }
+}
+
 impl ServerMsg {
     /// What a socket that is not the presenter may see. `None` means the
     /// message is not theirs at all.
@@ -215,22 +252,26 @@ impl ServerMsg {
                 current: *current,
                 step: *step,
                 theme: theme.clone(),
-                slides: slides
+                slides: slides.iter().map(redact_slide).collect(),
+            }),
+            ServerMsg::Patch {
+                from_rev,
+                rev,
+                current,
+                step,
+                theme,
+                changed,
+            } => Some(ServerMsg::Patch {
+                from_rev: *from_rev,
+                rev: *rev,
+                current: *current,
+                step: *step,
+                theme: theme.clone(),
+                changed: changed
                     .iter()
-                    .map(|s| Slide {
-                        html: s.html.clone(),
-                        notes: String::new(),
-                        steps: s.steps,
-                        transition: s.transition.clone(),
-                        // The look paints the audience's own screen, so it has
-                        // to reach them. It names a stylesheet and nothing else.
-                        theme: s.theme.clone(),
-                        timer: s.timer,
-                        question: s.question.as_ref().map(|q| Question {
-                            options: q.options.clone(),
-                            multi: q.multi,
-                            correct: Vec::new(),
-                        }),
+                    .map(|c| Changed {
+                        index: c.index,
+                        slide: redact_slide(&c.slide),
                     })
                     .collect(),
             }),
@@ -276,6 +317,9 @@ pub enum ClientMsg {
     /// protocol level pings to JavaScript, so this is how a tab that just woke
     /// finds out whether its socket survived the sleep.
     Ping,
+    /// The page asking for the whole state again, because a patch arrived for
+    /// a revision it does not hold.
+    Resync,
     /// The first frame a presenter sends. Browsers cannot set a header on a
     /// WebSocket, so the token travels here rather than in the URL, where a
     /// proxy would log it. An audience socket sends it empty.
@@ -403,6 +447,7 @@ impl Frame {
                 if matches!(
                     msg,
                     ServerMsg::Deck { .. }
+                        | ServerMsg::Patch { .. }
                         | ServerMsg::Lineup { .. }
                         | ServerMsg::Scores { .. }
                         | ServerMsg::Questions { .. }
@@ -601,6 +646,30 @@ mod tests {
         assert!(owner.contains("held back"));
         assert!(!audience.contains("held back"), "{audience}");
         assert!(audience.contains("shown"));
+    }
+
+    #[test]
+    fn a_patch_is_redacted_like_the_deck_it_patches() {
+        let ServerMsg::Deck { slides, .. } = deck_msg() else {
+            panic!("not a deck");
+        };
+        let frame = Frame::new(&ServerMsg::Patch {
+            from_rev: 1,
+            rev: 2,
+            current: 0,
+            step: 0,
+            theme: None,
+            changed: vec![Changed {
+                index: 0,
+                slide: slides[0].clone(),
+            }],
+        });
+        let owner = frame.for_socket(true).unwrap();
+        let audience = frame.for_socket(false).unwrap();
+        assert!(owner.contains("the secret note"));
+        assert!(!audience.contains("the secret note"), "{audience}");
+        assert!(audience.contains("\"correct\":[]"), "{audience}");
+        assert!(audience.contains("\"index\":0"));
     }
 
     #[test]

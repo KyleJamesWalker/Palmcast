@@ -10,7 +10,8 @@ use crate::deck::{self, Slide};
 use crate::images::Stored;
 use crate::persist::{Choice, PersistedCue, PersistedQuestion, PersistedSession, PersistedTalk};
 use crate::wire::{
-    AudienceQuestion, Frame, LineupEntry, Reaction, Refusal, ScoreRow, ServerMsg, TalkDetail,
+    AudienceQuestion, Changed, Frame, LineupEntry, Reaction, Refusal, ScoreRow, ServerMsg,
+    TalkDetail,
 };
 
 /// No vowels, so an id cannot spell a word, and no glyphs that look alike when
@@ -654,6 +655,18 @@ impl Session {
             .collect();
         self.votes.retain(|slide, _| intact.contains(slide));
         self.revealed.retain(|slide| intact.contains(slide));
+        // Which slides actually changed, while the old deck is still here.
+        let same_length = rebuilt.len() == self.slides.len();
+        let changed: Vec<Changed> = rebuilt
+            .iter()
+            .enumerate()
+            .filter(|(index, slide)| self.slides.get(*index) != Some(slide))
+            .map(|(index, slide)| Changed {
+                index,
+                slide: slide.clone(),
+            })
+            .collect();
+        let from_rev = self.rev;
         self.slides = rebuilt;
         self.rev += 1;
         self.current = self.current.min(self.slides.len() - 1);
@@ -666,7 +679,20 @@ impl Session {
             self.timer = None;
         }
         self.touch();
-        let msg = self.snapshot();
+        // A few slides go out as a patch. Half the deck or more, or a deck that
+        // grew or shrank, goes out whole: a patch that size saves nothing.
+        let msg = if same_length && changed.len() * 2 < self.slides.len() {
+            ServerMsg::Patch {
+                from_rev,
+                rev: self.rev,
+                current: self.current,
+                step: self.step,
+                theme: deck::theme_of(&self.markdown),
+                changed,
+            }
+        } else {
+            self.snapshot()
+        };
         self.emit(&msg);
         Ok(msg)
     }
@@ -4162,6 +4188,86 @@ mod tests {
             back.with(&id, |s| s.talk_detail(talk).unwrap().pending)
                 .unwrap()
         );
+    }
+
+    const FIVE: &str = "# One\n\n---\n\n# Two\n\n---\n\n# Three\n\n---\n\n# Four\n\n---\n\n# Five";
+
+    #[test]
+    fn a_small_edit_goes_out_as_the_slides_it_changed() {
+        let reg = registry();
+        let (id, _mc) = reg.create(FIVE).unwrap();
+        let msg = reg
+            .with_mut(&id, |s| {
+                s.replace_deck(Role::Mc, None, &FIVE.replace("# Two", "# Deux"))
+            })
+            .unwrap()
+            .unwrap();
+        let ServerMsg::Patch {
+            from_rev,
+            rev,
+            changed,
+            ..
+        } = msg
+        else {
+            panic!("a one slide edit went out as the whole deck");
+        };
+        assert_eq!((from_rev, rev), (1, 2));
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].index, 1);
+        assert!(changed[0].slide.html.contains("Deux"));
+    }
+
+    #[test]
+    fn an_edit_that_changes_the_length_or_most_of_the_deck_goes_out_whole() {
+        let reg = registry();
+        let (id, _mc) = reg.create(FIVE).unwrap();
+        let grown = reg
+            .with_mut(&id, |s| {
+                s.replace_deck(Role::Mc, None, &format!("{FIVE}\n\n---\n\n# Six"))
+            })
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(grown, ServerMsg::Deck { .. }),
+            "a longer deck went out as a patch"
+        );
+
+        let (id, _mc) = reg.create(FIVE).unwrap();
+        let rewritten = reg
+            .with_mut(&id, |s| {
+                s.replace_deck(
+                    Role::Mc,
+                    None,
+                    &FIVE.replace("# T", "# X").replace("# F", "# Y"),
+                )
+            })
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(rewritten, ServerMsg::Deck { .. }),
+            "an edit to most of the deck went out as a patch"
+        );
+    }
+
+    #[test]
+    fn a_patch_says_which_revision_it_applies_to() {
+        let reg = registry();
+        let (id, _mc) = reg.create(FIVE).unwrap();
+        reg.with_mut(&id, |s| {
+            s.replace_deck(Role::Mc, None, &FIVE.replace("One", "1"))
+        })
+        .unwrap()
+        .unwrap();
+        let msg = reg
+            .with_mut(&id, |s| {
+                s.replace_deck(Role::Mc, None, &FIVE.replace("One", "Uno"))
+            })
+            .unwrap()
+            .unwrap();
+        let ServerMsg::Patch { from_rev, rev, .. } = msg else {
+            panic!("not a patch");
+        };
+        assert_eq!((from_rev, rev), (2, 3));
     }
 
     fn qr_state(msgs: &[ServerMsg]) -> Option<bool> {

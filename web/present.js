@@ -100,6 +100,7 @@ const socket = connect(id, token, {
     showRefusal(els.ended, reason);
   },
   deck: console_.deck,
+  patch: console_.patch,
   move: console_.move,
   tally: console_.tally,
   reveal: console_.reveal,

@@ -3194,3 +3194,45 @@ async fn the_export_counts_the_votes_and_names_who_cast_them_only_when_asked() {
         "an unnamed voter was listed: {answers}"
     );
 }
+
+const FIVE_SLIDES: &str =
+    "# One\n\n---\n\n# Two\n\n---\n\n# Three\n\n---\n\n# Four\n\n---\n\n# Five";
+
+#[tokio::test]
+async fn a_small_edit_reaches_the_room_as_a_patch_without_the_notes() {
+    let host = spawn().await;
+    let (id, mc) = create(&host, FIVE_SLIDES).await;
+    let mut phone = open(&host, &id, None).await;
+    settle(&mut phone).await;
+
+    let edited = FIVE_SLIDES.replace("# Two", "# Deux\n\n???\nsecret");
+    assert_eq!(put_deck(&host, &id, &mc, &edited).await, 204);
+
+    let patch = next_of(&mut phone, "patch").await;
+    assert_eq!(patch["from_rev"], 1);
+    assert_eq!(patch["rev"], 2);
+    let changed = patch["changed"].as_array().unwrap();
+    assert_eq!(changed.len(), 1);
+    assert_eq!(changed[0]["index"], 1);
+    assert!(
+        changed[0]["slide"]["html"]
+            .as_str()
+            .unwrap()
+            .contains("Deux")
+    );
+    assert_eq!(
+        changed[0]["slide"]["notes"], "",
+        "notes reached the room in a patch"
+    );
+}
+
+#[tokio::test]
+async fn a_socket_that_cannot_apply_a_patch_asks_for_the_deck_and_gets_it() {
+    let host = spawn().await;
+    let (id, _mc) = create(&host, FIVE_SLIDES).await;
+    let mut phone = open(&host, &id, None).await;
+    settle(&mut phone).await;
+    ws_send(&mut phone, serde_json::json!({ "type": "resync" })).await;
+    let deck = next_of(&mut phone, "deck").await;
+    assert_eq!(deck["slides"].as_array().unwrap().len(), 5);
+}

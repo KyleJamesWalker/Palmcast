@@ -2,7 +2,7 @@ import { authFetch, connect, copyText, sessionId, showRefusal, viewerId } from '
 import { renderLineup, rememberTalk, talksHeld, forgetTalk } from '/lineup.js';
 import { starterPrompt } from '/deckstate.js';
 import { renderOptions } from '/quiz.js';
-import { pruneBySlide, survivingSlides } from '/deckstate.js';
+import { applyPatch, pruneBySlide, survivingPatch, survivingSlides } from '/deckstate.js';
 import { burst, reactionBar } from '/reactions.js';
 import { previewDeck, renderPreview } from '/preview.js';
 import { renderQuestions } from '/questions.js';
@@ -132,6 +132,23 @@ const socket = connect(id, null, {
     deckTheme = msg.theme ?? null;
     // Every transition the deck can reach for, fetched now rather than at the
     // press that needs it. A talk going on stage is the moment there is time.
+    preload(slides);
+    paint();
+  },
+  patch(msg) {
+    if (msg.from_rev !== rev) {
+      socket.send({ type: 'resync' });
+      return;
+    }
+    const keep = survivingPatch(slides, msg.changed);
+    pruneBySlide(chosen, keep);
+    for (const slide of [...sent]) if (!keep.has(slide)) sent.delete(slide);
+    pruneBySlide(revealed, keep);
+    slides = applyPatch(slides, msg.changed);
+    rev = msg.rev;
+    current = msg.current;
+    step = msg.step;
+    deckTheme = msg.theme ?? null;
     preload(slides);
     paint();
   },

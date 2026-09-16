@@ -170,6 +170,12 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join, beat: Hear
                     }
                     continue;
                 }
+                if matches!(msg, ClientMsg::Resync) {
+                    if resync(&mut sink, &registry, &id, is_staff).await.is_err() {
+                        break;
+                    }
+                    continue;
+                }
                 handle(&registry, &id, token.as_deref(), &who, msg);
             }
         }
@@ -197,7 +203,7 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
         // viewer cannot talk its way into a presenter's socket.
         ClientMsg::Auth { .. } => {}
         // Answered on the socket it arrived on, before this is reached.
-        ClientMsg::Ping => {}
+        ClientMsg::Ping | ClientMsg::Resync => {}
         ClientMsg::Goto { index, step } => {
             registry.with_mut(id, |s| s.goto(token, index, step));
         }

@@ -1,6 +1,6 @@
 import { connect, sessionId } from '/shared.js';
 import { renderOptions } from '/quiz.js';
-import { pruneBySlide, survivingSlides } from '/deckstate.js';
+import { applyPatch, pruneBySlide, survivingPatch, survivingSlides } from '/deckstate.js';
 import { burst } from '/reactions.js';
 import { renderScores } from '/scores.js';
 import { applyLookKnobs, applyTheme, crossing, preload, swap, themeFor } from '/looks.js';
@@ -45,7 +45,7 @@ function paint() {
   });
 }
 
-connect(id, null, {
+const socket = connect(id, null, {
   ended() {
     document.getElementById('ended').hidden = false;
   },
@@ -68,6 +68,20 @@ connect(id, null, {
     deckTheme = msg.theme ?? null;
     // Every transition the deck can reach for, fetched now rather than at the
     // press that needs it. A talk going on stage is the moment there is time.
+    preload(slides);
+    paint();
+  },
+  patch(msg) {
+    if (msg.from_rev !== rev) {
+      socket.send({ type: 'resync' });
+      return;
+    }
+    pruneBySlide(revealed, survivingPatch(slides, msg.changed));
+    slides = applyPatch(slides, msg.changed);
+    rev = msg.rev;
+    current = msg.current;
+    step = msg.step;
+    deckTheme = msg.theme ?? null;
     preload(slides);
     paint();
   },
