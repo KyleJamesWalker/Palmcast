@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Values are a colour, a time, a number or a share, and nothing else. `neon`
   declares one, `style`, which is a mood rather than a colour: `midnight`,
   `vegas`, `tampa`, `sunset` or `deep-space`, each setting its heading and
-  accent together. Every other built-in declares none and is unchanged. A look can name the choices it expects in
+  accent together. A transition declares one the same way, after the duration:
+  `cover` offers `distance`, the height the next slide rises from. Every other
+  built-in declares none and is unchanged. A look can name the choices it expects in
   `--knob-<name>-options`, either as named colours or as bare presets it maps
   itself with `@container style()`. The editor lists those by name rather than
  by value, and repaints the preview card as you move through them.

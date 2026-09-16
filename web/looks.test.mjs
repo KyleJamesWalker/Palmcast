@@ -1,7 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { crossing, demoFaces, optionsFor, swap, themeFor, transitionNames } from './looks.js';
+import {
+  TRANSITION,
+  applyKnobs,
+  applyLookKnobs,
+  crossing,
+  demoFaces,
+  optionsFor,
+  swap,
+  themeFor,
+  transitionNames,
+} from './looks.js';
 
 const deck = [
   { transition: { name: 'cover', duration: 800 } },
@@ -41,15 +51,19 @@ test('every name the deck asks for is listed once', () => {
   assert.deepEqual(transitionNames(deck), ['cover', 'fade']);
 });
 
-function fakeDoc({ supported = true } = {}) {
-  const root = {
-    dataset: {},
-    style: {
-      props: {},
-      setProperty(key, value) { this.props[key] = value; },
-      removeProperty(key) { delete this.props[key]; },
-    },
+/// A style object that can be read back by index, the way applyKnobs reads it.
+function fakeStyle() {
+  return {
+    props: {},
+    get length() { return Object.keys(this.props).length; },
+    item(i) { return Object.keys(this.props)[i]; },
+    setProperty(key, value) { this.props[key] = value; },
+    removeProperty(key) { delete this.props[key]; },
   };
+}
+
+function fakeDoc({ supported = true } = {}) {
+  const root = { dataset: {}, style: fakeStyle() };
   const doc = { documentElement: root };
   if (supported) {
     doc.startViewTransition = (paint) => {
@@ -180,4 +194,54 @@ test('a slide with its own look overrides the deck, and only for itself', () => 
 test('with nothing named anywhere the view keeps its own default', () => {
   assert.equal(themeFor({}, null), null);
   assert.equal(themeFor(undefined, undefined), null, 'a missing slide threw instead of falling back');
+});
+
+test('a knob the deck stopped turning is cleared, and the rest left alone', () => {
+  const el = { style: fakeStyle() };
+  applyKnobs({ mood: 'cherry', drift: '60s' }, el);
+  applyKnobs({ mood: 'cherry' }, el);
+  assert.deepEqual(el.style.props, { '--knob-mood': 'cherry' });
+});
+
+test('a theme and a transition hold their own knobs on the same element', () => {
+  const doc = fakeDoc();
+  const surface = { style: fakeStyle() };
+  applyKnobs({ distance: '40%' }, doc.documentElement, TRANSITION);
+  applyLookKnobs({ mood: 'cherry' }, surface, doc);
+  assert.deepEqual(doc.documentElement.style.props, {
+    '--knob-distance': '40%',
+    '--knob-mood': 'cherry',
+  });
+
+  applyKnobs({ distance: '20%' }, doc.documentElement, TRANSITION);
+  assert.equal(doc.documentElement.style.props['--knob-mood'], 'cherry');
+});
+
+test("a transition's knobs survive the paint and are gone once it has run", async () => {
+  const doc = fakeDoc();
+  const surface = { style: fakeStyle() };
+  let during;
+  swap(
+    () => {
+      applyLookKnobs({ mood: 'cherry' }, surface, doc);
+      during = doc.documentElement.style.props['--knob-distance'];
+    },
+    { name: 'cover', back: false, knobs: { distance: '40%' } },
+    doc,
+  );
+  assert.equal(during, '40%', 'the theme cleared the transition off the root');
+
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(doc.documentElement.style.props['--knob-distance'], undefined);
+  assert.equal(doc.documentElement.style.props['--knob-mood'], 'cherry');
+});
+
+test('a name both turned is left to whoever wrote it last', () => {
+  const doc = fakeDoc();
+  const surface = { style: fakeStyle() };
+  applyKnobs({ mood: 'loud' }, doc.documentElement, TRANSITION);
+  applyLookKnobs({ mood: 'cherry' }, surface, doc);
+  applyKnobs(null, doc.documentElement, TRANSITION);
+  assert.equal(doc.documentElement.style.props['--knob-mood'], 'cherry');
 });

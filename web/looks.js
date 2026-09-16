@@ -54,11 +54,12 @@ export function swap(paint, plan, doc = document) {
   } else {
     root.style.removeProperty('--transition-duration');
   }
-  applyKnobs(plan.knobs, root);
+  applyKnobs(plan.knobs, root, TRANSITION);
 
   const clear = () => {
     delete root.dataset.transition;
     delete root.dataset.back;
+    applyKnobs(null, root, TRANSITION);
   };
   // Both arms, not `finally`: a transition the browser skips rejects, and a
   // rejection nobody handled would leave the root marked for the next one.
@@ -139,28 +140,54 @@ export function applyLookKnobs(knobs, surface, doc = document) {
   applyKnobs(knobs, doc.documentElement);
 }
 
-export function applyKnobs(knobs, el) {
+/// Which names each owner turned last, so one never clears the other's.
+///
+/// A theme's knobs and a transition's both land on the root: a theme because
+/// `@container style()` never matches a container against itself, a transition
+/// because `html[data-transition=…]` is the rule that reads them.
+const owned = new WeakMap();
+
+export function applyKnobs(knobs, el, owner = LOOK) {
   const style = el?.style;
   if (!style?.setProperty) return;
   const want = knobs && typeof knobs === 'object' ? knobs : {};
 
-  // Whatever the slide before turned and this one does not, read through the
-  // indexed form so a stylesheet nobody wrote is never guessed at.
-  const held = [];
+  let byOwner = owned.get(el);
+  if (!byOwner) {
+    byOwner = new Map();
+    owned.set(el, byOwner);
+  }
+
+  // Whatever this owner turned before and does not now. Read through the
+  // indexed form so a stylesheet nobody wrote is never guessed at, and left
+  // alone where another owner turned the same name: that one wrote it last and
+  // is still holding it.
+  const on = new Set();
   for (let i = 0; i < (style.length ?? 0); i += 1) {
     const name = style.item?.(i);
-    if (typeof name === 'string' && name.startsWith(KNOB)) held.push(name);
+    if (typeof name === 'string' && name.startsWith(KNOB)) on.add(name);
   }
-  for (const name of held) {
+  const claimed = new Set();
+  for (const [other, names] of byOwner) {
+    if (other !== owner) for (const name of names) claimed.add(name);
+  }
+  for (const name of byOwner.get(owner) ?? []) {
+    if (claimed.has(name) || !on.has(name)) continue;
     if (!(name.slice(KNOB.length) in want)) style.removeProperty(name);
   }
 
+  const mine = [];
   for (const [name, value] of Object.entries(want)) {
     style.setProperty(`${KNOB}${name}`, value);
+    mine.push(`${KNOB}${name}`);
   }
+  byOwner.set(owner, mine);
 }
 
 const KNOB = '--knob-';
+/// A theme and a transition may name the same knob; the last written wins.
+const LOOK = 'look';
+export const TRANSITION = 'transition';
 
 export function applyTheme(name, doc = document) {
   let link = doc.getElementById('deck-theme');
