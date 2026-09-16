@@ -17,7 +17,7 @@ test('typing a directive offers the names, and Enter takes the one chosen', asyn
   await area.type('<!-- ');
 
   await expect(page.locator('.complete')).toBeVisible();
-  await expect(rows(page)).toHaveText(['theme', '_theme', 'transition', '_transition']);
+  await expect(rows(page)).toHaveText(['theme', '_theme', 'transition', '_transition', 'timer']);
   await expect(page.locator('.complete-hint')).toHaveText('Directive');
 
   // The first row is the one Enter takes.

@@ -113,6 +113,15 @@ export function connect(id, token, handlers) {
         handlers.status?.('live');
         return;
       }
+      // The room said no. Reconnecting would only be told no again.
+      if (msg.type === 'refused') {
+        stopped = true;
+        clearInterval(beat);
+        ws.close();
+        if (handlers.refused) handlers.refused(msg.reason);
+        else handlers.ended?.();
+        return;
+      }
       handlers[msg.type]?.(msg);
     };
 
@@ -347,4 +356,28 @@ export async function starterDeck(fetcher = globalThis.fetch) {
   } catch {
     return null;
   }
+}
+
+/// What to tell somebody the room turned away.
+export function refusalText(reason) {
+  switch (reason) {
+    case 'full':
+      return { title: 'This room is full', body: 'Ask the host to make space, or try again later.' };
+    case 'locked':
+      return { title: 'This room is locked', body: 'The host is not taking new phones right now.' };
+    case 'removed':
+      return { title: 'You were removed from this room', body: 'The host took you out of it.' };
+    default:
+      return { title: 'This room turned you away', body: 'Ask the host for a new link.' };
+  }
+}
+
+/// Puts a refusal on the screen that normally says the session has ended.
+export function showRefusal(box, reason) {
+  const { title, body } = refusalText(reason);
+  const heading = box.querySelector('h2');
+  const text = box.querySelector('p');
+  if (heading) heading.textContent = title;
+  if (text) text.textContent = body;
+  box.hidden = false;
 }

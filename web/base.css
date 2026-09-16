@@ -728,3 +728,20 @@ html[data-back]::view-transition-new(palmcast-surface) { z-index: var(--transiti
 .qr-join { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
 .qr-join img { width: 112px; height: auto; padding: 8px; border-radius: 10px; background: #fff; }
 .qr-join .url { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+
+/* Clocks. Tabular digits so the last second does not jiggle the layout. */
+.timer {
+  margin: 10px 0 0;
+  font-size: clamp(18px, 4.5vw, 26px);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.timer.over { color: #e0564f; }
+.score-kick {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  border-radius: 8px;
+  margin-left: 8px;
+}

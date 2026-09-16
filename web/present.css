@@ -221,3 +221,22 @@ body[data-role="cohost"] .reveal { display: none; }
   border: 1px solid var(--edge);
   border-radius: 12px;
 }
+
+.clock { font-size: 14px; font-variant-numeric: tabular-nums; }
+.timer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+.console .timer { margin: 0; }
+.timer-auto { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-dim); }
+.history {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.history .pick { flex: 1; min-width: 160px; }

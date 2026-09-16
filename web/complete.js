@@ -4,12 +4,21 @@
 // makes suggesting the whole of it possible, and it is also why the parts are
 // hard to guess without being told.
 
-/// The four directives, with what each one reaches.
+/// The directives, with what each one reaches.
 export const DIRECTIVES = [
   { value: 'theme', about: 'Paints the whole deck.' },
   { value: '_theme', about: 'Paints this slide and no others.' },
   { value: 'transition', about: 'Moves from here on, until another replaces it.' },
   { value: '_transition', about: 'Moves this slide and no others.' },
+  { value: 'timer', about: 'Counts the room down on this slide.' },
+];
+
+/// Clocks worth offering. Any `<n>s`, `<n>m` or `<n>m<n>s` up to an hour works.
+export const TIMERS = [
+  { value: '15s', about: 'Quick fire.' },
+  { value: '30s', about: 'The usual round.' },
+  { value: '60s', about: 'A minute to think.' },
+  { value: '2m', about: 'For a hard one.' },
 ];
 
 /// Durations worth offering. Any `<n>s` up to 60 or `<n>ms` is accepted; these
@@ -162,6 +171,7 @@ function poolFor(name, looks) {
     // `none` is not a file the operator installed, so it is not in the config.
     return [{ value: 'none', about: 'Cuts, with no movement at all.' }, ...installed(looks.transitions)];
   }
+  if (name === 'timer') return TIMERS;
   return null;
 }
 

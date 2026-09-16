@@ -1,4 +1,4 @@
-import { authFetch, connect, copyText, sessionId, viewerId } from '/shared.js';
+import { authFetch, connect, copyText, sessionId, showRefusal, viewerId } from '/shared.js';
 import { renderLineup, rememberTalk, talksHeld, forgetTalk } from '/lineup.js';
 import { starterPrompt } from '/deckstate.js';
 import { renderOptions } from '/quiz.js';
@@ -11,6 +11,7 @@ import { applyLookKnobs, applyTheme, crossing, preload, swap, themeFor } from '/
 import { joinUrl, qrSrc, showJoin } from '/qr.js';
 import { applySteps } from '/steps.js';
 import { attachUpload, uploadsOn } from '/upload.js';
+import { mountCountdown } from '/countdown.js';
 
 const id = sessionId();
 const slide = document.getElementById('slide');
@@ -49,6 +50,11 @@ const revealed = new Map();
 /// The element the themes paint, and so the one the knobs belong on.
 const surface = document.getElementById('stage');
 
+// A vote after the bell is refused by the server; the options say so first.
+const countdown = mountCountdown(document.getElementById('timer'), {
+  onZero: () => paint(),
+});
+
 function paint() {
   const now = slides[current];
   const look = themeFor(now, deckTheme);
@@ -59,9 +65,11 @@ function paint() {
   position.textContent = slides.length ? `${current + 1} / ${slides.length}` : '\u2014';
 
   const answer = revealed.get(current);
+  const timedOut = !answer && countdown.expired(current);
   renderOptions(options, now?.question, {
     interactive: true,
-    locked: Boolean(answer),
+    locked: Boolean(answer) || timedOut,
+    timedOut,
     sent: sent.has(current),
     chosen: chosen.get(current),
     correct: answer?.correct,
@@ -97,6 +105,13 @@ function paint() {
 const socket = connect(id, null, {
   ended() {
     document.getElementById('ended').hidden = false;
+  },
+  refused(reason) {
+    showRefusal(document.getElementById('ended'), reason);
+  },
+  timer(msg) {
+    countdown.set(msg);
+    paint();
   },
   deck(msg) {
     if (msg.rev !== rev) {

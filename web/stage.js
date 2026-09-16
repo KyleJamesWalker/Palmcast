@@ -6,6 +6,8 @@ import { renderScores } from '/scores.js';
 import { applyLookKnobs, applyTheme, crossing, preload, swap, themeFor } from '/looks.js';
 import { joinUrl, showJoin } from '/qr.js';
 import { applySteps } from '/steps.js';
+import { mountCountdown } from '/countdown.js';
+import { showRefusal } from '/shared.js';
 
 const id = sessionId();
 const slide = document.getElementById('slide');
@@ -22,6 +24,8 @@ const revealed = new Map();
 
 /// The element the themes paint, and so the one the knobs belong on.
 const surface = document.querySelector('.stage');
+
+const countdown = mountCountdown(document.getElementById('timer'));
 
 function paint() {
   const now = slides[current];
@@ -44,6 +48,12 @@ function paint() {
 connect(id, null, {
   ended() {
     document.getElementById('ended').hidden = false;
+  },
+  refused(reason) {
+    showRefusal(document.getElementById('ended'), reason);
+  },
+  timer(msg) {
+    countdown.set(msg);
   },
   deck(msg) {
     if (msg.rev !== rev) {

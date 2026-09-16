@@ -18,6 +18,7 @@ export function mountSharePanel({ id, token, send }) {
     stageLink: document.getElementById('stage-link'),
     handoff: document.getElementById('handoff'),
     cohost: document.getElementById('cohost'),
+    lockToggle: document.getElementById('lock-toggle'),
   };
 
   const audienceUrl = `${location.origin}/s/${id}`;
@@ -41,6 +42,18 @@ export function mountSharePanel({ id, token, send }) {
 
   els.toggle.addEventListener('click', () => {
     els.panel.hidden = !els.panel.hidden;
+  });
+
+  function paintLock(on) {
+    els.lockToggle.setAttribute('aria-pressed', String(on));
+    els.lockToggle.textContent = on ? 'Unlock room' : 'Lock room';
+    els.lockToggle.classList.toggle('primary', on);
+  }
+  paintLock(false);
+
+  els.lockToggle.addEventListener('click', () => {
+    send({ type: 'lock', on: els.lockToggle.getAttribute('aria-pressed') !== 'true' });
+    els.lockToggle.blur();
   });
 
   els.handoff.addEventListener('click', async () => {
@@ -90,10 +103,12 @@ export function mountSharePanel({ id, token, send }) {
 
   return {
     qr: paintQr,
-    /// `share` is the panel of links, host only. `qr` is whoever drives.
-    /// `cohost` is the one link a co-host may not mint.
+    lock: paintLock,
+    /// `share` is the panel of links and the lock, host only. `qr` is whoever
+    /// drives. `cohost` is the one link a co-host may not mint.
     allow({ share, qr, cohost }) {
       els.toggle.hidden = !share;
+      els.lockToggle.hidden = !share;
       if (!share) els.panel.hidden = true;
       els.qrToggle.hidden = !qr;
       els.cohost.hidden = !cohost;

@@ -4,6 +4,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::deck::{Look, Question, Slide};
 
+/// Why a socket was closed on arrival, or shortly after.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Refusal {
+    Full,
+    Locked,
+    Removed,
+}
+
 /// A closed set, so nothing a viewer types ever reaches another viewer's
 /// markup. The view picks the glyph from the variant.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -60,6 +69,10 @@ pub struct AudienceQuestion {
 pub struct ScoreRow {
     pub name: String,
     pub score: usize,
+    /// The browser id behind the name. Host only, so the host can remove
+    /// somebody from the room. Nobody else has a use for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub who: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -125,6 +138,30 @@ pub enum ServerMsg {
         /// The talk currently on stage, if any.
         staged: Option<u64>,
         open: bool,
+        /// How long the deck that is up has been up, so every console shows the
+        /// same speaker clock whatever its own clock says.
+        elapsed_ms: u64,
+    },
+    /// The clock on the current slide, or none. Sent as time left rather than
+    /// a deadline, so a phone with its clock wrong still counts down with the
+    /// room.
+    Timer {
+        slide: Option<usize>,
+        remaining_ms: u64,
+    },
+    /// Whether the room is taking new phones.
+    Lock {
+        on: bool,
+    },
+    /// One socket, told why it is being closed, and then closed. Never
+    /// broadcast.
+    Refused {
+        reason: Refusal,
+    },
+    /// The host has removed somebody. Presenter only as a message, and the
+    /// frame itself makes every socket check whether it was the one removed.
+    Removed {
+        who: String,
     },
     /// Who drives now. Sent to everyone so a speaker's own phone can show the
     /// controls the moment the host hands over, without asking.
@@ -173,6 +210,7 @@ impl ServerMsg {
                         // The look paints the audience's own screen, so it has
                         // to reach them. It names a stylesheet and nothing else.
                         theme: s.theme.clone(),
+                        timer: s.timer,
                         question: s.question.as_ref().map(|q| Question {
                             options: q.options.clone(),
                             multi: q.multi,
@@ -185,14 +223,26 @@ impl ServerMsg {
                 items,
                 staged,
                 open,
+                elapsed_ms,
                 ..
             } => Some(ServerMsg::Lineup {
                 items: items.clone(),
                 dropped: Vec::new(),
                 staged: *staged,
                 open: *open,
+                elapsed_ms: *elapsed_ms,
             }),
-            ServerMsg::Tally { .. } | ServerMsg::Viewers { .. } => None,
+            ServerMsg::Scores { items } => Some(ServerMsg::Scores {
+                items: items
+                    .iter()
+                    .map(|row| ScoreRow {
+                        name: row.name.clone(),
+                        score: row.score,
+                        who: None,
+                    })
+                    .collect(),
+            }),
+            ServerMsg::Tally { .. } | ServerMsg::Viewers { .. } | ServerMsg::Removed { .. } => None,
             other => Some(other.clone()),
         }
     }
@@ -253,6 +303,14 @@ pub enum ClientMsg {
     Remove {
         talk: u64,
     },
+    /// The host closing the room to phones it has not seen, or opening it.
+    Lock {
+        on: bool,
+    },
+    /// The host removing somebody from the room for good.
+    Kick {
+        who: String,
+    },
     /// The whole selection, replacing whatever this voter chose before.
     Answer {
         slide: usize,
@@ -289,9 +347,9 @@ pub struct Frame {
     pub owner: String,
     /// `None` when the message is for the presenter alone.
     pub audience: Option<String>,
-    /// A handover changes what a socket is allowed to see, so a socket that
-    /// sees this frame go past re-checks its own role. Cheap because it is
-    /// rare: once per handover rather than once per frame.
+    /// A handover changes what a socket is allowed to see, and a removal
+    /// changes whether it may stay, so a socket that sees this frame go past
+    /// re-checks itself. Cheap because it is rare.
     pub rerole: bool,
 }
 
@@ -300,7 +358,12 @@ impl Frame {
         let owner = serde_json::to_string(msg).unwrap_or_default();
         let audience = match msg.redacted() {
             // Identical payloads are the common case, so do not serialize twice.
-            Some(redacted) if matches!(msg, ServerMsg::Deck { .. } | ServerMsg::Lineup { .. }) => {
+            Some(redacted)
+                if matches!(
+                    msg,
+                    ServerMsg::Deck { .. } | ServerMsg::Lineup { .. } | ServerMsg::Scores { .. }
+                ) =>
+            {
                 Some(serde_json::to_string(&redacted).unwrap_or_default())
             }
             Some(_) => Some(owner.clone()),
@@ -309,7 +372,7 @@ impl Frame {
         Arc::new(Frame {
             owner,
             audience,
-            rerole: matches!(msg, ServerMsg::Baton { .. }),
+            rerole: matches!(msg, ServerMsg::Baton { .. } | ServerMsg::Removed { .. }),
         })
     }
 
@@ -344,6 +407,7 @@ mod tests {
                     name: "neon".into(),
                     knobs: BTreeMap::from([("heading".into(), "#ff8800".into())]),
                 }),
+                timer: Some(30_000),
                 question: Some(Question {
                     options: vec!["a".into(), "b".into()],
                     multi: false,
@@ -390,6 +454,7 @@ mod tests {
             }],
             staged: None,
             open: true,
+            elapsed_ms: 0,
         });
 
         let owner = frame.for_socket(true).unwrap();
@@ -426,6 +491,38 @@ mod tests {
             msg.redacted().is_none(),
             "the room was sent its own size, once per phone that arrived"
         );
+    }
+
+    #[test]
+    fn a_timer_reaches_the_room_that_counts_down_with_it() {
+        let Some(ServerMsg::Deck { slides, .. }) = deck_msg().redacted() else {
+            panic!("the deck was withheld from the room");
+        };
+        assert_eq!(slides[0].timer, Some(30_000));
+    }
+
+    #[test]
+    fn the_room_is_not_told_who_is_behind_a_name() {
+        let frame = Frame::new(&ServerMsg::Scores {
+            items: vec![ScoreRow {
+                name: "Ada".into(),
+                score: 3,
+                who: Some("browser-id-7".into()),
+            }],
+        });
+        let owner = frame.for_socket(true).unwrap();
+        let audience = frame.for_socket(false).unwrap();
+        assert!(owner.contains("browser-id-7"));
+        assert!(!audience.contains("browser-id-7"), "{audience}");
+        assert!(!audience.contains("\"who\""), "{audience}");
+        assert!(audience.contains("Ada"));
+    }
+
+    #[test]
+    fn a_removal_makes_every_socket_check_itself_and_tells_the_room_nothing() {
+        let frame = Frame::new(&ServerMsg::Removed { who: "x".into() });
+        assert!(frame.rerole);
+        assert_eq!(frame.for_socket(false), None);
     }
 
     #[test]

@@ -22,6 +22,10 @@ pub struct Slide {
     /// whatever the deck asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub theme: Option<Look>,
+    /// Milliseconds the room is given on this slide, from `timer`. The clock
+    /// runs on the server; this is only what the deck asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timer: Option<u32>,
 }
 
 /// A transition, as the deck named it. Whether the name is installed is the
@@ -92,6 +96,7 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
             steps,
             transition,
             theme: asked.spot_theme,
+            timer: asked.timer,
         });
     }
 
@@ -103,6 +108,7 @@ pub fn parse(markdown: &str) -> Vec<Slide> {
             steps: 0,
             transition: None,
             theme: None,
+            timer: None,
         }];
     }
     slides
@@ -143,6 +149,7 @@ struct Directives {
     transition: Option<Transition>,
     spot: Option<Transition>,
     spot_theme: Option<Look>,
+    timer: Option<u32>,
 }
 
 /// Lifts the directive lines out of a slide and reads them.
@@ -164,6 +171,7 @@ fn split_directives(raw: &str) -> (String, Directives) {
             Some(("transition", value)) => asked.transition = transition(value),
             Some(("_transition", value)) => asked.spot = transition(value),
             Some(("_theme", value)) => asked.spot_theme = look(value),
+            Some(("timer", value)) => asked.timer = timer_ms(value),
             // Read deck wide by `theme_of`, and dropped here so it never draws.
             Some(("theme", _)) => {}
             _ => body.push(line),
@@ -263,6 +271,27 @@ fn is_hex_colour(value: &str) -> bool {
 
 fn is_number(value: &str) -> bool {
     !value.is_empty() && value.parse::<f64>().is_ok_and(f64::is_finite)
+}
+
+/// `30s`, `90s`, `2m` or `1m30s`, up to an hour. A room is not kept waiting on
+/// one slide longer than that, and a typo like `30` with no unit is refused
+/// rather than read as anything.
+fn timer_ms(value: &str) -> Option<u32> {
+    let value = value.trim();
+    let (minutes, seconds) = match value.split_once('m') {
+        Some((m, rest)) => (
+            m.parse::<u32>().ok()?,
+            rest.strip_suffix('s').unwrap_or(rest),
+        ),
+        None => (0, value.strip_suffix('s')?),
+    };
+    let seconds: u32 = if seconds.is_empty() {
+        0
+    } else {
+        seconds.parse().ok()?
+    };
+    let total = minutes.checked_mul(60)?.checked_add(seconds)?;
+    (1..=3600).contains(&total).then(|| total * 1000)
 }
 
 fn duration_ms(value: &str) -> Option<u32> {
@@ -1151,6 +1180,31 @@ mod tests {
             "the example was eaten: {}",
             slides[0].html
         );
+    }
+
+    #[test]
+    fn a_timer_is_read_in_seconds_and_minutes() {
+        let deck = "<!-- timer: 30s -->\n# Q\n\n- [ ] a\n- [x] b\n\n---\n\n<!-- timer: 1m30s -->\n# R\n\n---\n\n<!-- timer: 2m -->\n# S";
+        let slides = parse(deck);
+        assert_eq!(slides[0].timer, Some(30_000));
+        assert_eq!(slides[1].timer, Some(90_000));
+        assert_eq!(slides[2].timer, Some(120_000));
+        assert!(!slides[0].html.contains("timer"), "{}", slides[0].html);
+    }
+
+    #[test]
+    fn a_timer_stays_on_its_own_slide() {
+        let slides = parse("<!-- timer: 10s -->\n# One\n\n---\n\n# Two");
+        assert_eq!(slides[0].timer, Some(10_000));
+        assert_eq!(slides[1].timer, None);
+    }
+
+    #[test]
+    fn a_timer_without_a_unit_or_past_an_hour_is_refused() {
+        for bad in ["30", "0s", "61m", "-5s", "abc", "1h"] {
+            let deck = format!("<!-- timer: {bad} -->\n# One");
+            assert_eq!(parse(&deck)[0].timer, None, "accepted {bad}");
+        }
     }
 
     #[test]

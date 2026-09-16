@@ -2,7 +2,7 @@
 // needs, and keeps the one thing every panel depends on: which role this
 // console holds. Everything else lives in the panel that owns it.
 
-import { authFetch, connect, sessionId, tokenFor } from '/shared.js';
+import { authFetch, connect, sessionId, showRefusal, tokenFor } from '/shared.js';
 import { mountConsole } from '/console.js';
 import { mountDeckEditor } from '/deckeditor.js';
 import { mountSharePanel } from '/sharepanel.js';
@@ -32,7 +32,23 @@ if (!token) {
 
 let myRole = 'viewer';
 let latestQuestions = [];
+let latestScores = [];
 const voted = new Set();
+
+function paintScores() {
+  renderScores(els.scores, latestScores, {
+    emptyText: 'Nobody has joined the game yet.',
+    // Only a host's rows carry a `who`, and only the host may act on one.
+    onKick:
+      myRole === 'mc'
+        ? (row) => {
+            if (confirm(`Remove ${row.name} from the room? They cannot come back.`)) {
+              send({ type: 'kick', who: row.who });
+            }
+          }
+        : undefined,
+  });
+}
 
 const send = (msg) => socket.send(msg);
 
@@ -69,10 +85,17 @@ const socket = connect(id, token, {
   ended() {
     els.ended.hidden = false;
   },
+  refused(reason) {
+    showRefusal(els.ended, reason);
+  },
   deck: console_.deck,
   move: console_.move,
   tally: console_.tally,
   reveal: console_.reveal,
+  timer: console_.timer,
+  lock(msg) {
+    share.lock(msg.on);
+  },
   react(msg) {
     burst(msg.kind);
   },
@@ -80,9 +103,8 @@ const socket = connect(id, token, {
     share.qr(msg.on);
   },
   scores(msg) {
-    renderScores(els.scores, msg.items, {
-      emptyText: 'Nobody has joined the game yet.',
-    });
+    latestScores = msg.items;
+    paintScores();
   },
   questions(msg) {
     latestQuestions = msg.items;
@@ -138,6 +160,7 @@ function applyRole(role) {
     els.roleBadge.hidden = false;
   }
   lineup.paint();
+  paintScores();
 }
 
 async function refreshRole() {

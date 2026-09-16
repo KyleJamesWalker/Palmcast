@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -10,7 +10,7 @@ use crate::deck::{self, Slide};
 use crate::images::Stored;
 use crate::persist::{Choice, PersistedCue, PersistedQuestion, PersistedSession, PersistedTalk};
 use crate::wire::{
-    AudienceQuestion, Frame, LineupEntry, Reaction, ScoreRow, ServerMsg, TalkDetail,
+    AudienceQuestion, Frame, LineupEntry, Reaction, Refusal, ScoreRow, ServerMsg, TalkDetail,
 };
 
 /// No vowels, so an id cannot spell a word, and no glyphs that look alike when
@@ -59,6 +59,12 @@ const MAX_IMAGES: usize = 40;
 const MAX_IMAGE_BYTES: usize = 24 * 1024 * 1024;
 /// One picture at a time from any one phone.
 const UPLOAD_GAP: Duration = Duration::from_secs(2);
+/// Decks the editor can go back to. Enough to undo a bad save mid-talk, not an
+/// archive: each one is a whole deck held in memory.
+const MAX_HISTORY: usize = 10;
+/// Phones a locked room still lets back in. Bounds the set of ids a room
+/// remembers having seen, which every socket adds to.
+const MAX_SEEN: usize = 2000;
 
 /// What a socket or a request is allowed to do.
 ///
@@ -183,6 +189,19 @@ pub struct Session {
     /// What was on screen and when, for anyone cutting a recording afterwards.
     pub timeline: Vec<Cue>,
     pub opened: SystemTime,
+    /// The clock on the current slide, while one runs. Not persisted: a room
+    /// coming back from a restart has no idea how long it was gone.
+    pub timer: Option<Countdown>,
+    /// A locked room takes no phone it has not seen. The ones already in it,
+    /// including ones that drop and reconnect, stay.
+    pub locked: bool,
+    /// Browser ids the host has removed. They may not vote, ask, or connect.
+    pub banned: HashSet<String>,
+    /// Every browser id that has joined, so a lock can tell a reconnect from
+    /// a newcomer. Bounded, and once full a lock turns everyone new away.
+    pub seen: HashSet<String>,
+    /// The decks each save replaced, newest first. Not persisted.
+    pub history: VecDeque<Revision>,
 }
 
 /// One moment the room saw something new.
@@ -199,12 +218,39 @@ pub struct StoredQuestion {
     pub text: String,
     pub answered: bool,
     pub voters: HashSet<String>,
+    /// The browser that asked, so removing somebody takes their questions too.
+    pub by: String,
+}
+
+/// The clock on one slide.
+pub struct Countdown {
+    pub slide: usize,
+    pub ends: Instant,
+}
+
+/// A deck as it was before a save replaced it.
+pub struct Revision {
+    pub rev: u64,
+    pub markdown: String,
+    pub at: SystemTime,
+}
+
+/// One row of the history, for the editor to offer.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct RevisionInfo {
+    pub rev: u64,
+    pub at_ms: u64,
+    pub bytes: usize,
+    pub title: String,
 }
 
 impl Session {
     /// True when this viewer may take part. A viewer already known is always
     /// admitted, so the cap turns away new ids rather than existing ones.
     fn admit(&mut self, who: &str) -> bool {
+        if self.banned.contains(who) {
+            return false;
+        }
         if self.participants.contains(who) {
             return true;
         }
@@ -268,6 +314,7 @@ impl Session {
                 score: self.banked.get(who).copied().unwrap_or(0)
                     + self.earned(who)
                     + self.parked_points(who),
+                who: Some(who.clone()),
             })
             .collect();
         items.sort_by(|a, b| b.score.cmp(&a.score).then(a.name.cmp(&b.name)));
@@ -436,6 +483,8 @@ impl Session {
             self.lineup_msg(),
             self.baton_msg(),
             ServerMsg::Qr { on: self.qr_open },
+            self.timer_msg(),
+            ServerMsg::Lock { on: self.locked },
         ];
         out.extend(self.reveals());
         if is_staff {
@@ -453,6 +502,7 @@ impl Session {
         if !self.role_of(token).drives() || index >= self.slides.len() {
             return None;
         }
+        let landed = index != self.current;
         self.current = index;
         self.step = step.min(self.steps_at(index));
         self.touch();
@@ -466,7 +516,62 @@ impl Session {
             step: self.step,
         };
         self.emit(&msg);
+        // A staged item arriving is not a new slide, so the clock keeps going.
+        if landed {
+            self.restart_timer();
+        }
         Some(msg)
+    }
+
+    /// The clock as the room should show it right now.
+    fn timer_msg(&self) -> ServerMsg {
+        match &self.timer {
+            Some(clock) => ServerMsg::Timer {
+                slide: Some(clock.slide),
+                remaining_ms: clock
+                    .ends
+                    .saturating_duration_since(Instant::now())
+                    .as_millis() as u64,
+            },
+            None => ServerMsg::Timer {
+                slide: None,
+                remaining_ms: 0,
+            },
+        }
+    }
+
+    /// Starts the clock the current slide asks for, or stops whatever was
+    /// running when it asks for none. A slide already revealed gets no clock:
+    /// there is nothing left to hurry.
+    fn restart_timer(&mut self) {
+        let wanted = self
+            .slides
+            .get(self.current)
+            .and_then(|s| s.timer)
+            .filter(|_| !self.revealed.contains(&self.current));
+        let running = self.timer.as_ref().map(|c| c.slide);
+        self.timer = wanted.map(|ms| Countdown {
+            slide: self.current,
+            ends: Instant::now() + Duration::from_millis(u64::from(ms)),
+        });
+        if wanted.is_some() || running.is_some() {
+            self.emit(&self.timer_msg());
+        }
+    }
+
+    /// Stops the clock on one slide, telling the room if it was running.
+    fn stop_timer(&mut self, slide: usize) {
+        if self.timer.as_ref().is_some_and(|c| c.slide == slide) {
+            self.timer = None;
+            self.emit(&self.timer_msg());
+        }
+    }
+
+    /// Whether the clock on this slide has run down.
+    fn timed_out(&self, slide: usize) -> bool {
+        self.timer
+            .as_ref()
+            .is_some_and(|c| c.slide == slide && c.ends <= Instant::now())
     }
 
     /// Puts the way into the room on every screen, or takes it off.
@@ -511,7 +616,12 @@ impl Session {
         {
             return Err(EditError::Stale { current: self.rev });
         }
-        self.markdown = markdown.to_string();
+        self.history.push_front(Revision {
+            rev: self.rev,
+            markdown: std::mem::replace(&mut self.markdown, markdown.to_string()),
+            at: SystemTime::now(),
+        });
+        self.history.truncate(MAX_HISTORY);
         let rebuilt = deck::parse(markdown);
         // A typo fixed on slide one must not throw away a quiz in progress, so
         // only the questions whose options actually changed lose their votes.
@@ -535,10 +645,37 @@ impl Session {
         self.rev += 1;
         self.current = self.current.min(self.slides.len() - 1);
         self.step = self.step.min(self.steps_at(self.current));
+        if self
+            .timer
+            .as_ref()
+            .is_some_and(|c| c.slide >= self.slides.len())
+        {
+            self.timer = None;
+        }
         self.touch();
         let msg = self.snapshot();
         self.emit(&msg);
         Ok(msg)
+    }
+
+    /// The decks earlier saves replaced, newest first.
+    pub fn revisions(&self) -> Vec<RevisionInfo> {
+        self.history
+            .iter()
+            .map(|r| RevisionInfo {
+                rev: r.rev,
+                at_ms: millis(r.at),
+                bytes: r.markdown.len(),
+                title: first_heading(&r.markdown),
+            })
+            .collect()
+    }
+
+    pub fn revision(&self, rev: u64) -> Option<&str> {
+        self.history
+            .iter()
+            .find(|r| r.rev == rev)
+            .map(|r| r.markdown.as_str())
     }
 
     /// `None` when the room is full, which the caller turns into a closed
@@ -547,16 +684,87 @@ impl Session {
     /// hundreds of phones through this in a few seconds, and one frame per
     /// arrival to every socket is a burst nobody reads. `flush_viewers` sends
     /// the total a moment later instead.
-    pub fn join(&mut self) -> Option<ServerMsg> {
+    pub fn join(&mut self, who: &str) -> Result<ServerMsg, Refusal> {
+        if self.banned.contains(who) {
+            return Err(Refusal::Removed);
+        }
+        if self.locked && !self.seen.contains(who) {
+            return Err(Refusal::Locked);
+        }
         if self.viewers >= MAX_VIEWERS {
-            return None;
+            return Err(Refusal::Full);
+        }
+        if self.seen.len() < MAX_SEEN {
+            self.seen.insert(who.to_string());
         }
         self.viewers += 1;
         self.touch();
         self.viewers_dirty = true;
-        Some(ServerMsg::Viewers {
+        Ok(ServerMsg::Viewers {
             count: self.viewers,
         })
+    }
+
+    /// Closes the room to phones it has not seen, or opens it again.
+    pub fn set_lock(&mut self, role: Role, on: bool) -> bool {
+        if !role.hosts() || self.locked == on {
+            return false;
+        }
+        self.locked = on;
+        self.touch();
+        self.emit(&ServerMsg::Lock { on });
+        true
+    }
+
+    /// Removes somebody from the room for good: their name, votes, questions
+    /// and points go, and the id may not come back. `by` is the host's own
+    /// browser, which cannot remove itself.
+    pub fn kick(&mut self, role: Role, who: &str, by: &str) -> bool {
+        if !role.hosts() || who.is_empty() || who == by || !self.participants.contains(who) {
+            return false;
+        }
+        self.banned.insert(who.to_string());
+        self.participants.remove(who);
+        self.seen.remove(who);
+        self.names.remove(who);
+        self.banked.remove(who);
+        self.last_reaction.remove(who);
+        self.last_ask.remove(who);
+
+        let mut retallied = Vec::new();
+        for (slide, cast) in self.votes.iter_mut() {
+            if cast.remove(who).is_some() {
+                retallied.push(*slide);
+            }
+        }
+        self.votes.retain(|_, cast| !cast.is_empty());
+        if let Some(parked) = self.parked.as_mut() {
+            for cast in parked.votes.values_mut() {
+                cast.remove(who);
+            }
+            parked.votes.retain(|_, cast| !cast.is_empty());
+        }
+        self.questions.retain(|q| q.by != who);
+        for question in self.questions.iter_mut() {
+            question.voters.remove(who);
+        }
+
+        self.touch();
+        self.emit(&ServerMsg::Removed {
+            who: who.to_string(),
+        });
+        self.emit(&self.score_table());
+        self.emit(&self.question_list());
+        retallied.sort_unstable();
+        for slide in retallied {
+            let (counts, total) = self.counts(slide);
+            self.emit(&ServerMsg::Tally {
+                slide,
+                counts,
+                total,
+            });
+        }
+        true
     }
 
     pub fn leave(&mut self) -> ServerMsg {
@@ -582,7 +790,7 @@ impl Session {
     /// Records one vote and returns the tally. A voter who answers twice
     /// replaces their own vote rather than adding one.
     pub fn answer(&mut self, slide: usize, who: &str, options: &[usize]) -> Option<ServerMsg> {
-        if self.revealed.contains(&slide) {
+        if self.revealed.contains(&slide) || self.timed_out(slide) {
             return None;
         }
         let question = self.slides.get(slide).and_then(|s| s.question.as_ref())?;
@@ -669,6 +877,7 @@ impl Session {
             text: text.to_string(),
             answered: false,
             voters,
+            by: who.to_string(),
         });
         self.touch();
         let msg = self.question_list();
@@ -740,6 +949,7 @@ impl Session {
         // The board only changes when an answer opens, so it rides along with
         // the reveal rather than on a timer, and under the same lock.
         self.emit(&self.score_table());
+        self.stop_timer(slide);
         Some(msg)
     }
     /// The leaderboard as rows, for anything that is not a wire message.
@@ -805,7 +1015,23 @@ impl Session {
             dropped: rows(true),
             staged: self.staged,
             open: self.submissions_open,
+            elapsed_ms: SystemTime::now()
+                .duration_since(self.stage_started())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
         }
+    }
+
+    /// When the deck that is up went up: the first cue of the unbroken run of
+    /// cues on it, or the room's opening for a host deck nobody has left.
+    fn stage_started(&self) -> SystemTime {
+        self.timeline
+            .iter()
+            .rev()
+            .take_while(|cue| cue.talk == self.staged)
+            .last()
+            .map(|cue| cue.at)
+            .unwrap_or(self.opened)
     }
 
     /// The talks that are actually in the running order, in order, as indexes
@@ -1197,6 +1423,7 @@ impl Session {
         self.emit(&self.lineup_msg());
         self.emit(&self.baton_msg());
         self.emit(&self.question_list());
+        self.restart_timer();
         true
     }
 
@@ -1345,6 +1572,11 @@ impl Registry {
                 banked: HashMap::new(),
                 timeline: Vec::new(),
                 opened: SystemTime::now(),
+                timer: None,
+                locked: false,
+                banned: HashSet::new(),
+                seen: HashSet::new(),
+                history: VecDeque::new(),
             },
         );
         Some((id, token))
@@ -1378,6 +1610,11 @@ impl Registry {
             }
         }
         told
+    }
+
+    /// Whether the host has removed this browser from the room.
+    pub fn banned(&self, id: &str, who: &str) -> bool {
+        self.with(id, |s| s.banned.contains(who)).unwrap_or(false)
     }
 
     /// What a socket holding this token may see, under one lock.
@@ -1458,6 +1695,7 @@ impl Registry {
                         text: q.text.clone(),
                         answered: q.answered,
                         voters: q.voters.clone(),
+                        by: q.by.clone(),
                     })
                     .collect(),
                 next_question_id: s.next_question_id,
@@ -1507,6 +1745,9 @@ impl Registry {
                     .map(|p| p.revealed.clone())
                     .unwrap_or_default(),
                 banked: s.banked.clone(),
+                locked: s.locked,
+                banned: s.banned.clone(),
+                seen: s.seen.clone(),
                 opened_ms: millis(s.opened),
                 timeline: s
                     .timeline
@@ -1607,6 +1848,7 @@ impl Registry {
                             text: q.text,
                             answered: q.answered,
                             voters: q.voters,
+                            by: q.by,
                         })
                         .collect(),
                     last_ask: HashMap::new(),
@@ -1678,6 +1920,11 @@ impl Registry {
                         0 => SystemTime::now(),
                         ms => from_millis(ms),
                     },
+                    timer: None,
+                    locked: item.locked,
+                    banned: item.banned,
+                    seen: item.seen,
+                    history: VecDeque::new(),
                 },
             );
             restored += 1;
@@ -2033,8 +2280,10 @@ mod tests {
         let mut console = reg.subscribe(&id).unwrap();
 
         // A QR code going up. Nothing is sent per arrival.
-        for _ in 0..50 {
-            reg.with_mut(&id, Session::join).flatten().unwrap();
+        for n in 0..50 {
+            reg.with_mut(&id, |s| s.join(&format!("p{n}")))
+                .unwrap()
+                .unwrap();
         }
         assert!(
             console.try_recv().is_err(),
@@ -3254,6 +3503,278 @@ mod tests {
             Some("neon"),
             "the talk's theme did not reach the room"
         );
+    }
+
+    fn timer_state(msgs: &[ServerMsg]) -> Option<(Option<usize>, u64)> {
+        msgs.iter().rev().find_map(|m| match m {
+            ServerMsg::Timer {
+                slide,
+                remaining_ms,
+            } => Some((*slide, *remaining_ms)),
+            _ => None,
+        })
+    }
+
+    const TIMED: &str =
+        "# Welcome\n\n---\n\n<!-- timer: 30s -->\n# Q\n\n- [x] yes\n- [ ] no\n\n---\n\n# End";
+
+    #[test]
+    fn a_timed_slide_starts_its_clock_when_the_room_lands_on_it() {
+        let reg = registry();
+        let (id, mc) = reg.create(TIMED).unwrap();
+        let opening = reg.with(&id, |s| s.catch_up(false)).unwrap();
+        assert_eq!(
+            timer_state(&opening),
+            Some((None, 0)),
+            "a clock ran before the slide"
+        );
+
+        reg.with_mut(&id, |s| s.goto(&mc, 1, 0)).flatten().unwrap();
+        let (slide, left) = timer_state(&reg.with(&id, |s| s.catch_up(false)).unwrap()).unwrap();
+        assert_eq!(slide, Some(1));
+        assert!(left > 29_000 && left <= 30_000, "{left}");
+
+        // A staged item on the same slide does not restart it; another slide stops it.
+        reg.with_mut(&id, |s| s.goto(&mc, 2, 0)).flatten().unwrap();
+        assert_eq!(
+            timer_state(&reg.with(&id, |s| s.catch_up(false)).unwrap()),
+            Some((None, 0))
+        );
+    }
+
+    #[test]
+    fn a_vote_after_the_clock_runs_out_is_refused() {
+        let reg = registry();
+        let (id, mc) = reg.create(TIMED).unwrap();
+        reg.with_mut(&id, |s| s.goto(&mc, 1, 0)).flatten().unwrap();
+        assert!(
+            reg.with_mut(&id, |s| s.answer(1, "quick", &[0]))
+                .flatten()
+                .is_some()
+        );
+
+        reg.with_mut(&id, |s| {
+            s.timer = Some(Countdown {
+                slide: 1,
+                ends: Instant::now() - Duration::from_millis(1),
+            });
+        });
+        assert!(
+            reg.with_mut(&id, |s| s.answer(1, "late", &[0]))
+                .flatten()
+                .is_none(),
+            "a vote landed after the bell"
+        );
+    }
+
+    #[test]
+    fn revealing_stops_the_clock_and_a_revealed_slide_gets_none() {
+        let reg = registry();
+        let (id, mc) = reg.create(TIMED).unwrap();
+        reg.with_mut(&id, |s| s.goto(&mc, 1, 0)).flatten().unwrap();
+        reg.with_mut(&id, |s| s.reveal(&mc, 1)).flatten().unwrap();
+        assert_eq!(
+            timer_state(&reg.with(&id, |s| s.catch_up(false)).unwrap()),
+            Some((None, 0))
+        );
+        reg.with_mut(&id, |s| s.goto(&mc, 0, 0)).flatten().unwrap();
+        reg.with_mut(&id, |s| s.goto(&mc, 1, 0)).flatten().unwrap();
+        assert_eq!(
+            timer_state(&reg.with(&id, |s| s.catch_up(false)).unwrap()),
+            Some((None, 0)),
+            "a revealed question was given a clock"
+        );
+    }
+
+    #[test]
+    fn a_locked_room_turns_away_a_phone_it_has_not_seen_and_keeps_one_it_has() {
+        let reg = registry();
+        let (id, mc) = reg.create("# Welcome").unwrap();
+        reg.with_mut(&id, |s| s.join("early")).unwrap().unwrap();
+        assert!(
+            reg.with_mut(&id, |s| s.set_lock(s.role_of(&mc), true))
+                .unwrap()
+        );
+
+        assert!(
+            reg.with_mut(&id, |s| s.join("early")).unwrap().is_ok(),
+            "a reconnect was refused"
+        );
+        assert_eq!(
+            reg.with_mut(&id, |s| s.join("late")).unwrap().unwrap_err(),
+            Refusal::Locked
+        );
+
+        assert!(
+            reg.with_mut(&id, |s| s.set_lock(s.role_of(&mc), false))
+                .unwrap()
+        );
+        assert!(reg.with_mut(&id, |s| s.join("late")).unwrap().is_ok());
+    }
+
+    #[test]
+    fn only_the_host_locks_the_room() {
+        let reg = registry();
+        let (id, _mc) = reg.create("# Welcome").unwrap();
+        assert!(
+            !reg.with_mut(&id, |s| s.set_lock(Role::CoHost, true))
+                .unwrap()
+        );
+        assert!(
+            !reg.with_mut(&id, |s| s.set_lock(Role::Viewer, true))
+                .unwrap()
+        );
+        assert!(reg.with_mut(&id, |s| s.join("anyone")).unwrap().is_ok());
+    }
+
+    #[test]
+    fn removing_somebody_takes_everything_of_theirs_and_bars_the_door() {
+        let (reg, id, mc) = open_quiz_room();
+        reg.with_mut(&id, |s| s.join("sam")).unwrap().unwrap();
+        reg.with_mut(&id, |s| s.set_name("sam", "Sam"))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.set_name("ann", "Ann"))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.answer(1, "sam", &[0]))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.answer(1, "ann", &[0]))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.ask("sam", "why?"))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.ask("ann", "how?"))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.upvote("sam", 2)).flatten().unwrap();
+        reg.with_mut(&id, |s| s.reveal(&mc, 1)).flatten().unwrap();
+        assert_eq!(score_of(&reg, &id, "Sam"), 1);
+
+        assert!(
+            !reg.with_mut(&id, |s| s.kick(Role::CoHost, "sam", "host"))
+                .unwrap()
+        );
+        assert!(
+            !reg.with_mut(&id, |s| s.kick(Role::Mc, "sam", "sam"))
+                .unwrap(),
+            "a host removed their own browser"
+        );
+        assert!(
+            reg.with_mut(&id, |s| s.kick(Role::Mc, "sam", "host"))
+                .unwrap()
+        );
+
+        let ServerMsg::Scores { items } = reg.with(&id, Session::score_table).unwrap() else {
+            panic!("no scores");
+        };
+        assert!(
+            items.iter().all(|row| row.name != "Sam"),
+            "the name stayed on the board"
+        );
+        let (counts, total) = reg.with(&id, |s| s.counts(1)).unwrap();
+        assert_eq!((counts[0], total), (1, 1), "the vote stayed in the tally");
+        let ServerMsg::Questions { items } = reg.with(&id, Session::question_list).unwrap() else {
+            panic!("no questions");
+        };
+        assert_eq!(items.len(), 1, "the question they asked stayed");
+        assert_eq!(items[0].votes, 1, "their upvote stayed");
+
+        assert!(
+            reg.with_mut(&id, |s| s.answer(1, "sam", &[0]))
+                .flatten()
+                .is_none()
+        );
+        assert!(
+            reg.with_mut(&id, |s| s.set_name("sam", "Sam again"))
+                .flatten()
+                .is_none()
+        );
+        assert_eq!(
+            reg.with_mut(&id, |s| s.join("sam")).unwrap().unwrap_err(),
+            Refusal::Removed
+        );
+        assert!(reg.banned(&id, "sam"));
+    }
+
+    #[test]
+    fn a_lock_and_a_removal_survive_a_restart() {
+        let reg = registry();
+        let (id, mc) = reg.create("# Welcome").unwrap();
+        reg.with_mut(&id, |s| s.join("kept")).unwrap().unwrap();
+        reg.with_mut(&id, |s| s.set_name("gone", "Gone"))
+            .flatten()
+            .unwrap();
+        reg.with_mut(&id, |s| s.kick(s.role_of(&mc), "gone", "host"));
+        reg.with_mut(&id, |s| s.set_lock(s.role_of(&mc), true));
+
+        let saved = reg.export();
+        let back = registry();
+        back.import(saved);
+        assert!(back.with_mut(&id, |s| s.join("kept")).unwrap().is_ok());
+        assert_eq!(
+            back.with_mut(&id, |s| s.join("new")).unwrap().unwrap_err(),
+            Refusal::Locked
+        );
+        assert_eq!(
+            back.with_mut(&id, |s| s.join("gone")).unwrap().unwrap_err(),
+            Refusal::Removed
+        );
+    }
+
+    #[test]
+    fn the_editor_keeps_the_last_ten_saves_newest_first() {
+        let reg = registry();
+        let (id, _mc) = reg.create("# v0").unwrap();
+        for n in 1..=12 {
+            reg.with_mut(&id, |s| s.replace_deck(Role::Mc, None, &format!("# v{n}")))
+                .unwrap()
+                .unwrap();
+        }
+        let history = reg.with(&id, Session::revisions).unwrap();
+        assert_eq!(history.len(), 10);
+        assert_eq!(history[0].rev, 12, "the newest is not first");
+        assert_eq!(history[0].title, "v11", "the newest save replaced v11");
+        assert_eq!(history[9].rev, 3);
+        assert_eq!(
+            reg.with(&id, |s| s.revision(12).map(str::to_owned))
+                .unwrap(),
+            Some("# v11".into())
+        );
+        assert_eq!(
+            reg.with(&id, |s| s.revision(1).map(str::to_owned)).unwrap(),
+            None,
+            "v0 should have aged out"
+        );
+    }
+
+    #[test]
+    fn the_speaker_clock_restarts_when_a_talk_goes_up() {
+        let (reg, id, mc) = open_quiz_room();
+        let (talk, _) = submit(&reg, &id, "ada", "# Borrowing");
+        reg.with_mut(&id, |s| s.stage(s.role_of(&mc), Some(talk)));
+        let ServerMsg::Lineup { elapsed_ms, .. } = reg.with(&id, Session::lineup_msg).unwrap()
+        else {
+            panic!("no lineup");
+        };
+        assert!(
+            elapsed_ms < 1_000,
+            "the clock did not restart: {elapsed_ms}"
+        );
+        // The clock reads from the timeline, so a cue from before the talk went
+        // up does not count toward it.
+        let started = reg.with(&id, Session::stage_started).unwrap();
+        let first_cue = reg
+            .with(&id, |s| {
+                s.timeline
+                    .iter()
+                    .find(|c| c.talk == Some(talk))
+                    .map(|c| c.at)
+            })
+            .unwrap();
+        assert_eq!(Some(started), first_cue);
     }
 
     fn qr_state(msgs: &[ServerMsg]) -> Option<bool> {

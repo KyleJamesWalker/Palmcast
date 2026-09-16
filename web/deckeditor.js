@@ -30,6 +30,9 @@ export function mountDeckEditor({ id, token, rev, questions }) {
     toolbar: document.getElementById('deck-toolbar'),
     image: document.getElementById('deck-image'),
     imageFile: document.getElementById('deck-image-file'),
+    history: document.getElementById('deck-history'),
+    revisions: document.getElementById('deck-revisions'),
+    restore: document.getElementById('deck-restore'),
   };
 
   let editingRev = null;
@@ -71,6 +74,8 @@ export function mountDeckEditor({ id, token, rev, questions }) {
   async function open() {
     els.status.textContent = 'Loading…';
     els.editor.hidden = false;
+    // Typing into a box that is about to be replaced loses the typing.
+    els.text.disabled = true;
     try {
       const res = await authFetch(`/api/sessions/${id}/markdown`, token);
       if (!res.ok) throw new Error(`server said ${res.status}`);
@@ -78,11 +83,54 @@ export function mountDeckEditor({ id, token, rev, questions }) {
       // The revision this edit is based on, so a save can tell if it is stale.
       editingRev = rev();
       els.status.textContent = '';
-      els.text.focus();
     } catch (error) {
       els.status.textContent = `Could not load: ${error.message}`;
+    } finally {
+      els.text.disabled = false;
+      els.text.focus();
+    }
+    loadHistory();
+  }
+
+  /// The decks earlier saves replaced. Nothing to offer is the common case, so
+  /// the row stays hidden until there is.
+  async function loadHistory() {
+    els.history.hidden = true;
+    try {
+      const res = await authFetch(`/api/sessions/${id}/revisions`, token);
+      if (!res.ok) return;
+      const revisions = await res.json();
+      if (!Array.isArray(revisions) || !revisions.length) return;
+      els.revisions.textContent = '';
+      for (const item of revisions) {
+        const option = document.createElement('option');
+        option.value = String(item.rev);
+        option.textContent = revisionLabel(item);
+        els.revisions.append(option);
+      }
+      els.history.hidden = false;
+    } catch {
+      /* the editor works without a history */
     }
   }
+
+  els.restore.addEventListener('click', async () => {
+    const which = els.revisions.value;
+    if (!which) return;
+    els.restore.disabled = true;
+    try {
+      const res = await authFetch(`/api/sessions/${id}/revisions/${which}`, token);
+      if (!res.ok) throw new Error(`server said ${res.status}`);
+      els.text.value = await res.text();
+      els.text.dispatchEvent(new Event('input', { bubbles: true }));
+      els.status.textContent = `Loaded save ${which}. Press Save to put it back on screen.`;
+      els.text.focus();
+    } catch (error) {
+      els.status.textContent = `Could not load that save: ${error.message}`;
+    } finally {
+      els.restore.disabled = false;
+    }
+  });
 
   els.toggle.addEventListener('click', () => {
     if (els.editor.hidden) {
@@ -171,4 +219,12 @@ export function mountDeckEditor({ id, token, rev, questions }) {
       if (!editing) els.editor.hidden = true;
     },
   };
+}
+
+/// One row of the history: which save, when, and what it opened with.
+export function revisionLabel({ rev, at_ms, title }) {
+  const when = new Date(at_ms);
+  const hh = String(when.getHours()).padStart(2, '0');
+  const mm = String(when.getMinutes()).padStart(2, '0');
+  return `Save ${rev} · ${hh}:${mm} · ${title}`;
 }
