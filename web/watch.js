@@ -2,7 +2,7 @@ import { authFetch, connect, copyText, sessionId, showRefusal, viewerId } from '
 import { renderLineup, rememberTalk, talksHeld, forgetTalk } from '/lineup.js';
 import { starterPrompt } from '/deckstate.js';
 import { renderOptions } from '/quiz.js';
-import { pruneBySlide, survivingSlides } from '/deckstate.js';
+import { applyPatch, pruneBySlide, survivingPatch, survivingSlides } from '/deckstate.js';
 import { burst, reactionBar } from '/reactions.js';
 import { previewDeck, renderPreview } from '/preview.js';
 import { renderQuestions } from '/questions.js';
@@ -113,6 +113,10 @@ const socket = connect(id, null, {
     countdown.set(msg);
     paint();
   },
+  moderation(msg) {
+    moderated = msg.on;
+    askText.placeholder = moderated ? 'Ask a question (the host reads it first)' : 'Ask a question';
+  },
   deck(msg) {
     if (msg.rev !== rev) {
       // Keep what the server kept, and drop what it dropped.
@@ -128,6 +132,23 @@ const socket = connect(id, null, {
     deckTheme = msg.theme ?? null;
     // Every transition the deck can reach for, fetched now rather than at the
     // press that needs it. A talk going on stage is the moment there is time.
+    preload(slides);
+    paint();
+  },
+  patch(msg) {
+    if (msg.from_rev !== rev) {
+      socket.send({ type: 'resync' });
+      return;
+    }
+    const keep = survivingPatch(slides, msg.changed);
+    pruneBySlide(chosen, keep);
+    for (const slide of [...sent]) if (!keep.has(slide)) sent.delete(slide);
+    pruneBySlide(revealed, keep);
+    slides = applyPatch(slides, msg.changed);
+    rev = msg.rev;
+    current = msg.current;
+    step = msg.step;
+    deckTheme = msg.theme ?? null;
     preload(slides);
     paint();
   },
@@ -208,6 +229,7 @@ const askText = document.getElementById('ask-text');
 
 let questions = [];
 const voted = new Set();
+let moderated = false;
 
 function paintQuestions() {
   qaToggle.textContent = questions.length ? `Room \u00b7 ${questions.length}` : 'Room';
@@ -233,6 +255,12 @@ askForm.addEventListener('submit', (event) => {
   if (!text) return;
   socket.send({ type: 'ask', text });
   askText.value = '';
+  if (moderated) {
+    askText.placeholder = 'Sent to the host';
+    setTimeout(() => {
+      askText.placeholder = moderated ? 'Ask a question (the host reads it first)' : 'Ask a question';
+    }, 2500);
+  }
 });
 
 paintQuestions();
@@ -339,7 +367,9 @@ function mineCard(detail) {
     ? 'On stage now.'
     : detail.dropped
       ? 'The host took this off the running order.'
-      : `Number ${detail.position} in the running order.`;
+      : detail.pending
+        ? 'Waiting for the host to read it.'
+        : `Number ${detail.position} in the running order.`;
   card.append(title, state);
 
   if (detail.note) {

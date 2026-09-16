@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { survivingSlides, pruneBySlide } = await import('./deckstate.js');
+const { survivingSlides, pruneBySlide, applyPatch, survivingPatch } = await import('./deckstate.js');
 
 const q = (...options) => ({ html: '', notes: '', question: { options, correct: [] } });
 const prose = (html) => ({ html, notes: '' });
@@ -45,4 +45,29 @@ test('pruning an empty map is harmless', () => {
   const m = new Map();
   pruneBySlide(m, new Set([0]));
   assert.equal(m.size, 0);
+});
+
+test('a patch drops the changed slides into place and leaves the rest', () => {
+  const before = [prose('a'), prose('b'), prose('c')];
+  const after = applyPatch(before, [{ index: 1, slide: prose('B') }]);
+  assert.deepEqual(after.map((s) => s.html), ['a', 'B', 'c']);
+  assert.deepEqual(before.map((s) => s.html), ['a', 'b', 'c'], 'the old deck was written to');
+});
+
+test('a patch keeps state everywhere it did not touch', () => {
+  const before = [q('x', 'y'), q('p', 'q'), prose('c')];
+  const keep = survivingPatch(before, [{ index: 2, slide: prose('C') }]);
+  // The two questions it never touched stay. The prose slide it rewrote holds
+  // no votes to keep, as in the whole-deck rule.
+  assert.deepEqual([...keep].sort(), [0, 1]);
+});
+
+test('a patched question keeps its votes only if its options came through the same', () => {
+  const before = [q('x', 'y'), q('p', 'q')];
+  const keep = survivingPatch(before, [
+    { index: 0, slide: q('x', 'y') },
+    { index: 1, slide: q('p', 'z') },
+  ]);
+  assert.ok(keep.has(0));
+  assert.ok(!keep.has(1));
 });

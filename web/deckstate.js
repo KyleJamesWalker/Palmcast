@@ -17,6 +17,27 @@ export function survivingSlides(before, after) {
   return keep;
 }
 
+/// The deck after a patch: the changed slides dropped into place.
+export function applyPatch(slides, changed) {
+  const next = [...slides];
+  for (const { index, slide } of changed) next[index] = slide;
+  return next;
+}
+
+/// Which positions keep their state through a patch. Everything the patch did
+/// not touch, plus every touched question whose options came through the same,
+/// which is the rule `survivingSlides` applies to a whole deck.
+export function survivingPatch(before, changed) {
+  const keep = new Set(before.map((_, index) => index));
+  for (const { index, slide } of changed) {
+    const was = before[index]?.question?.options;
+    const now = slide.question?.options;
+    const same = was && now && was.length === now.length && was.every((o, i) => o === now[i]);
+    if (!same) keep.delete(index);
+  }
+  return keep;
+}
+
 /// Drops every entry whose slide did not survive the edit.
 export function pruneBySlide(map, keep) {
   for (const key of [...map.keys()]) {

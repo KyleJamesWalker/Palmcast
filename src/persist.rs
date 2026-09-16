@@ -84,6 +84,12 @@ pub struct PersistedSession {
     pub banned: HashSet<String>,
     #[serde(default)]
     pub seen: HashSet<String>,
+    /// Whether questions wait for the host before the room sees them.
+    #[serde(default)]
+    pub moderated: bool,
+    /// Whether a talk waits for the host before it joins the running order.
+    #[serde(default)]
+    pub approval: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +117,8 @@ pub struct PersistedTalk {
     pub dropped: bool,
     #[serde(default)]
     pub note: String,
+    #[serde(default)]
+    pub pending: bool,
 }
 
 /// What one voter chose on one slide.
@@ -149,6 +157,8 @@ pub struct PersistedQuestion {
     pub voters: HashSet<String>,
     #[serde(default)]
     pub by: String,
+    #[serde(default)]
+    pub pending: bool,
 }
 
 /// Writes through a temporary file in the same directory and renames it, so a
@@ -232,6 +242,7 @@ mod tests {
                 answered: false,
                 voters: HashSet::from(["sam".to_string()]),
                 by: "sam".into(),
+                pending: false,
             }],
             next_question_id: 2,
             names: HashMap::from([("sam".to_string(), "Sam".to_string())]),

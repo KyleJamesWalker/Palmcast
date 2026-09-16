@@ -21,6 +21,7 @@ const els = {
   watchLink: document.getElementById('watch-link'),
   roleBadge: document.getElementById('role-badge'),
   questions: document.getElementById('questions'),
+  moderate: document.getElementById('moderate-toggle'),
   scores: document.getElementById('scores'),
   ended: document.getElementById('ended'),
 };
@@ -34,6 +35,16 @@ let myRole = 'viewer';
 let latestQuestions = [];
 let latestScores = [];
 const voted = new Set();
+
+function paintModeration(on) {
+  els.moderate.setAttribute('aria-pressed', String(on));
+  els.moderate.textContent = on ? 'Reviewing first' : 'Review first';
+  els.moderate.classList.toggle('primary', on);
+}
+paintModeration(false);
+els.moderate.addEventListener('click', () => {
+  send({ type: 'moderate', on: els.moderate.getAttribute('aria-pressed') !== 'true' });
+});
 
 function paintScores() {
   renderScores(els.scores, latestScores, {
@@ -89,12 +100,16 @@ const socket = connect(id, token, {
     showRefusal(els.ended, reason);
   },
   deck: console_.deck,
+  patch: console_.patch,
   move: console_.move,
   tally: console_.tally,
   reveal: console_.reveal,
   timer: console_.timer,
   lock(msg) {
     share.lock(msg.on);
+  },
+  moderation(msg) {
+    paintModeration(msg.on);
   },
   react(msg) {
     burst(msg.kind);
@@ -118,6 +133,12 @@ const socket = connect(id, token, {
       },
       onAnswered(question) {
         send({ type: 'answered', question });
+      },
+      onApprove(question) {
+        send({ type: 'approve', question });
+      },
+      onDismiss(question) {
+        send({ type: 'dismiss', question });
       },
     });
   },
@@ -146,6 +167,7 @@ function applyRole(role) {
   const staff = role === 'mc' || role === 'cohost';
   editor.allow(staff);
   lineup.allow(role === 'mc');
+  els.moderate.hidden = role !== 'mc';
   share.allow({
     share: role === 'mc',
     // Whoever drives: the person standing in front of the room is the one who

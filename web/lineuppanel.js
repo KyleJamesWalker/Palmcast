@@ -18,7 +18,10 @@ export function mountLineupPanel({ id, token, send, role }) {
     panel: document.getElementById('lineup-panel'),
     list: document.getElementById('lineup'),
     submissions: document.getElementById('submissions'),
+    approval: document.getElementById('approval'),
     export: document.getElementById('export'),
+    people: document.getElementById('export-people'),
+    peopleField: document.getElementById('export-people-field'),
     read: document.getElementById('talk-read'),
     readTitle: document.getElementById('talk-read-title'),
     readClose: document.getElementById('talk-read-close'),
@@ -33,12 +36,20 @@ export function mountLineupPanel({ id, token, send, role }) {
     const mc = role() === 'mc';
     els.submissions.textContent = lineup.open ? 'Close submissions' : 'Open submissions';
     els.submissions.hidden = !mc;
+    els.approval.hidden = !mc;
+    els.approval.setAttribute('aria-pressed', String(Boolean(lineup.approval)));
+    els.approval.textContent = lineup.approval ? 'Reading talks first' : 'Read talks first';
+    els.approval.classList.toggle('primary', Boolean(lineup.approval));
     els.export.hidden = !mc;
+    els.peopleField.hidden = !mc;
     renderLineup(els.list, lineup, {
       role: role(),
       baton,
       onStage(talk) {
         send({ type: 'stage', talk });
+      },
+      onAccept(talk) {
+        send({ type: 'accept', talk: talk.id });
       },
       onHand(talk, staged) {
         // A driver moves the deck that is up without seeing its notes.
@@ -104,12 +115,17 @@ export function mountLineupPanel({ id, token, send, role }) {
     send({ type: 'submissions', open: !lineup.open });
   });
 
+  els.approval.addEventListener('click', () => {
+    send({ type: 'approval', on: !lineup.approval });
+  });
+
   els.export.addEventListener('click', async () => {
     const label = els.export.textContent;
     els.export.disabled = true;
     els.export.textContent = 'Packing…';
     try {
-      const res = await authFetch(`/api/sessions/${id}/export`, token);
+      const query = els.people.checked ? '?people=1' : '';
+      const res = await authFetch(`/api/sessions/${id}/export${query}`, token);
       if (!res.ok) throw new Error(`server said ${res.status}`);
       const blob = await res.blob();
       const href = URL.createObjectURL(blob);

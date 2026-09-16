@@ -25,6 +25,13 @@ pub enum Reaction {
     Wow,
 }
 
+/// One slide an edit replaced, and where it sits.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Changed {
+    pub index: usize,
+    pub slide: Slide,
+}
+
 /// One row of the running order. The deck stays behind: only a title, who is
 /// giving it, and how long it runs.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -49,6 +56,8 @@ pub struct TalkDetail {
     pub position: Option<usize>,
     pub staged: bool,
     pub dropped: bool,
+    /// Waiting for the host to accept it onto the running order.
+    pub pending: bool,
     /// Why the host took it off, when they said. Empty when they did not.
     pub note: String,
 }
@@ -61,6 +70,10 @@ pub struct AudienceQuestion {
     pub text: String,
     pub votes: usize,
     pub answered: bool,
+    /// Waiting for the host in a moderated room. Staff only: the room never
+    /// sees a pending question at all.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub pending: bool,
 }
 
 /// One line of the leaderboard. `name` is whatever a viewer typed, so every
@@ -92,6 +105,18 @@ pub enum ServerMsg {
         /// nothing wants.
         theme: Option<Look>,
         slides: Vec<Slide>,
+    },
+    /// An edit that touched a few slides, sent as just those. A client whose
+    /// deck is not at `from_rev` cannot apply it and asks for the whole deck
+    /// instead. The full `Deck` still goes out when the length changed or most
+    /// of the deck did.
+    Patch {
+        from_rev: u64,
+        rev: u64,
+        current: usize,
+        step: usize,
+        theme: Option<Look>,
+        changed: Vec<Changed>,
     },
     Move {
         current: usize,
@@ -135,9 +160,14 @@ pub enum ServerMsg {
         /// Talks the host has taken off the running order. Staff only, because
         /// a room does not need to watch what was pulled from it.
         dropped: Vec<LineupEntry>,
+        /// Talks waiting for the host to accept them. Staff only: the room sees
+        /// a talk once it is in the running order and not before.
+        pending: Vec<LineupEntry>,
         /// The talk currently on stage, if any.
         staged: Option<u64>,
         open: bool,
+        /// Whether a new talk waits for the host before it joins the order.
+        approval: bool,
         /// How long the deck that is up has been up, so every console shows the
         /// same speaker clock whatever its own clock says.
         elapsed_ms: u64,
@@ -151,6 +181,10 @@ pub enum ServerMsg {
     },
     /// Whether the room is taking new phones.
     Lock {
+        on: bool,
+    },
+    /// Whether a question waits for the host before the room sees it.
+    Moderation {
         on: bool,
     },
     /// One socket, told why it is being closed, and then closed. Never
@@ -184,6 +218,24 @@ pub enum ServerMsg {
     },
 }
 
+/// A slide as the room may see it: no notes, no right answers. The look stays,
+/// because it paints the audience's own screen and names only a stylesheet.
+fn redact_slide(s: &Slide) -> Slide {
+    Slide {
+        html: s.html.clone(),
+        notes: String::new(),
+        steps: s.steps,
+        transition: s.transition.clone(),
+        theme: s.theme.clone(),
+        timer: s.timer,
+        question: s.question.as_ref().map(|q| Question {
+            options: q.options.clone(),
+            multi: q.multi,
+            correct: Vec::new(),
+        }),
+    }
+}
+
 impl ServerMsg {
     /// What a socket that is not the presenter may see. `None` means the
     /// message is not theirs at all.
@@ -200,22 +252,26 @@ impl ServerMsg {
                 current: *current,
                 step: *step,
                 theme: theme.clone(),
-                slides: slides
+                slides: slides.iter().map(redact_slide).collect(),
+            }),
+            ServerMsg::Patch {
+                from_rev,
+                rev,
+                current,
+                step,
+                theme,
+                changed,
+            } => Some(ServerMsg::Patch {
+                from_rev: *from_rev,
+                rev: *rev,
+                current: *current,
+                step: *step,
+                theme: theme.clone(),
+                changed: changed
                     .iter()
-                    .map(|s| Slide {
-                        html: s.html.clone(),
-                        notes: String::new(),
-                        steps: s.steps,
-                        transition: s.transition.clone(),
-                        // The look paints the audience's own screen, so it has
-                        // to reach them. It names a stylesheet and nothing else.
-                        theme: s.theme.clone(),
-                        timer: s.timer,
-                        question: s.question.as_ref().map(|q| Question {
-                            options: q.options.clone(),
-                            multi: q.multi,
-                            correct: Vec::new(),
-                        }),
+                    .map(|c| Changed {
+                        index: c.index,
+                        slide: redact_slide(&c.slide),
                     })
                     .collect(),
             }),
@@ -223,14 +279,20 @@ impl ServerMsg {
                 items,
                 staged,
                 open,
+                approval,
                 elapsed_ms,
                 ..
             } => Some(ServerMsg::Lineup {
                 items: items.clone(),
                 dropped: Vec::new(),
+                pending: Vec::new(),
                 staged: *staged,
                 open: *open,
+                approval: *approval,
                 elapsed_ms: *elapsed_ms,
+            }),
+            ServerMsg::Questions { items } => Some(ServerMsg::Questions {
+                items: items.iter().filter(|q| !q.pending).cloned().collect(),
             }),
             ServerMsg::Scores { items } => Some(ServerMsg::Scores {
                 items: items
@@ -255,6 +317,9 @@ pub enum ClientMsg {
     /// protocol level pings to JavaScript, so this is how a tab that just woke
     /// finds out whether its socket survived the sleep.
     Ping,
+    /// The page asking for the whole state again, because a patch arrived for
+    /// a revision it does not hold.
+    Resync,
     /// The first frame a presenter sends. Browsers cannot set a header on a
     /// WebSocket, so the token travels here rather than in the URL, where a
     /// proxy would log it. An audience socket sends it empty.
@@ -281,6 +346,14 @@ pub enum ClientMsg {
     Submissions {
         open: bool,
     },
+    /// The host asking to read a talk before it joins the running order.
+    Approval {
+        on: bool,
+    },
+    /// The host letting a waiting talk onto the running order.
+    Accept {
+        talk: u64,
+    },
     /// The host moving a talk to another place in the running order, counting
     /// from zero.
     Reorder {
@@ -306,6 +379,18 @@ pub enum ClientMsg {
     /// The host closing the room to phones it has not seen, or opening it.
     Lock {
         on: bool,
+    },
+    /// The host asking to read questions before the room does, or not.
+    Moderate {
+        on: bool,
+    },
+    /// The host letting a pending question through to the room.
+    Approve {
+        question: u64,
+    },
+    /// The host throwing a pending question away.
+    Dismiss {
+        question: u64,
     },
     /// The host removing somebody from the room for good.
     Kick {
@@ -361,7 +446,11 @@ impl Frame {
             Some(redacted)
                 if matches!(
                     msg,
-                    ServerMsg::Deck { .. } | ServerMsg::Lineup { .. } | ServerMsg::Scores { .. }
+                    ServerMsg::Deck { .. }
+                        | ServerMsg::Patch { .. }
+                        | ServerMsg::Lineup { .. }
+                        | ServerMsg::Scores { .. }
+                        | ServerMsg::Questions { .. }
                 ) =>
             {
                 Some(serde_json::to_string(&redacted).unwrap_or_default())
@@ -450,10 +539,15 @@ mod tests {
             items: vec![entry.clone()],
             dropped: vec![LineupEntry {
                 title: "Needs a rewrite".into(),
+                ..entry.clone()
+            }],
+            pending: vec![LineupEntry {
+                title: "Not yet accepted".into(),
                 ..entry
             }],
             staged: None,
             open: true,
+            approval: true,
             elapsed_ms: 0,
         });
 
@@ -461,6 +555,8 @@ mod tests {
         let audience = frame.for_socket(false).unwrap();
         assert!(owner.contains("Needs a rewrite"));
         assert!(!audience.contains("Needs a rewrite"), "{audience}");
+        assert!(owner.contains("Not yet accepted"));
+        assert!(!audience.contains("Not yet accepted"), "{audience}");
         assert!(audience.contains("Borrow checking"));
     }
 
@@ -523,6 +619,57 @@ mod tests {
         let frame = Frame::new(&ServerMsg::Removed { who: "x".into() });
         assert!(frame.rerole);
         assert_eq!(frame.for_socket(false), None);
+    }
+
+    #[test]
+    fn a_pending_question_never_reaches_the_room() {
+        let frame = Frame::new(&ServerMsg::Questions {
+            items: vec![
+                AudienceQuestion {
+                    id: 1,
+                    text: "shown".into(),
+                    votes: 1,
+                    answered: false,
+                    pending: false,
+                },
+                AudienceQuestion {
+                    id: 2,
+                    text: "held back".into(),
+                    votes: 1,
+                    answered: false,
+                    pending: true,
+                },
+            ],
+        });
+        let owner = frame.for_socket(true).unwrap();
+        let audience = frame.for_socket(false).unwrap();
+        assert!(owner.contains("held back"));
+        assert!(!audience.contains("held back"), "{audience}");
+        assert!(audience.contains("shown"));
+    }
+
+    #[test]
+    fn a_patch_is_redacted_like_the_deck_it_patches() {
+        let ServerMsg::Deck { slides, .. } = deck_msg() else {
+            panic!("not a deck");
+        };
+        let frame = Frame::new(&ServerMsg::Patch {
+            from_rev: 1,
+            rev: 2,
+            current: 0,
+            step: 0,
+            theme: None,
+            changed: vec![Changed {
+                index: 0,
+                slide: slides[0].clone(),
+            }],
+        });
+        let owner = frame.for_socket(true).unwrap();
+        let audience = frame.for_socket(false).unwrap();
+        assert!(owner.contains("the secret note"));
+        assert!(!audience.contains("the secret note"), "{audience}");
+        assert!(audience.contains("\"correct\":[]"), "{audience}");
+        assert!(audience.contains("\"index\":0"));
     }
 
     #[test]

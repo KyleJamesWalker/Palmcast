@@ -114,7 +114,12 @@
       <h2 class="label">Running order</h2>
       <span class="lineup-head-actions">
         <button id="export" class="ghost-link" type="button">Save the evening</button>
+        <label id="export-people-field" class="look-scope" hidden>
+          <input type="checkbox" id="export-people">
+          <span>with who answered what</span>
+        </label>
         <button id="submissions" class="ghost">Open submissions</button>
+        <button id="approval" class="ghost" aria-pressed="false">Read talks first</button>
       </span>
     </div>
     <ul id="lineup" class="lineup"></ul>
@@ -128,7 +133,10 @@
   </section>
 
   <section class="qa-console">
-    <h2 class="label">Questions</h2>
+    <div class="lineup-head">
+      <h2 class="label">Questions</h2>
+      <button id="moderate-toggle" class="ghost" aria-pressed="false" hidden>Review first</button>
+    </div>
     <ul id="questions" class="question-list"></ul>
   </section>
 

@@ -378,9 +378,14 @@ async fn export_evening(
     headers: HeaderMap,
 ) -> Response {
     let token = &token_from(&headers, &params);
+    let with_people = params
+        .get("people")
+        .is_some_and(|v| v == "1" || v == "true");
     // Only the copy happens under the lock. Zipping an evening walks every deck
     // and every picture, and the whole instance shares that one lock.
-    let view = registry.with(&id, |s| s.role_of(token).hosts().then(|| s.export_view()));
+    let view = registry.with(&id, |s| {
+        s.role_of(token).hosts().then(|| s.export_view(with_people))
+    });
     let built = match view {
         None => None,
         Some(None) => Some(None),

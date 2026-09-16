@@ -3,7 +3,7 @@
 
 import { clamp, navIntent } from '/shared.js';
 import { renderOptions } from '/quiz.js';
-import { pruneBySlide, survivingSlides } from '/deckstate.js';
+import { applyPatch, pruneBySlide, survivingPatch, survivingSlides } from '/deckstate.js';
 import { applySteps, backward, forward, nextLabel, stepLabel, steps } from '/steps.js';
 import { mountCountdown } from '/countdown.js';
 
@@ -200,6 +200,22 @@ export function mountConsole({ send, roleKnown }) {
       } else {
         current = msg.current;
       }
+      paint();
+    },
+    patch(msg) {
+      // A patch on a deck this console does not hold is not one it can apply.
+      if (msg.from_rev !== rev) {
+        send({ type: 'resync' });
+        return;
+      }
+      const keep = survivingPatch(slides, msg.changed);
+      pruneBySlide(tallies, keep);
+      pruneBySlide(revealed, keep);
+      slides = applyPatch(slides, msg.changed);
+      rev = msg.rev;
+      roomCurrent = msg.current;
+      step = msg.step;
+      if (!independent) current = msg.current;
       paint();
     },
     move(msg) {

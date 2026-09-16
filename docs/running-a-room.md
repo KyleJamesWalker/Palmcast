@@ -93,9 +93,26 @@ back.
 
 A room takes 40 talks, and three from any one person.
 
+**Read talks first** in the Lineup panel holds every new talk back until the
+host has read it. A waiting talk shows the host **Read**, **Accept** and
+**Drop**, and shows the room nothing. The speaker's phone says it is waiting for
+the host. Accepting puts it at the end of the running order. Turning the setting
+off accepts everything waiting at once. The setting survives a restart.
+
 **Save the evening** hands the host a zip. It holds every deck as its speaker
 left it, what the room asked during each talk, the board, and a `slides.vtt`
 cue file timed against a recording. A dropped talk stays out of it.
+
+`votes.csv` has one row per option per question that took votes: the talk, the
+slide, the slide's text, the option, how many chose it, whether it was right and
+whether the answer was revealed. It covers the decks whose votes the room still
+holds, which is the host deck and the talk on stage. A talk that has come down
+kept only its points.
+
+Tick **with who answered what** before saving and the zip also holds
+`answers.csv`: one row per named player per question, what they chose and
+whether they were right. People who never set a name are counted in `votes.csv`
+and appear nowhere else.
 
 ## Reactions and questions
 
@@ -110,6 +127,14 @@ lands.
 Anyone asks, anyone upvotes, and the list ranks by votes. The presenter marks a
 question answered, which sinks it rather than deleting it. Someone who joins
 late gets the questions already asked and the board as it stands.
+
+### Read questions first
+
+**Review first** above the host's question list holds every new question back
+until the host has read it. A held question shows the host **Approve** and
+**Dismiss** and shows the room nothing, not even that it was asked. The asker's
+phone says the question went to the host. Turning review off lets everything
+waiting through at once. The setting survives a restart.
 
 ### Remove somebody
 

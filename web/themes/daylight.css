@@ -11,4 +11,11 @@
   color-scheme: light;
   background: var(--ground);
   color: var(--ink);
+  --code-keyword: #a626a4;
+  --code-string: #50a14f;
+  --code-comment: #7f7c76;
+  --code-number: #986801;
+  --code-function: #4078f2;
+  --code-type: #c18401;
+  --code-variable: #383a42;
 }

@@ -218,6 +218,26 @@ screen. The status pill, the footer, the Room panel and the presenter console
 keep their own look whatever the deck says, so the controls a presenter reaches
 for at half past ten do not move or change colour between talks.
 
+## Color the code
+
+A fenced block that names a language arrives as spans with `hl-` class names.
+`base.css` maps them to seven variables with defaults for a dark ground. A theme
+for a light ground sets its own:
+
+```css
+.viewer, .stage {
+  --code-keyword: #a626a4;
+  --code-string: #50a14f;
+  --code-comment: #7f7c76;
+  --code-number: #986801;
+  --code-function: #4078f2;
+  --code-type: #c18401;
+  --code-variable: #383a42;
+}
+```
+
+`daylight` and `paper` do. A theme that sets none inherits the defaults.
+
 ## Move between slides
 
 The same shape sets a transition:

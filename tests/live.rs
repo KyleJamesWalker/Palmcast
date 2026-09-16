@@ -2866,10 +2866,10 @@ async fn a_look_the_operator_added_at_startup_reaches_the_room() {
     );
 }
 
-/// Reads past the opening state. The lock frame is the last thing every socket
-/// is sent on arrival, so anything after it is a broadcast.
+/// Reads past the opening state. The moderation frame is the last thing every
+/// socket is sent on arrival, so anything after it is a broadcast.
 async fn settle(socket: &mut Socket) {
-    next_of(socket, "lock").await;
+    next_of(socket, "moderation").await;
 }
 
 /// Reads frames until one of the named type arrives.
@@ -3028,4 +3028,211 @@ async fn earlier_saves_answer_to_an_editor_and_nobody_else() {
         .unwrap()
         .status();
     assert_eq!(denied, 403);
+}
+
+#[tokio::test]
+async fn a_moderated_question_reaches_the_host_and_then_the_room() {
+    let host = spawn().await;
+    let (id, mc) = create(&host, DECK).await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+    settle(&mut console).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "moderate", "on": true }),
+    )
+    .await;
+    assert_eq!(next_of(&mut console, "moderation").await["on"], true);
+    // Turning review on resends the list, empty so far.
+    let _ = next_of(&mut console, "questions").await;
+
+    let mut phone = open_as(&host, &id, None, "sam").await;
+    settle(&mut phone).await;
+    let mut other = open_as(&host, &id, None, "ann").await;
+    settle(&mut other).await;
+
+    ws_send(
+        &mut phone,
+        serde_json::json!({ "type": "ask", "text": "why?" }),
+    )
+    .await;
+    let held = next_of(&mut console, "questions").await;
+    assert_eq!(held["items"][0]["text"], "why?");
+    assert_eq!(held["items"][0]["pending"], true);
+
+    // The room is sent a list with nothing in it, not the question.
+    let room = next_of(&mut other, "questions").await;
+    assert!(room["items"].as_array().unwrap().is_empty(), "{room}");
+
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "approve", "question": 1 }),
+    )
+    .await;
+    let shown = next_of(&mut other, "questions").await;
+    assert_eq!(shown["items"][0]["text"], "why?");
+    assert!(shown["items"][0].get("pending").is_none(), "{shown}");
+}
+
+#[tokio::test]
+async fn a_talk_the_host_reads_first_stays_off_the_room_s_screens_until_accepted() {
+    let host = spawn().await;
+    let (id, mc) = open_mic(&host).await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+    settle(&mut console).await;
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "approval", "on": true }),
+    )
+    .await;
+    assert_eq!(next_of(&mut console, "lineup").await["approval"], true);
+
+    let mut phone = open_as(&host, &id, None, "ann").await;
+    settle(&mut phone).await;
+
+    let (talk, _) = put_up(&host, &id, "ada", "# Borrowing").await;
+    let held = next_of(&mut console, "lineup").await;
+    assert_eq!(held["pending"][0]["title"], "Borrowing");
+    assert!(held["items"].as_array().unwrap().is_empty());
+
+    let room = next_of(&mut phone, "lineup").await;
+    assert!(room["items"].as_array().unwrap().is_empty(), "{room}");
+    assert!(
+        room.get("pending").is_none() || room["pending"].as_array().unwrap().is_empty(),
+        "{room}"
+    );
+
+    ws_send(
+        &mut console,
+        serde_json::json!({ "type": "accept", "talk": talk }),
+    )
+    .await;
+    let shown = next_of(&mut phone, "lineup").await;
+    assert_eq!(shown["items"][0]["title"], "Borrowing");
+}
+
+#[tokio::test]
+async fn the_export_counts_the_votes_and_names_who_cast_them_only_when_asked() {
+    let host = spawn().await;
+    let (id, mc) = create(
+        &host,
+        "# Warm up\n\n---\n\n# Year of Rust 1.0?\n\n- [ ] 2012\n- [x] 2015",
+    )
+    .await;
+    let mut console = open(&host, &id, Some(&mc)).await;
+    settle(&mut console).await;
+    let mut ada = open_as(&host, &id, None, "ada").await;
+    settle(&mut ada).await;
+    ws_send(
+        &mut ada,
+        serde_json::json!({ "type": "set_name", "name": "Ada, Countess" }),
+    )
+    .await;
+    ws_send(
+        &mut ada,
+        serde_json::json!({ "type": "answer", "slide": 1, "options": [1] }),
+    )
+    .await;
+    let mut anon = open_as(&host, &id, None, "anon").await;
+    settle(&mut anon).await;
+    ws_send(
+        &mut anon,
+        serde_json::json!({ "type": "answer", "slide": 1, "options": [0] }),
+    )
+    .await;
+    let _ = next_of(&mut console, "tally").await;
+    let _ = next_of(&mut console, "tally").await;
+
+    let fetch = |query: &str| {
+        let host = host.clone();
+        let id = id.clone();
+        let mc = mc.clone();
+        let query = query.to_string();
+        async move {
+            let bytes = reqwest::Client::new()
+                .get(format!("http://{host}/api/sessions/{id}/export{query}"))
+                .bearer_auth(&mc)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+            let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.to_vec())).unwrap();
+            let names: Vec<String> = (0..zip.len())
+                .map(|n| zip.by_index(n).unwrap().name().to_string())
+                .collect();
+            let read = |zip: &mut zip::ZipArchive<std::io::Cursor<Vec<u8>>>, name: &str| {
+                use std::io::Read;
+                let mut out = String::new();
+                zip.by_name(name).unwrap().read_to_string(&mut out).unwrap();
+                out
+            };
+            let votes = read(&mut zip, "votes.csv");
+            let answers = names
+                .contains(&"answers.csv".to_string())
+                .then(|| read(&mut zip, "answers.csv"));
+            (votes, answers)
+        }
+    };
+
+    let (votes, answers) = fetch("").await;
+    assert!(
+        votes.contains("\"host\",2,\"Year of Rust 1.0?\",1,\"2012\",1,no,no"),
+        "{votes}"
+    );
+    assert!(
+        votes.contains("\"host\",2,\"Year of Rust 1.0?\",2,\"2015\",1,yes,no"),
+        "{votes}"
+    );
+    assert!(answers.is_none(), "names went out without being asked for");
+
+    let (_, answers) = fetch("?people=1").await;
+    let answers = answers.expect("answers.csv is missing");
+    assert!(answers.contains("\"Ada, Countess\",\"2\",yes"), "{answers}");
+    assert!(
+        !answers.contains("anon"),
+        "an unnamed voter was listed: {answers}"
+    );
+}
+
+const FIVE_SLIDES: &str =
+    "# One\n\n---\n\n# Two\n\n---\n\n# Three\n\n---\n\n# Four\n\n---\n\n# Five";
+
+#[tokio::test]
+async fn a_small_edit_reaches_the_room_as_a_patch_without_the_notes() {
+    let host = spawn().await;
+    let (id, mc) = create(&host, FIVE_SLIDES).await;
+    let mut phone = open(&host, &id, None).await;
+    settle(&mut phone).await;
+
+    let edited = FIVE_SLIDES.replace("# Two", "# Deux\n\n???\nsecret");
+    assert_eq!(put_deck(&host, &id, &mc, &edited).await, 204);
+
+    let patch = next_of(&mut phone, "patch").await;
+    assert_eq!(patch["from_rev"], 1);
+    assert_eq!(patch["rev"], 2);
+    let changed = patch["changed"].as_array().unwrap();
+    assert_eq!(changed.len(), 1);
+    assert_eq!(changed[0]["index"], 1);
+    assert!(
+        changed[0]["slide"]["html"]
+            .as_str()
+            .unwrap()
+            .contains("Deux")
+    );
+    assert_eq!(
+        changed[0]["slide"]["notes"], "",
+        "notes reached the room in a patch"
+    );
+}
+
+#[tokio::test]
+async fn a_socket_that_cannot_apply_a_patch_asks_for_the_deck_and_gets_it() {
+    let host = spawn().await;
+    let (id, _mc) = create(&host, FIVE_SLIDES).await;
+    let mut phone = open(&host, &id, None).await;
+    settle(&mut phone).await;
+    ws_send(&mut phone, serde_json::json!({ "type": "resync" })).await;
+    let deck = next_of(&mut phone, "deck").await;
+    assert_eq!(deck["slides"].as_array().unwrap().len(), 5);
 }

@@ -170,6 +170,12 @@ pub async fn serve(socket: WebSocket, registry: Registry, join: Join, beat: Hear
                     }
                     continue;
                 }
+                if matches!(msg, ClientMsg::Resync) {
+                    if resync(&mut sink, &registry, &id, is_staff).await.is_err() {
+                        break;
+                    }
+                    continue;
+                }
                 handle(&registry, &id, token.as_deref(), &who, msg);
             }
         }
@@ -197,7 +203,7 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
         // viewer cannot talk its way into a presenter's socket.
         ClientMsg::Auth { .. } => {}
         // Answered on the socket it arrived on, before this is reached.
-        ClientMsg::Ping => {}
+        ClientMsg::Ping | ClientMsg::Resync => {}
         ClientMsg::Goto { index, step } => {
             registry.with_mut(id, |s| s.goto(token, index, step));
         }
@@ -217,6 +223,12 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
         ClientMsg::Submissions { open } => {
             registry.with_mut(id, |s| s.set_submissions(s.role_of(token), open));
         }
+        ClientMsg::Approval { on } => {
+            registry.with_mut(id, |s| s.set_approval(s.role_of(token), on));
+        }
+        ClientMsg::Accept { talk } => {
+            registry.with_mut(id, |s| s.accept(s.role_of(token), talk));
+        }
         ClientMsg::Reorder { talk, index } => {
             registry.with_mut(id, |s| s.reorder(s.role_of(token), talk, index));
         }
@@ -231,6 +243,15 @@ fn handle(registry: &Registry, id: &str, token: Option<&str>, who: &str, msg: Cl
         }
         ClientMsg::Lock { on } => {
             registry.with_mut(id, |s| s.set_lock(s.role_of(token), on));
+        }
+        ClientMsg::Moderate { on } => {
+            registry.with_mut(id, |s| s.set_moderation(s.role_of(token), on));
+        }
+        ClientMsg::Approve { question } => {
+            registry.with_mut(id, |s| s.approve(s.role_of(token), question));
+        }
+        ClientMsg::Dismiss { question } => {
+            registry.with_mut(id, |s| s.dismiss(s.role_of(token), question));
         }
         ClientMsg::Kick { who: target } => {
             registry.with_mut(id, |s| s.kick(s.role_of(token), &target, who));

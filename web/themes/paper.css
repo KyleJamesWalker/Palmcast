@@ -10,6 +10,13 @@
   color-scheme: light;
   background: var(--ground);
   color: var(--ink);
+  --code-keyword: #8a3d9c;
+  --code-string: #2f6f3e;
+  --code-comment: #7a776f;
+  --code-number: #9c4a16;
+  --code-function: #1f5fa8;
+  --code-type: #8a5a00;
+  --code-variable: #3a362f;
 }
 
 .viewer .slide :is(h1, h2, h3),
