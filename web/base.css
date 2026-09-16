@@ -749,3 +749,16 @@ html[data-back]::view-transition-new(palmcast-surface) { z-index: var(--transiti
 .question.pending { border-color: var(--accent); }
 .question.pending .question-text { padding-top: 8px; }
 .lineup-row.pending { border-color: var(--accent); }
+
+/* Code colors. Coarse scopes, so a theme sets seven variables and every
+   grammar follows. The defaults suit the dark looks. */
+.slide pre code.hl { color: var(--code-variable, var(--ink)); }
+.hl-comment { color: var(--code-comment, #8a877f); font-style: italic; }
+.hl-string { color: var(--code-string, #98c379); }
+.hl-constant { color: var(--code-number, #d19a66); }
+.hl-keyword, .hl-storage { color: var(--code-keyword, #c678dd); }
+.hl-entity, .hl-support.hl-function { color: var(--code-function, #61afef); }
+.hl-support.hl-type, .hl-support.hl-class, .hl-entity.hl-name.hl-type {
+  color: var(--code-type, #e5c07b);
+}
+.hl-variable { color: var(--code-variable, var(--ink)); }

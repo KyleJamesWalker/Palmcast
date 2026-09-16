@@ -168,17 +168,40 @@ pub fn answers_csv(polls: &[PollView]) -> String {
 /// The text of a rendered slide, for a csv column: tags gone, whitespace
 /// folded, the few entities the renderer writes put back.
 pub fn plain(html: &str) -> String {
+    const BLOCKS: [&str; 15] = [
+        "p",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "li",
+        "div",
+        "pre",
+        "tr",
+        "td",
+        "th",
+        "blockquote",
+        "br",
+    ];
     let mut out = String::new();
-    let mut in_tag = false;
+    let mut tag: Option<String> = None;
     for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => {
-                in_tag = false;
-                out.push(' ');
+        match (&mut tag, ch) {
+            (None, '<') => tag = Some(String::new()),
+            (Some(name), '>') => {
+                // A block boundary is a word boundary. An inline span is not,
+                // or `kind: Service` would come apart around its colored words.
+                let name = name.trim_start_matches('/');
+                let name = name.split_whitespace().next().unwrap_or("");
+                if BLOCKS.contains(&name) {
+                    out.push(' ');
+                }
+                tag = None;
             }
-            _ if !in_tag => out.push(ch),
-            _ => {}
+            (Some(name), c) => name.push(c),
+            (None, c) => out.push(c),
         }
     }
     let text = out
@@ -426,6 +449,10 @@ mod tests {
         assert_eq!(
             plain("<h1>Year <em>Rust</em> 1.0 &amp; more</h1>\n<p>shipped?</p>"),
             "Year Rust 1.0 & more shipped?"
+        );
+        assert_eq!(
+            plain("<pre><code><span class=\"a\">kind</span><span>: Service</span></code></pre>"),
+            "kind: Service"
         );
     }
 }

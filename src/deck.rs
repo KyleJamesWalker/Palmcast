@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use pulldown_cmark::{CowStr, Event, Options, Parser, Tag, html};
+use pulldown_cmark::{CodeBlockKind, CowStr, Event, Options, Parser, Tag, TagEnd, html};
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -574,8 +574,53 @@ fn render(body: &str) -> String {
     });
 
     let mut out = String::new();
-    html::push_html(&mut out, events);
+    html::push_html(&mut out, colored(events).into_iter());
     out
+}
+
+/// Replaces each fenced block that names a grammar with one `Html` event of
+/// classed spans. Runs after the sanitizer above, so it is the only `Html` the
+/// renderer ever sees, and the text inside it has been escaped by the
+/// highlighter. A block with no grammar passes through untouched.
+fn colored<'a>(events: impl Iterator<Item = Event<'a>>) -> Vec<Event<'a>> {
+    let mut out = Vec::new();
+    let mut block: Option<(String, String)> = None;
+    for event in events {
+        match (&mut block, event) {
+            (None, Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info)))) => {
+                block = Some((info.to_string(), String::new()));
+            }
+            (Some((_, code)), Event::Text(text)) => code.push_str(&text),
+            (Some(_), Event::End(TagEnd::CodeBlock)) => {
+                let (info, code) = block.take().unwrap_or_default();
+                match crate::highlight::highlight(&info, &code) {
+                    Some(spans) => out.push(Event::Html(
+                        format!("<pre><code class=\"hl\">{spans}</code></pre>\n").into(),
+                    )),
+                    None => {
+                        out.push(Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(
+                            info.into(),
+                        ))));
+                        out.push(Event::Text(code.into()));
+                        out.push(Event::End(TagEnd::CodeBlock));
+                    }
+                }
+            }
+            // Anything else inside a fence is unexpected from this parser.
+            // Keep the block honest by treating it as text.
+            (Some((_, code)), other) => code.push_str(&plain_text(&other)),
+            (None, other) => out.push(other),
+        }
+    }
+    out
+}
+
+fn plain_text(event: &Event<'_>) -> String {
+    match event {
+        Event::Text(t) | Event::Code(t) | Event::Html(t) | Event::InlineHtml(t) => t.to_string(),
+        Event::SoftBreak | Event::HardBreak => "\n".to_string(),
+        _ => String::new(),
+    }
 }
 
 /// Blocks `javascript:` and `data:` hrefs, which would otherwise run when a
@@ -768,6 +813,48 @@ mod tests {
         assert_eq!(parse("").len(), 1);
     }
 
+    /// A colored block splits its text across spans, so these read it as
+    /// text before looking for words in it.
+    fn text(html: &str) -> String {
+        crate::export::plain(html)
+    }
+
+    #[test]
+    fn a_fenced_block_with_a_language_is_colored() {
+        let html = parse("```rust\nfn main() {}\n```").pop().unwrap().html;
+        assert!(html.contains("class=\"hl-"), "{html}");
+        assert!(html.contains("<pre><code class=\"hl\">"), "{html}");
+        assert_eq!(text(&html), "fn main() {}");
+    }
+
+    #[test]
+    fn markup_inside_a_colored_block_is_still_text() {
+        let html = parse("```html\n<script>alert(1)</script>\n```")
+            .pop()
+            .unwrap()
+            .html;
+        assert!(!html.contains("<script"), "{html}");
+        assert_eq!(text(&html), "<script>alert(1)</script>");
+    }
+
+    #[test]
+    fn a_block_with_no_language_or_an_unknown_one_renders_as_before() {
+        for deck in ["```\nplain text\n```", "```nosuchlang\nplain text\n```"] {
+            let html = parse(deck).pop().unwrap().html;
+            assert!(html.contains("<pre><code"), "{html}");
+            assert!(!html.contains("hl-"), "{html}");
+            assert!(html.contains("plain text"));
+        }
+    }
+
+    #[test]
+    fn a_colored_block_still_protects_the_separators_inside_it() {
+        let deck = "# One\n\n```yaml\na: 1\n---\nb: 2\n```\n\n---\n\n# Two";
+        let slides = parse(deck);
+        assert_eq!(slides.len(), 2);
+        assert!(slides[0].html.contains("hl-"), "{}", slides[0].html);
+    }
+
     #[test]
     fn raw_html_is_shown_not_executed() {
         let slides = parse("<script>alert(1)</script>");
@@ -874,7 +961,7 @@ mod tests {
             "# Config\n\n```yaml\napiVersion: v1\n\n---\n\nkind: Service\n```\n\nstill one slide";
         let slides = parse(deck);
         assert_eq!(slides.len(), 1, "a fenced --- split the deck");
-        assert!(slides[0].html.contains("kind: Service"));
+        assert!(text(&slides[0].html).contains("kind: Service"));
         assert!(slides[0].html.contains("still one slide"));
     }
 
@@ -893,7 +980,7 @@ mod tests {
             "code became speaker notes: {:?}",
             slides[0].notes
         );
-        assert!(slides[0].html.contains("more code"));
+        assert!(text(&slides[0].html).contains("more code"));
     }
 
     #[test]
