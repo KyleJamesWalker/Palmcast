@@ -2022,6 +2022,43 @@ async fn the_preview_renders_exactly_what_the_room_will_see() {
 }
 
 #[tokio::test]
+async fn the_preview_is_told_the_look_the_deck_named() {
+    let host = spawn().await;
+    let deck = "<!-- theme: neon style=vegas -->\n# One\n\n---\n\n                <!-- _theme: paper -->\n# Two\n\n---\n\n# Three\n";
+
+    let (_, body) = post_json(
+        &host,
+        "/api/preview",
+        serde_json::json!({ "markdown": deck }),
+    )
+    .await;
+    let preview = serde_json::from_str::<Value>(&body).unwrap();
+
+    // The deck wide look, so a card can be painted in what it will be shown in
+    // rather than in the page's own colours.
+    assert_eq!(preview["theme"]["name"], "neon");
+    assert_eq!(preview["theme"]["knobs"]["style"], "vegas");
+    // And the slide that broke from it is still the only one saying so.
+    let slides = preview["slides"].as_array().unwrap();
+    assert!(slides[0].get("theme").is_none());
+    assert_eq!(slides[1]["theme"]["name"], "paper");
+    assert!(slides[2].get("theme").is_none());
+}
+
+#[tokio::test]
+async fn a_deck_naming_no_look_is_previewed_without_one() {
+    let host = spawn().await;
+    let (_, body) = post_json(
+        &host,
+        "/api/preview",
+        serde_json::json!({ "markdown": "# One\n" }),
+    )
+    .await;
+    let preview = serde_json::from_str::<Value>(&body).unwrap();
+    assert!(preview.get("theme").is_none(), "a look nobody asked for");
+}
+
+#[tokio::test]
 async fn a_deck_too_large_to_present_is_too_large_to_preview() {
     let host = spawn().await;
     let deck = "a".repeat(300 * 1024);

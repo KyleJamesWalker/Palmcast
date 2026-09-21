@@ -7,7 +7,10 @@ import {
   applyLookKnobs,
   crossing,
   demoFaces,
+  lookLabel,
+  moveLabel,
   optionsFor,
+  placeLabel,
   swap,
   themeFor,
   transitionNames,
@@ -244,4 +247,29 @@ test('a name both turned is left to whoever wrote it last', () => {
   applyLookKnobs({ mood: 'cherry' }, surface, doc);
   applyKnobs(null, doc.documentElement, TRANSITION);
   assert.equal(doc.documentElement.style.props['--knob-mood'], 'cherry');
+});
+
+test('a preview card names the look it is painted in, and says whose it is', () => {
+  const deckLook = { name: 'ember' };
+  assert.equal(lookLabel({}, deckLook), 'ember');
+  assert.equal(lookLabel({ theme: { name: 'neon' } }, deckLook), 'neon · this slide');
+  // A slide that named the deck's own look still named it, and still broke.
+  assert.equal(lookLabel({ theme: { name: 'ember' } }, deckLook), 'ember · this slide');
+});
+
+test('a deck that named no look gets no badge rather than one reading default', () => {
+  assert.equal(lookLabel({}, null), null);
+  assert.equal(lookLabel(undefined, undefined), null);
+});
+
+test('a preview card names the move that leaves it, with the time it takes', () => {
+  assert.equal(moveLabel({ name: 'cover', duration: 800 }), 'cover · 0.8s');
+  // No duration is the transition's own, which is not this card's to state.
+  assert.equal(moveLabel({ name: 'fade' }), 'fade');
+  assert.equal(moveLabel(null), null);
+});
+
+test('a card holding the slide after its own says so rather than renumbering', () => {
+  assert.equal(placeLabel(0, 0, 5), '1 / 5');
+  assert.equal(placeLabel(0, 1, 5), '1 → 2');
 });

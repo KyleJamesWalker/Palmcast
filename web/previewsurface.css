@@ -1,0 +1,34 @@
+/* The surface inside one preview card, adopted into that card's own root.
+
+   Never linked by a page: it exists so a card can be painted in a look of its
+   own, which is only possible inside a root the rest of the document's themes
+   cannot reach. */
+
+/* The ratio is a floor, not a frame. A slide is shaped like the screen it will
+   be thrown on, so an empty one should still look like a slide; but a preview
+   is read to find the break that landed in the wrong place, and content that
+   overflowed a fixed box would be the one thing it could not show. Both rows
+   share a cell, so whichever is taller sets the height. */
+.look {
+  display: grid;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.look > * { grid-area: 1 / 1; }
+.ratio { aspect-ratio: 16 / 9; }
+
+.viewer {
+  display: grid;
+  align-content: center;
+  padding: 14px 16px;
+  /* A theme repaints both. Unthemed they are the page's own, which is exactly
+     what the room shows a deck that named no look. */
+  background: var(--ground);
+  color: var(--ink);
+}
+
+.slide { font-size: clamp(15px, 3.2vw, 19px); }
+
+/* A staged list item, before the room has been walked to it. Marked so an
+   author reading a preview can see what is staged, and the room never can. */
+.step { opacity: .55; }

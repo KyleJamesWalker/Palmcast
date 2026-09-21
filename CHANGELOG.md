@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The deck preview paints each card in the look its own slide will be shown in,
+  names that look, and marks the slides that broke from the deck's with a
+  `_theme` of their own. Several looks paint at once, which is what a deck that
+  changes theme partway through needs to be read.
+- A preview card names the move that leaves it and plays it: press the card, or
+  the button beside its number, and it runs the transition into the slide after
+  it, holds a beat there, and runs it back. Both ways in one press, and the card
+  returns on its own. One card at a time, so the rest of the deck stays
+  readable.
 - `_theme` paints one slide in a look of its own, leaving the rest of the deck
   on whatever `theme` named. The deck editor's "This slide only" box writes it.
 - Looks can declare knobs, as `--knob-<name>` custom properties in their own

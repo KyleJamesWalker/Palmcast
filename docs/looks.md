@@ -42,6 +42,26 @@ That is the whole grammar, and there is no more of it to learn:
 A `<time>` is `500ms` or `1.5s`, up to sixty seconds, and only a transition
 takes one.
 
+## Read the deck in its looks
+
+The sample slide beside the pickers shows one look at a time, which is what the
+cursor is standing in. **Preview deck** shows all of them at once: every slide
+as a card, painted in the look that slide will actually be shown in, with a
+badge naming it and marking the slides that broke from the deck with a `_theme`
+of their own.
+
+Each card also names the move that leaves it — `cover · 0.8s` — because the
+boundary belongs to the slide above it. Press the card, or the button beside its
+number, and the card plays that move into the slide after it, holds there long
+enough to read what arrived, and plays it back. Both ways in one press: a
+transition often looks quite different reversed, and that is the move the room
+makes stepping back.
+
+The card returns on its own rather than waiting to be pressed again. A deck is
+read down the page, and a row of cards each holding somebody else's slide is not
+a deck any more. Only the card you pressed moves, and while it is ahead its
+number says so.
+
 ## Change one thing about a look
 
 A look can offer knobs, and a deck can turn them:
@@ -224,10 +244,15 @@ screen. The status pill, the footer, the Room panel and the presenter console
 keep their own look whatever the deck says, so the controls a presenter reaches
 for at half past ten do not move or change colour between talks.
 
+`.viewer` is also what one preview card is, so a theme written against those two
+selectors paints the deck preview without doing anything else. The card is given
+the stylesheet in a root of its own, which is what lets several themes paint one
+page at once.
+
 ## Color the code
 
 A fenced block that names a language arrives as spans with `hl-` class names.
-`base.css` maps them to seven variables with defaults for a dark ground. A theme
+`slide.css` maps them to seven variables with defaults for a dark ground. A theme
 for a light ground sets its own:
 
 ```css
