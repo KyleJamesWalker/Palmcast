@@ -36,11 +36,15 @@ export function transitionNames(slides) {
 /// `paint` is called exactly once either way. A browser with no view
 /// transitions, or a move with nothing to run, swaps the slide the way this
 /// application always has, which is the behaviour every other path degrades to.
+///
+/// Resolves once the swap is over, so a caller with something of its own to put
+/// back can wait for it. It never rejects: a transition the browser skips is a
+/// swap that happened, not a failure.
 export function swap(paint, plan, doc = document) {
   const root = doc.documentElement;
   if (!plan || typeof doc.startViewTransition !== 'function') {
     paint();
-    return;
+    return Promise.resolve();
   }
 
   root.dataset.transition = plan.name;
@@ -63,8 +67,28 @@ export function swap(paint, plan, doc = document) {
   };
   // Both arms, not `finally`: a transition the browser skips rejects, and a
   // rejection nobody handled would leave the root marked for the next one.
-  doc.startViewTransition(paint).finished.then(clear, clear);
+  return doc.startViewTransition(paint).finished.then(clear, clear);
 }
+
+/// Lends the reading surface's transition name to one element, and hands back
+/// the loan.
+///
+/// A view transition is the whole document's, and a name may be on one element
+/// in it. A page showing a deck has exactly one surface, so the name lives in
+/// the stylesheet; a page showing every slide at once has one per slide, and
+/// only the one being played may answer to it. The rest are muted for the
+/// length of the swap and given their names back after.
+export function borrowSurface(el, doc = document) {
+  const muted = [...doc.querySelectorAll('.viewer, .stage')];
+  for (const other of muted) other.style.setProperty('view-transition-name', 'none');
+  el?.style?.setProperty('view-transition-name', SURFACE);
+  return () => {
+    for (const other of muted) other.style.removeProperty('view-transition-name');
+    el?.style?.removeProperty('view-transition-name');
+  };
+}
+
+const SURFACE = 'palmcast-surface';
 
 /// Fetches the stylesheets a deck names, so the first press does not wait on
 /// the network. A name nothing installed answers 404, which resolves like any
@@ -90,6 +114,43 @@ export function ensure(name, doc = document) {
 
 export function preload(slides, doc = document) {
   for (const name of transitionNames(slides)) ensure(name, doc);
+}
+
+/// A stylesheet as an object a shadow root can adopt, fetched once per href.
+///
+/// A link in the head cannot show two themes at once: every theme paints
+/// `.viewer`, so the second one loaded wins everywhere. A sheet adopted into a
+/// root per slide paints that slide and nothing else, which is what a preview
+/// of a deck that changes look partway through has to do.
+///
+/// Null for anything that cannot answer — a browser without constructed
+/// stylesheets, a name nothing installed — so the surface is painted in the
+/// page's own colours rather than not painted at all.
+const sheets = new Map();
+
+export function styleSheetAt(href, fetcher = globalThis.fetch) {
+  const held = sheets.get(href);
+  if (held) return held;
+
+  const ready = (async () => {
+    try {
+      const res = await fetcher(href);
+      if (!res.ok) return null;
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(await res.text());
+      return sheet;
+    } catch {
+      return null;
+    }
+  })();
+  sheets.set(href, ready);
+  return ready;
+}
+
+/// The stylesheet a look is written in, by the name a deck writes.
+export function lookSheet(name, fetcher = globalThis.fetch) {
+  if (!name) return Promise.resolve(null);
+  return styleSheetAt(`/themes/${encodeURIComponent(name)}.css`, fetcher);
 }
 
 /// What this instance lets a deck ask for, each with what its file says it
@@ -120,6 +181,30 @@ export async function installedLooks(fetcher = globalThis.fetch) {
 /// on it, so the two travel together rather than being applied from two places.
 export function themeFor(slide, deckTheme) {
   return slide?.theme ?? deckTheme ?? null;
+}
+
+/// What a preview card says about the look its slide is painted in.
+///
+/// Null for a deck that named none: a badge reading "default" on every card is
+/// noise, and the card is already showing what default looks like.
+export function lookLabel(slide, deckTheme) {
+  const look = themeFor(slide, deckTheme);
+  if (!look?.name) return null;
+  // Which slides broke from the deck is the thing worth spotting, so the two
+  // cases read differently rather than both being a bare name.
+  return slide?.theme ? `${look.name} · this slide` : look.name;
+}
+
+/// What a preview card says about the move that leaves it.
+export function moveLabel(plan) {
+  if (!plan) return null;
+  return plan.duration ? `${plan.name} · ${plan.duration / 1000}s` : plan.name;
+}
+
+/// What a preview card's number reads: its own place in the deck, or, while it
+/// is holding the slide after it, the move it is showing.
+export function placeLabel(index, shown, total) {
+  return index === shown ? `${index + 1} / ${total}` : `${index + 1} → ${shown + 1}`;
 }
 
 /// Sets the knobs a deck turned, and clears any it stopped turning.
