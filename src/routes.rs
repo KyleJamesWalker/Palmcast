@@ -733,6 +733,11 @@ async fn serve_image(
 #[derive(Serialize)]
 struct Preview {
     slides: Vec<deck::Slide>,
+    /// The look the deck asked for, which a slide only overrides by naming its
+    /// own. Sent so a preview can paint each card in the look it will really be
+    /// shown in rather than in the page's own colours.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    theme: Option<deck::Look>,
 }
 
 /// Renders a deck without starting a room.
@@ -757,6 +762,7 @@ async fn preview_deck(
     }
     axum::Json(Preview {
         slides: deck::parse(&body.markdown),
+        theme: deck::theme_of(&body.markdown),
     })
     .into_response()
 }
