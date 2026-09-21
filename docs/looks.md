@@ -52,9 +52,15 @@ of their own.
 
 Each card also names the move that leaves it — `cover · 0.8s` — because the
 boundary belongs to the slide above it. Press the card, or the button beside its
-number, and the card plays that move into the slide after it; press it again and
-it plays back. Only the card you pressed moves, so the rest of the deck stays
-readable, and the card says which slide it is holding while it is ahead.
+number, and the card plays that move into the slide after it, holds there long
+enough to read what arrived, and plays it back. Both ways in one press: a
+transition often looks quite different reversed, and that is the move the room
+makes stepping back.
+
+The card returns on its own rather than waiting to be pressed again. A deck is
+read down the page, and a row of cards each holding somebody else's slide is not
+a deck any more. Only the card you pressed moves, and while it is ahead its
+number says so.
 
 ## Change one thing about a look
 

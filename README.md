@@ -256,8 +256,8 @@ Every card is painted in the look its own slide will be shown in, and says which
 one that is, so a deck that changes theme partway through can be read as the
 room will see it rather than as one look guessed at for all of it. Each card
 also names the move that leaves it; pressing the card, or the button beside its
-number, runs that move on the slide and runs it back again. See
-[docs/looks.md](docs/looks.md).
+number, runs that move on the slide, holds a beat on the slide that arrives,
+and runs it back. See [docs/looks.md](docs/looks.md).
 
 **Copy prompt for an agent** on the start page copies the deck format and
 nothing else. Paste it into an agent with a topic, a page of notes, or a deck

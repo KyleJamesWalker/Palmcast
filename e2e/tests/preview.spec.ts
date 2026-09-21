@@ -105,11 +105,35 @@ test('a card names the move that leaves it and plays it on the slide', async ({ 
   expect(await held(page, 1)).toBe('Two');
   await expect(page.locator('.preview-card').nth(1).locator('.preview-number')).toHaveText('2 / 3');
 
-  await first.locator('.preview-play').click();
-  await expect.poll(() => held(page, 0)).toBe('One');
+  // And it comes back on its own: the press is to watch a move, not to walk
+  // the deck, so nothing is left holding somebody else's slide.
+  await expect.poll(() => held(page, 0), { timeout: 5000 }).toBe('One');
   await expect(first.locator('.preview-number')).toHaveText('1 / 3');
   await expect.poll(() => ground(page, 0)).toBe('rgb(6, 6, 12)');
   await expect(first.locator('.preview-look')).toHaveText('neon');
+  await expect(first.locator('.preview-play')).toBeEnabled();
+});
+
+test('the way back is the same move reversed, not a snap', async ({ page }) => {
+  await openPreview(page);
+  const first = page.locator('.preview-card').nth(0);
+  await first.locator('.preview-play').click();
+
+  // Held on the slide that arrived long enough to read it, then animated back
+  // with the root marked the other way round.
+  await expect.poll(() => held(page, 0)).toBe('Two');
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => ({
+          back: document.documentElement.dataset.back ?? null,
+          surface: document
+            .getAnimations()
+            .some((a) => String(a.effect?.pseudoElement ?? '').includes('palmcast-surface')),
+        })),
+      { timeout: 5000 },
+    )
+    .toEqual({ back: '1', surface: true });
 });
 
 test('a deck naming no look wears no badge until a slide names one', async ({ page }) => {
@@ -127,6 +151,8 @@ test('a deck naming no look wears no badge until a slide names one', async ({ pa
   await first.locator('.preview-play').click();
   // Walked forward into the slide that named one, the card starts saying so.
   await expect(first.locator('.preview-look')).toHaveText('paper · this slide');
+  // And stops again on the way back.
+  await expect(first.locator('.preview-look')).toBeHidden({ timeout: 5000 });
 });
 
 test('the last slide has nothing to leave for, so it offers no move', async ({ page }) => {

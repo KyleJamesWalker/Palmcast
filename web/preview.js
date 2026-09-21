@@ -200,54 +200,64 @@ function painter(parts, slides, deckTheme, chrome) {
   };
 }
 
-/// Makes a card play the move that leaves it, and play it back again.
+/// Long enough on the slide that arrived to read what arrived, and no longer.
 ///
-/// A press each way rather than a press and a snap back: the way back is a move
-/// the room really makes, and a card left holding the slide after its own would
-/// make the deck unreadable at a glance.
+/// The card comes back on its own rather than waiting to be pressed again. A
+/// deck is read down the page, and a row of cards each holding somebody else's
+/// slide is not a deck any more: the press is to watch a move, not to walk the
+/// deck.
+const HOLD = 1100;
+
+/// Makes a card play the move that leaves it: there, a beat, and back.
+///
+/// Both ways, because the way back is a move the room really makes, and a
+/// transition often looks quite different reversed. One press shows both.
 function playable({ card, head, host, number, named, parts }, show, plan, index, total) {
   const button = document.createElement('button');
   button.className = 'preview-play ghost';
+  button.textContent = moveLabel(plan);
+  button.setAttribute(
+    'aria-label',
+    `Play the ${plan.name} transition into slide ${index + 2} and back`,
+  );
   head.append(button);
   card.classList.add('preview-playable');
 
   let shown = index;
   const label = () => {
-    const forward = shown === index;
-    button.textContent = forward ? moveLabel(plan) : `Back to ${index + 1}`;
-    button.setAttribute(
-      'aria-label',
-      forward
-        ? `Play the ${plan.name} transition from slide ${index + 1} to slide ${index + 2}`
-        : `Play the ${plan.name} transition back to slide ${index + 1}`,
-    );
     number.textContent = placeLabel(index, shown, total);
     // The badge follows the slide in the frame, not the card: the move crosses
     // a look, and a card painted in paper must not still be labelled neon.
     named(shown);
-    card.classList.toggle('preview-ahead', !forward);
+    card.classList.toggle('preview-ahead', shown !== index);
   };
-  label();
+
+  const step = async (to) => {
+    const paint = await show(to);
+    // The host, not the surface inside it: a `view-transition-name` on an
+    // element in a shadow root is ignored, and the move would snap. The host
+    // is in the page, and capturing it captures everything under it.
+    const give = borrowSurface(parts.host);
+    await swap(paint, { ...plan, back: to < shown });
+    give();
+    shown = to;
+    label();
+  };
 
   const play = async () => {
     if (playing) return;
     playing = true;
+    button.disabled = true;
     try {
       // A card half out of the scroller animates outside it: the snapshot is of
       // the whole element, and the group that clips it is not the scroll box.
       card.scrollIntoView({ block: 'nearest' });
-      const to = shown === index ? index + 1 : index;
       await ensure(plan.name);
-      const paint = await show(to);
-      // The host, not the surface inside it: a `view-transition-name` on an
-      // element in a shadow root is ignored, and the move would snap. The host
-      // is in the page, and capturing it captures everything under it.
-      const give = borrowSurface(parts.host);
-      await swap(paint, { ...plan, back: to < shown });
-      give();
-      shown = to;
-      label();
+      await step(index + 1);
+      await new Promise((rest) => setTimeout(rest, HOLD));
+      await step(index);
     } finally {
+      button.disabled = false;
       playing = false;
     }
   };
