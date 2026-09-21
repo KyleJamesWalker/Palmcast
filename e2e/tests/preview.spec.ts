@@ -73,11 +73,25 @@ test('a card names the move that leaves it and plays it on the slide', async ({ 
   expect(await held(page, 0)).toBe('One');
   await first.locator('.preview-play').click();
 
-  // The move really runs: the root is marked for the length of the swap, which
-  // is what the transition's own stylesheet is written against.
-  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.transition)).toBe(
-    'cover',
-  );
+  // The move really animates. The root being marked is not enough to know
+  // that: a surface the browser declined to capture leaves the mark set and
+  // snaps anyway, with only the root group running.
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        document
+          .getAnimations()
+          .map((a) => String(a.effect?.pseudoElement ?? ''))
+          .filter((p) => p.includes('palmcast-surface'))
+          .sort(),
+      ),
+    )
+    .toEqual([
+      '::view-transition-group(palmcast-surface)',
+      '::view-transition-new(palmcast-surface)',
+      '::view-transition-old(palmcast-surface)',
+    ]);
+  expect(await page.evaluate(() => document.documentElement.dataset.transition)).toBe('cover');
 
   // The card is now holding the slide after its own, and says so rather than
   // renumbering itself into the next card's place.

@@ -143,6 +143,10 @@ export function renderPreview(root, deck) {
 /// the second one winning everywhere, and a preview of a deck that changes look
 /// has to show both at once. A browser without one keeps the plain card it
 /// always had rather than losing the preview.
+///
+/// `host` is kept as well as the surface inside it, because the two are what a
+/// move needs: the look is painted on the surface, and the move is played on
+/// the host.
 function surfaceIn(host) {
   const slide = document.createElement('div');
   slide.className = 'slide';
@@ -154,7 +158,7 @@ function surfaceIn(host) {
     'adoptedStyleSheets' in globalThis.ShadowRoot.prototype;
   if (!rooted) {
     host.append(slide);
-    return { shadow: null, look: host, viewer: host, slide };
+    return { shadow: null, host, look: host, viewer: host, slide };
   }
 
   const shadow = host.attachShadow({ mode: 'open' });
@@ -167,7 +171,7 @@ function surfaceIn(host) {
   viewer.append(slide);
   look.append(ratio, viewer);
   shadow.append(look);
-  return { shadow, look, viewer, slide };
+  return { shadow, host, look, viewer, slide };
 }
 
 /// Hands back a function that paints slide `index` onto the surface.
@@ -235,7 +239,10 @@ function playable({ card, head, host, number, named, parts }, show, plan, index,
       const to = shown === index ? index + 1 : index;
       await ensure(plan.name);
       const paint = await show(to);
-      const give = borrowSurface(parts.viewer);
+      // The host, not the surface inside it: a `view-transition-name` on an
+      // element in a shadow root is ignored, and the move would snap. The host
+      // is in the page, and capturing it captures everything under it.
+      const give = borrowSurface(parts.host);
       await swap(paint, { ...plan, back: to < shown });
       give();
       shown = to;
