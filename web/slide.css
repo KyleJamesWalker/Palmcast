@@ -1,0 +1,62 @@
+/* The rendered body of a slide, and nothing else.
+
+   Its own file because it is needed in two places that cannot share a
+   stylesheet: the pages, which link it, and the deck preview, which adopts it
+   into a root per card so that several themes can paint at once. */
+
+/* Sized so a phone at arm's length stays comfortable and a TV across the room
+   still works. */
+.slide {
+  font-size: clamp(20px, 5.2vw, 34px);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.slide :first-child { margin-top: 0; }
+.slide :last-child { margin-bottom: 0; }
+.slide h1 { font-size: 1.5em; line-height: 1.1; margin: 0 0 .5em; letter-spacing: -.025em; }
+.slide h2 { font-size: 1.25em; line-height: 1.15; margin: 0 0 .5em; }
+.slide h3 { font-size: 1.1em; margin: 0 0 .5em; }
+.slide p, .slide ul, .slide ol { margin: 0 0 .7em; }
+.slide li { margin-bottom: .35em; }
+.slide code {
+  font-family: var(--mono);
+  font-size: .85em;
+  background: var(--raised);
+  border-radius: 6px;
+  padding: .1em .35em;
+}
+.slide pre {
+  background: var(--raised);
+  border-radius: 14px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: .62em;
+}
+.slide pre code { background: none; padding: 0; font-size: 1em; }
+.slide blockquote {
+  margin: 0 0 .7em;
+  padding-left: .7em;
+  border-left: 3px solid var(--accent);
+  color: var(--ink-dim);
+}
+.slide img { max-width: 100%; height: auto; border-radius: 14px; }
+.slide table { border-collapse: collapse; width: 100%; font-size: .7em; }
+.slide th, .slide td { border-bottom: 1px solid var(--edge); padding: .4em .5em; text-align: left; }
+.slide hr { border: 0; border-top: 1px solid var(--edge); margin: 1em 0; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .slide { transition: opacity .12s ease; }
+}
+
+/* Code colors. Coarse scopes, so a theme sets seven variables and every
+   grammar follows. The defaults suit the dark looks. */
+.slide pre code.hl { color: var(--code-variable, var(--ink)); }
+.hl-comment { color: var(--code-comment, #9a8aa8); font-style: italic; }
+.hl-string { color: var(--code-string, #8fd9a8); }
+.hl-constant { color: var(--code-number, #ffd27a); }
+.hl-keyword, .hl-storage { color: var(--code-keyword, #ff9bd6); }
+.hl-entity, .hl-support.hl-function { color: var(--code-function, #8fc7ff); }
+.hl-support.hl-type, .hl-support.hl-class, .hl-entity.hl-name.hl-type {
+  color: var(--code-type, #ffb36b);
+}
+.hl-variable { color: var(--code-variable, var(--ink)); }

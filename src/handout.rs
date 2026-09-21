@@ -50,12 +50,20 @@ body.handout { background: var(--ground); color: var(--ink); }
 @page { size: landscape; margin: 0; }
 "#;
 
+/// A stylesheet that ships in the binary, or nothing if this build dropped it.
+fn embedded(name: &str) -> String {
+    Web::get(name)
+        .and_then(|f| String::from_utf8(f.data.to_vec()).ok())
+        .unwrap_or_default()
+}
+
 pub fn render(handout: &Handout) -> String {
     let slides = deck::parse(handout.markdown);
     let look = deck::theme_of(handout.markdown);
-    let base = Web::get("base.css")
-        .and_then(|f| String::from_utf8(f.data.to_vec()).ok())
-        .unwrap_or_default();
+    let base = embedded("base.css");
+    // The slide body is its own stylesheet, so a handout that only carried
+    // base.css would print unstyled slides.
+    let slide = embedded("slide.css");
     let theme_css = look
         .as_ref()
         .and_then(|l| handout.styles.theme(&l.name))
@@ -77,11 +85,14 @@ pub fn render(handout: &Handout) -> String {
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| "Deck".to_string());
 
-    let mut out = String::with_capacity(base.len() + theme_css.len() + slides.len() * 512);
+    let mut out =
+        String::with_capacity(base.len() + slide.len() + theme_css.len() + slides.len() * 512);
     out.push_str("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n");
     out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
     out.push_str(&format!("<title>{}</title>\n<style>\n", escape(&title)));
     out.push_str(&base);
+    out.push('\n');
+    out.push_str(&slide);
     out.push('\n');
     out.push_str(&theme_css);
     out.push_str(PAGE_CSS);
@@ -192,6 +203,7 @@ mod tests {
         assert_eq!(html.matches("<section class=\"page\">").count(), 3);
         assert!(html.contains("<title>One</title>"), "{html}");
         assert!(html.contains("--ground:"), "base.css is missing");
+        assert!(html.contains(".slide blockquote"), "slide.css is missing");
         assert!(html.contains("Georgia"), "the paper theme is missing");
         assert!(html.contains("3 / 3"));
     }
