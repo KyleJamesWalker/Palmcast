@@ -421,6 +421,8 @@ make lint     # clippy and rustfmt
 make run      # cargo run on port 8080
 ```
 
+For worktrees under `.claude/worktrees/`, run `scripts/share-target.sh` once in the main checkout: they then compile into the main checkout's `target/`, so the dependencies build once. Parallel builds wait on cargo's lock.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
