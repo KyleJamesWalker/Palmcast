@@ -2196,7 +2196,7 @@ async fn the_export_holds_the_evening() {
 
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.to_vec())).unwrap();
     let names: Vec<String> = (0..zip.len())
-        .map(|n| zip.by_index(n).unwrap().name().to_string())
+        .map(|n| zip.by_index(n).unwrap().name().unwrap().to_string())
         .collect();
     assert!(names.contains(&"00-host.md".to_string()), "got {names:?}");
     assert!(
@@ -3196,7 +3196,7 @@ async fn the_export_counts_the_votes_and_names_who_cast_them_only_when_asked() {
                 .unwrap();
             let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.to_vec())).unwrap();
             let names: Vec<String> = (0..zip.len())
-                .map(|n| zip.by_index(n).unwrap().name().to_string())
+                .map(|n| zip.by_index(n).unwrap().name().unwrap().to_string())
                 .collect();
             let read = |zip: &mut zip::ZipArchive<std::io::Cursor<Vec<u8>>>, name: &str| {
                 use std::io::Read;

@@ -331,8 +331,8 @@ fn vtt(session: &ExportView) -> String {
 /// a little json, and storing keeps the dependency free of a codec.
 pub fn bundle(session: &ExportView) -> std::io::Result<Vec<u8>> {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let options: zip::write::FileOptions<'_, ()> =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     let mut talks = Vec::new();
 
